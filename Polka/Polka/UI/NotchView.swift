@@ -4,7 +4,8 @@ import SwiftUI
 /// expanded size, anchored at the top center of the panel.
 struct NotchView: View {
     @ObservedObject var model: NotchViewModel
-    @State private var isTargeted = false
+
+    private var isTargeted: Bool { model.isDropTargeted }
 
     private var cornerRadius: CGFloat {
         model.state == .collapsed ? 10 : 24
@@ -20,9 +21,7 @@ struct NotchView: View {
                                            style: .continuous)
                         .fill(Color.black)
                 )
-                .onDrop(of: DropReceiver.acceptedTypes, isTargeted: $isTargeted) { providers in
-                    model.handleDrop(providers)
-                }
+            // Drops are received by DropTargetView (AppKit), which wraps this view.
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

@@ -11,6 +11,8 @@ enum NotchState: Equatable {
 final class NotchViewModel: ObservableObject {
     @Published var state: NotchState = .collapsed
     @Published var notchSize = CGSize(width: 200, height: 32)
+    /// True while an acceptable drag hovers over the panel.
+    @Published var isDropTargeted = false
     /// Spike only: the last few drops, shown in the panel so you can see they arrived.
     @Published private(set) var recentDrops: [String] = []
 
@@ -20,16 +22,13 @@ final class NotchViewModel: ObservableObject {
         state == .collapsed ? notchSize : expandedSize
     }
 
-    func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        let accepted = DropReceiver.receive(providers) { [weak self] item in
-            self?.record(item)
+    func handleDrop(_ items: [DroppedItem]) -> Bool {
+        guard !items.isEmpty else { return false }
+        for item in items {
+            recentDrops.insert(item.label, at: 0)
         }
-        if accepted { state = .expanded }
-        return accepted
-    }
-
-    private func record(_ item: DroppedItem) {
-        recentDrops.insert(item.label, at: 0)
-        if recentDrops.count > 4 { recentDrops.removeLast() }
+        recentDrops = Array(recentDrops.prefix(4))
+        state = .expanded
+        return true
     }
 }

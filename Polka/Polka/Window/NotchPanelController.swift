@@ -28,7 +28,19 @@ final class NotchPanelController {
                                defer: false)
         let hostingView = NSHostingView(rootView: NotchView(model: model))
         hostingView.sizingOptions = []
-        panel.contentView = hostingView
+
+        let dropView = DropTargetView(frame: .zero)
+        dropView.onTargetChanged = { [weak self] targeted in
+            self?.model.isDropTargeted = targeted
+        }
+        dropView.onDrop = { [weak self] items in
+            guard let self else { return false }
+            let accepted = self.model.handleDrop(items)
+            if accepted { self.dragMonitor.endDrag() }
+            return accepted
+        }
+        dropView.embed(hostingView)
+        panel.contentView = dropView
         self.panel = panel
 
         layoutPanel()

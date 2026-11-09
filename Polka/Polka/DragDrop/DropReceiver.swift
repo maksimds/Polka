@@ -1,5 +1,4 @@
 import AppKit
-import UniformTypeIdentifiers
 
 /// What arrived in a drop. In M1 this is only logged; storage comes in M2.
 enum DroppedItem: Equatable {
@@ -14,40 +13,29 @@ enum DroppedItem: Equatable {
     }
 }
 
-/// Reads file URLs and web URLs out of dropped item providers.
+/// Reads file URLs and web URLs from a drag pasteboard.
 enum DropReceiver {
-    /// Types the panel accepts. A file URL also conforms to `.url`.
-    static let acceptedTypes: [UTType] = [.fileURL, .url]
+    /// Pasteboard types the panel registers for. Finder provides `.fileURL`,
+    /// browsers provide `.URL` for links.
+    static let acceptedPasteboardTypes: [NSPasteboard.PasteboardType] = [.fileURL, .URL]
 
-    /// Starts loading every supported provider and calls `completion` once per item,
-    /// on the main actor. Returns false if nothing in the drop was usable.
-    static func receive(_ providers: [NSItemProvider],
-                        completion: @escaping @MainActor (DroppedItem) -> Void) -> Bool {
-        var accepted = false
+    static func canAccept(_ pasteboard: NSPasteboard) -> Bool {
+        pasteboard.canReadObject(forClasses: [NSURL.self], options: nil)
+    }
 
-        for provider in providers {
-            let types = provider.registeredTypeIdentifiers.joined(separator: ", ")
-            Log.drop.debug("Provider types: \(types, privacy: .public)")
+    static func items(from pasteboard: NSPasteboard) -> [DroppedItem] {
+        let types = pasteboard.types?.map(\.rawValue).joined(separator: ", ") ?? "none"
+        Log.drop.debug("Drop pasteboard types: \(types, privacy: .public)")
 
-            guard provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) else {
-                Log.drop.info("Skipped unsupported provider (types: \(types, privacy: .public))")
-                continue
-            }
-            accepted = true
-
-            _ = provider.loadObject(ofClass: URL.self) { url, error in
-                let message = error?.localizedDescription
-                Task { @MainActor in
-                    guard let url else {
-                        Log.drop.error("Could not read drop: \(message ?? "unknown error", privacy: .public)")
-                        return
-                    }
-                    let item: DroppedItem = url.isFileURL ? .file(url) : .link(url)
-                    Log.drop.info("Dropped \(item.label, privacy: .public)")
-                    completion(item)
-                }
-            }
+        let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? []
+        if urls.isEmpty {
+            Log.drop.info("Drop had no readable URLs (types: \(types, privacy: .public))")
         }
-        return accepted
+
+        return urls.map { url in
+            let item: DroppedItem = url.isFileURL ? .file(url) : .link(url)
+            Log.drop.info("Dropped \(item.label, privacy: .public)")
+            return item
+        }
     }
 }
