@@ -6,7 +6,8 @@ import SwiftUI
 /// hover to expand, leave to collapse, any drag on screen opens it as a drop target.
 @MainActor
 final class NotchPanelController {
-    private let model = NotchViewModel()
+    private let store: ShelfStore
+    private let model: NotchViewModel
     private let dragMonitor = GlobalDragMonitor()
     private var panel: NotchPanel?
     private var geometry: NotchGeometry?
@@ -21,12 +22,17 @@ final class NotchPanelController {
     /// Extra room around the expanded panel before leaving it collapses the panel.
     private let leaveMargin: CGFloat = 16
 
+    init(store: ShelfStore) {
+        self.store = store
+        model = NotchViewModel(store: store)
+    }
+
     func start() {
         let panel = NotchPanel(contentRect: .zero,
                                styleMask: [.borderless, .nonactivatingPanel],
                                backing: .buffered,
                                defer: false)
-        let hostingView = NSHostingView(rootView: NotchView(model: model))
+        let hostingView = NSHostingView(rootView: NotchView(model: model, store: store))
         hostingView.sizingOptions = []
 
         let dropView = DropTargetView(frame: .zero)
@@ -34,10 +40,8 @@ final class NotchPanelController {
             self?.model.isDropTargeted = targeted
         }
         dropView.onDrop = { [weak self] items in
-            guard let self else { return false }
-            let accepted = self.model.handleDrop(items)
-            if accepted { self.dragMonitor.endDrag() }
-            return accepted
+            self?.model.handleDrop(items)
+            self?.dragMonitor.endDrag()
         }
         dropView.embed(hostingView)
         panel.contentView = dropView
@@ -134,7 +138,7 @@ final class NotchPanelController {
         case .expanded:
             let area = geometry.expandedRect(size: model.expandedSize)
                 .insetBy(dx: -leaveMargin, dy: -leaveMargin)
-            if !area.contains(point) {
+            if !area.contains(point), !model.keepsPanelOpen {
                 model.state = .collapsed
             }
         case .dropReady:
@@ -182,6 +186,7 @@ final class NotchPanelController {
     private func finishDrag() {
         guard model.state == .dropReady, let geometry else { return }
         let area = geometry.expandedRect(size: model.expandedSize)
-        model.state = area.contains(NSEvent.mouseLocation) ? .expanded : .collapsed
+        let staysOpen = area.contains(NSEvent.mouseLocation) || model.keepsPanelOpen
+        model.state = staysOpen ? .expanded : .collapsed
     }
 }

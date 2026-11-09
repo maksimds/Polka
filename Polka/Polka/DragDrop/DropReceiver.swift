@@ -1,6 +1,6 @@
 import AppKit
 
-/// What arrived in a drop. In M1 this is only logged; storage comes in M2.
+/// What arrived in a drop.
 enum DroppedItem: Equatable {
     case file(URL)
     case link(URL)

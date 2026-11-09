@@ -13,22 +13,53 @@ final class NotchViewModel: ObservableObject {
     @Published var notchSize = CGSize(width: 200, height: 32)
     /// True while an acceptable drag hovers over the panel.
     @Published var isDropTargeted = false
-    /// Spike only: the last few drops, shown in the panel so you can see they arrived.
-    @Published private(set) var recentDrops: [String] = []
+    /// A message shown in the panel. It stays until the user closes it.
+    @Published private(set) var notice: String?
 
     let expandedSize = CGSize(width: 520, height: 180)
+
+    private let store: ShelfStore
+
+    init(store: ShelfStore) {
+        self.store = store
+    }
 
     var currentSize: CGSize {
         state == .collapsed ? notchSize : expandedSize
     }
 
-    func handleDrop(_ items: [DroppedItem]) -> Bool {
-        guard !items.isEmpty else { return false }
-        for item in items {
-            recentDrops.insert(item.label, at: 0)
+    /// True while the panel has to stay open even if the pointer leaves it.
+    /// Collapsing would hide a message that is meant to stay until it is closed.
+    var keepsPanelOpen: Bool {
+        notice != nil
+    }
+
+    func handleDrop(_ items: [DroppedItem]) {
+        let result = store.add(items.map(ShelfItem.Draft.init))
+        if let message = Self.alreadyOnShelfMessage(for: result.duplicates) {
+            notice = message
         }
-        recentDrops = Array(recentDrops.prefix(4))
         state = .expanded
-        return true
+    }
+
+    func dismissNotice() {
+        notice = nil
+    }
+
+    private static func alreadyOnShelfMessage(for duplicates: [ShelfItem.Draft]) -> String? {
+        switch duplicates.count {
+        case 0: return nil
+        case 1: return "\(duplicates[0].title) is already on the shelf"
+        default: return "\(duplicates.count) items are already on the shelf"
+        }
+    }
+}
+
+private extension ShelfItem.Draft {
+    init(_ dropped: DroppedItem) {
+        switch dropped {
+        case .file(let url): self.init(fileURL: url)
+        case .link(let url): self.init(linkURL: url)
+        }
     }
 }

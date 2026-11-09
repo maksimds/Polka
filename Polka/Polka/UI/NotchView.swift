@@ -4,6 +4,7 @@ import SwiftUI
 /// expanded size, anchored at the top center of the panel.
 struct NotchView: View {
     @ObservedObject var model: NotchViewModel
+    @ObservedObject var store: ShelfStore
 
     private var isTargeted: Bool { model.isDropTargeted }
 
@@ -26,6 +27,7 @@ struct NotchView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: model.state)
+        .animation(.easeOut(duration: 0.15), value: model.notice)
     }
 
     @ViewBuilder
@@ -47,12 +49,12 @@ struct NotchView: View {
             Text("Polka")
                 .font(.headline)
                 .foregroundStyle(.white)
-            if model.recentDrops.isEmpty {
+            if store.items.isEmpty {
                 Text("Drag a file or link here")
                     .foregroundStyle(.white.opacity(0.6))
             } else {
-                ForEach(model.recentDrops, id: \.self) { label in
-                    Text(label)
+                ForEach(store.items.prefix(4)) { item in
+                    Text(item.title)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .foregroundStyle(.white.opacity(0.85))
@@ -65,6 +67,14 @@ struct NotchView: View {
         .padding(.horizontal, 24)
         .padding(.bottom, 16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .overlay(alignment: .bottom) {
+            if let notice = model.notice {
+                NoticeBanner(message: notice) { model.dismissNotice() }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 12)
+                    .transition(.opacity)
+            }
+        }
     }
 
     private var dropZone: some View {

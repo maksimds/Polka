@@ -10,7 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
 
         Log.app.info("Polka launched")
-        let controller = NotchPanelController()
+        let controller = NotchPanelController(store: ShelfStore())
         controller.start()
         notchController = controller
     }
