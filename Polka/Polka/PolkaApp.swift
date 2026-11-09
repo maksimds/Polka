@@ -9,6 +9,8 @@ import SwiftUI
 
 @main
 struct PolkaApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
         MenuBarExtra("Polka", systemImage: "tray.full") {
             Button("Quit Polka") {
