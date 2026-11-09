@@ -13,7 +13,8 @@ final class NotchViewModel: ObservableObject {
     @Published var notchSize = CGSize(width: 200, height: 32)
     /// True while an acceptable drag hovers over the panel.
     @Published var isDropTargeted = false
-    /// A message shown in the panel. It stays until the user closes it.
+    /// A message shown in the panel. It stays until the user closes it,
+    /// even if the panel collapses and reopens in between.
     @Published private(set) var notice: String?
 
     let expandedSize = CGSize(width: 520, height: 180)
@@ -26,12 +27,6 @@ final class NotchViewModel: ObservableObject {
 
     var currentSize: CGSize {
         state == .collapsed ? notchSize : expandedSize
-    }
-
-    /// True while the panel has to stay open even if the pointer leaves it.
-    /// Collapsing would hide a message that is meant to stay until it is closed.
-    var keepsPanelOpen: Bool {
-        notice != nil
     }
 
     func handleDrop(_ items: [DroppedItem]) {

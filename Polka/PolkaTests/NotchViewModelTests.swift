@@ -27,7 +27,6 @@ struct NotchViewModelTests {
         #expect(store.items.map(\.kind) == [.file, .link])
         #expect(model.state == .expanded)
         #expect(model.notice == nil)
-        #expect(!model.keepsPanelOpen)
     }
 
     @Test func droppingTheSameFileAgainShowsANoticeAndAddsNothing() {
@@ -39,7 +38,6 @@ struct NotchViewModelTests {
         #expect(store.items.count == 1)
         #expect(model.notice == "report.pdf is already on the shelf")
         #expect(model.state == .expanded)
-        #expect(model.keepsPanelOpen)
     }
 
     @Test func droppingTheSameLinkAgainShowsANotice() {
@@ -69,11 +67,9 @@ struct NotchViewModelTests {
 
         model.handleDrop([file("new.txt")])
         #expect(model.notice == "a.txt is already on the shelf")
-        #expect(model.keepsPanelOpen)
 
         model.dismissNotice()
         #expect(model.notice == nil)
-        #expect(!model.keepsPanelOpen)
     }
 
     @Test func aNewDuplicateReplacesTheOldNotice() {

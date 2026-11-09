@@ -16,9 +16,12 @@ final class NotchPanelController {
     private var screenObserver: NSObjectProtocol?
     private var cancellables = Set<AnyCancellable>()
     private var hoverTask: Task<Void, Never>?
+    private var delayedCollapseTask: Task<Void, Never>?
 
     /// How long the pointer must rest on the notch before it expands (accidental-open guard).
     private let hoverDelay: Duration = .milliseconds(150)
+    /// How long the pointer can be away before the panel collapses while a message is showing.
+    private let noticeLeaveDelay: Duration = .seconds(3)
     /// Extra room around the expanded panel before leaving it collapses the panel.
     private let leaveMargin: CGFloat = 16
 
@@ -103,6 +106,7 @@ final class NotchPanelController {
         // Only take mouse and drag events when there is something to interact with.
         panel?.ignoresMouseEvents = (state == .collapsed)
         if state != .collapsed { cancelHover() }
+        if state != .expanded { cancelDelayedCollapse() }
         Log.window.debug("State: \(String(describing: state), privacy: .public)")
     }
 
@@ -136,9 +140,11 @@ final class NotchPanelController {
                 cancelHover()
             }
         case .expanded:
-            let area = geometry.expandedRect(size: model.expandedSize)
-                .insetBy(dx: -leaveMargin, dy: -leaveMargin)
-            if !area.contains(point), !model.keepsPanelOpen {
+            if isPointerNearPanel(geometry) {
+                cancelDelayedCollapse()
+            } else if model.notice != nil {
+                scheduleDelayedCollapse()
+            } else {
                 model.state = .collapsed
             }
         case .dropReady:
@@ -168,6 +174,36 @@ final class NotchPanelController {
         hoverTask = nil
     }
 
+    // MARK: - Leaving while a message is showing
+
+    private func isPointerNearPanel(_ geometry: NotchGeometry) -> Bool {
+        geometry.expandedRect(size: model.expandedSize)
+            .insetBy(dx: -leaveMargin, dy: -leaveMargin)
+            .contains(NSEvent.mouseLocation)
+    }
+
+    /// Runs on a timer because the pointer may stop moving once it has left.
+    /// The message stays in the model, so it is still there on the next hover.
+    private func scheduleDelayedCollapse() {
+        guard delayedCollapseTask == nil else { return }
+        delayedCollapseTask = Task { [weak self, noticeLeaveDelay] in
+            try? await Task.sleep(for: noticeLeaveDelay)
+            guard !Task.isCancelled else { return }
+            self?.collapseIfStillAway()
+        }
+    }
+
+    private func collapseIfStillAway() {
+        delayedCollapseTask = nil
+        guard let geometry, model.state == .expanded, !isPointerNearPanel(geometry) else { return }
+        model.state = .collapsed
+    }
+
+    private func cancelDelayedCollapse() {
+        delayedCollapseTask?.cancel()
+        delayedCollapseTask = nil
+    }
+
     // MARK: - Global drag
 
     private func startDragMonitor() {
@@ -186,7 +222,6 @@ final class NotchPanelController {
     private func finishDrag() {
         guard model.state == .dropReady, let geometry else { return }
         let area = geometry.expandedRect(size: model.expandedSize)
-        let staysOpen = area.contains(NSEvent.mouseLocation) || model.keepsPanelOpen
-        model.state = staysOpen ? .expanded : .collapsed
+        model.state = area.contains(NSEvent.mouseLocation) ? .expanded : .collapsed
     }
 }
