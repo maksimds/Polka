@@ -5,6 +5,8 @@ import SwiftUI
 struct NotchView: View {
     @ObservedObject var model: NotchViewModel
     @ObservedObject var store: ShelfStore
+    let images: ShelfItemImages
+    let dragSource: ShelfDragSource
 
     private var isTargeted: Bool { model.isDropTargeted }
 
@@ -45,36 +47,25 @@ struct NotchView: View {
     }
 
     private var expandedContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Polka")
-                .font(.headline)
-                .foregroundStyle(.white)
+        VStack(spacing: 8) {
             if store.items.isEmpty {
                 Text("Drag a file or link here")
                     .foregroundStyle(.white.opacity(0.6))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ForEach(store.items.prefix(4)) { item in
-                    Text(item.title)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .foregroundStyle(.white.opacity(0.85))
-                }
+                ShelfGridView(items: store.items, images: images, dragSource: dragSource)
             }
-            Spacer(minLength: 0)
-        }
-        .font(.system(size: 13))
-        .padding(.top, model.notchSize.height + 8)
-        .padding(.horizontal, 24)
-        .padding(.bottom, 16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .overlay(alignment: .bottom) {
+            // Below the grid so it never covers a tile, and tiles don't shift under the pointer.
             if let notice = model.notice {
                 NoticeBanner(message: notice) { model.dismissNotice() }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
                     .transition(.opacity)
             }
         }
+        .font(.system(size: 13))
+        .padding(.top, model.notchSize.height + 8)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var dropZone: some View {

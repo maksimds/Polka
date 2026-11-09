@@ -17,7 +17,8 @@ final class NotchViewModel: ObservableObject {
     /// even if the panel collapses and reopens in between.
     @Published private(set) var notice: String?
 
-    let expandedSize = CGSize(width: 520, height: 180)
+    /// Fits two rows of tiles; more than that scrolls.
+    let expandedSize = CGSize(width: 520, height: 270)
 
     private let store: ShelfStore
 

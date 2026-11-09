@@ -9,6 +9,7 @@ final class NotchPanelController {
     private let store: ShelfStore
     private let model: NotchViewModel
     private let dragMonitor = GlobalDragMonitor()
+    private let dragSource = ShelfDragSource()
     private var panel: NotchPanel?
     private var geometry: NotchGeometry?
 
@@ -35,7 +36,10 @@ final class NotchPanelController {
                                styleMask: [.borderless, .nonactivatingPanel],
                                backing: .buffered,
                                defer: false)
-        let hostingView = NSHostingView(rootView: NotchView(model: model, store: store))
+        let hostingView = NSHostingView(rootView: NotchView(model: model,
+                                                            store: store,
+                                                            images: ShelfItemImages(),
+                                                            dragSource: dragSource))
         hostingView.sizingOptions = []
 
         let dropView = DropTargetView(frame: .zero)
@@ -60,6 +64,7 @@ final class NotchPanelController {
 
         startMouseMonitors()
         startDragMonitor()
+        startDragSource()
         observeScreenChanges()
     }
 
@@ -215,6 +220,17 @@ final class NotchPanelController {
             self?.finishDrag()
         }
         dragMonitor.start()
+    }
+
+    private func startDragSource() {
+        dragSource.onWillStart = { [weak self] in
+            self?.dragMonitor.beginOwnDrag()
+        }
+        dragSource.onEnded = { [weak self] in
+            self?.dragMonitor.endOwnDrag()
+            // No mouse-moved events arrive during a drag, so check where the pointer ended up.
+            self?.pointerMoved()
+        }
     }
 
     /// After a drag ends: stay expanded if the pointer is over the panel, otherwise collapse.

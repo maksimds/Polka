@@ -15,6 +15,7 @@ final class GlobalDragMonitor {
     var onDragEnded: (@MainActor () -> Void)?
 
     private(set) var isDragging = false
+    private var isOwnDragActive = false
 
     private let pasteboard = NSPasteboard(name: .drag)
     private var changeCountAtMouseDown = 0
@@ -49,6 +50,17 @@ final class GlobalDragMonitor {
         onDragEnded?()
     }
 
+    /// A drag out of the panel changes the drag pasteboard like any other drag, so
+    /// without this Polka would read its own drag as an incoming one.
+    func beginOwnDrag() {
+        isOwnDragActive = true
+    }
+
+    func endOwnDrag() {
+        isOwnDragActive = false
+        changeCountAtMouseDown = pasteboard.changeCount
+    }
+
     // MARK: - Private
 
     private func mouseDown() {
@@ -56,7 +68,7 @@ final class GlobalDragMonitor {
     }
 
     private func mouseDragged() {
-        guard !isDragging, pasteboard.changeCount != changeCountAtMouseDown else { return }
+        guard !isDragging, !isOwnDragActive, pasteboard.changeCount != changeCountAtMouseDown else { return }
         isDragging = true
         let types = pasteboard.types?.map(\.rawValue).joined(separator: ", ") ?? "none"
         Log.input.debug("Drag started, pasteboard types: \(types, privacy: .public)")

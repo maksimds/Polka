@@ -33,14 +33,14 @@ final class DropTargetView: NSView {
     // MARK: - NSDraggingDestination
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        let canAccept = DropReceiver.canAccept(sender.draggingPasteboard)
+        let canAccept = isAcceptable(sender)
         Log.drop.debug("Drag entered panel, acceptable: \(canAccept)")
         reportTargetChanged(canAccept)
         return canAccept ? .copy : []
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        DropReceiver.canAccept(sender.draggingPasteboard) ? .copy : []
+        isAcceptable(sender) ? .copy : []
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
@@ -65,6 +65,12 @@ final class DropTargetView: NSView {
 
     override func concludeDragOperation(_ sender: NSDraggingInfo?) {
         reportTargetChanged(false)
+    }
+
+    /// AppKit only sets `draggingSource` for drags that started inside Polka, which
+    /// here means an item being dragged out. It must not land back on the shelf.
+    private func isAcceptable(_ drag: NSDraggingInfo) -> Bool {
+        drag.draggingSource == nil && DropReceiver.canAccept(drag.draggingPasteboard)
     }
 
     private func reportTargetChanged(_ targeted: Bool) {

@@ -35,6 +35,14 @@ struct ShelfItem: Identifiable, Codable, Equatable {
 }
 
 extension ShelfItem {
+    /// The file or web address the item points at.
+    var url: URL {
+        switch source {
+        case .file(let path, _): return URL(fileURLWithPath: path)
+        case .link(let url): return url
+        }
+    }
+
     /// The part of a new item that comes from what was dropped.
     /// The store fills in the rest (id, dates, position).
     struct Draft: Equatable {
