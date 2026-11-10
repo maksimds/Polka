@@ -9,6 +9,8 @@ import AppKit
 final class ShelfDragSource: NSObject, NSDraggingSource {
     /// Called just before a drag starts, before it touches the drag pasteboard.
     var onWillStart: (@MainActor () -> Void)?
+    /// Called one run-loop tick after the pointer moves during a drag, with its screen position.
+    var onMoved: (@MainActor (NSPoint) -> Void)?
     /// Called one run-loop tick after a drag ends, however it ended.
     var onEnded: (@MainActor () -> Void)?
 
@@ -45,6 +47,10 @@ final class ShelfDragSource: NSObject, NSDraggingSource {
     func draggingSession(_ session: NSDraggingSession,
                          sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation {
         .copy
+    }
+
+    func draggingSession(_ session: NSDraggingSession, movedTo screenPoint: NSPoint) {
+        DispatchQueue.main.async { [weak self] in self?.onMoved?(screenPoint) }
     }
 
     func draggingSession(_ session: NSDraggingSession,

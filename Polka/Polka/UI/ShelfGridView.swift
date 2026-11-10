@@ -5,6 +5,7 @@ struct ShelfGridView: View {
     let items: [ShelfItem]
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
+    let onDelete: @MainActor (ShelfItem.ID) -> Void
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 5)
 
@@ -12,7 +13,10 @@ struct ShelfGridView: View {
         ScrollView {
             LazyVGrid(columns: columns, spacing: 8) {
                 ForEach(items) { item in
-                    ShelfItemTile(item: item, images: images, dragSource: dragSource)
+                    ShelfItemTile(item: item,
+                                  images: images,
+                                  dragSource: dragSource,
+                                  onDelete: { onDelete(item.id) })
                 }
             }
         }

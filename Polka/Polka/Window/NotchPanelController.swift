@@ -109,7 +109,7 @@ final class NotchPanelController {
 
     private func apply(_ state: NotchState) {
         // Only take mouse and drag events when there is something to interact with.
-        panel?.ignoresMouseEvents = (state == .collapsed)
+        panel?.ignoresMouseEvents = state.isAtNotchSize
         if state != .collapsed { cancelHover() }
         if state != .expanded { cancelDelayedCollapse() }
         Log.window.debug("State: \(String(describing: state), privacy: .public)")
@@ -155,6 +155,9 @@ final class NotchPanelController {
         case .dropReady:
             // A mouse-moved event means no button is held, so any drag is over.
             dragMonitor.endDrag()
+        case .draggingOut:
+            // The panel can't reopen until the drag ends.
+            break
         }
     }
 
@@ -226,8 +229,14 @@ final class NotchPanelController {
         dragSource.onWillStart = { [weak self] in
             self?.dragMonitor.beginOwnDrag()
         }
+        dragSource.onMoved = { [weak self] point in
+            guard let self, let geometry = self.geometry else { return }
+            let panelRect = geometry.expandedRect(size: self.model.expandedSize)
+            self.model.dragOutMoved(isInsidePanel: panelRect.contains(point))
+        }
         dragSource.onEnded = { [weak self] in
             self?.dragMonitor.endOwnDrag()
+            self?.model.dragOutEnded()
             // No mouse-moved events arrive during a drag, so check where the pointer ended up.
             self?.pointerMoved()
         }

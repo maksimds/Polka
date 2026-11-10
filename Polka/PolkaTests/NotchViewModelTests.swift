@@ -72,6 +72,72 @@ struct NotchViewModelTests {
         #expect(model.notice == nil)
     }
 
+    // MARK: - Dragging out
+
+    @Test func thePanelStaysOpenWhileTheDragIsInsideIt() {
+        let (model, _) = makeModel()
+        model.state = .expanded
+
+        model.dragOutMoved(isInsidePanel: true)
+
+        #expect(model.state == .expanded)
+        #expect(model.currentSize == model.expandedSize)
+    }
+
+    @Test func leavingThePanelMidDragShrinksItToTheNotch() {
+        let (model, _) = makeModel()
+        model.state = .expanded
+
+        model.dragOutMoved(isInsidePanel: false)
+
+        #expect(model.state == .draggingOut)
+        #expect(model.currentSize == model.notchSize)
+    }
+
+    @Test func comingBackMidDragDoesNotReopenThePanel() {
+        let (model, _) = makeModel()
+        model.state = .expanded
+        model.dragOutMoved(isInsidePanel: false)
+
+        model.dragOutMoved(isInsidePanel: true)
+
+        #expect(model.state == .draggingOut)
+    }
+
+    @Test func aDragThatEndsAwayCollapsesThePanel() {
+        let (model, _) = makeModel()
+        model.state = .expanded
+        model.dragOutMoved(isInsidePanel: false)
+
+        model.dragOutEnded()
+
+        #expect(model.state == .collapsed)
+    }
+
+    @Test func aDragThatNeverLeftKeepsThePanelOpen() {
+        let (model, _) = makeModel()
+        model.state = .expanded
+        model.dragOutMoved(isInsidePanel: true)
+
+        model.dragOutEnded()
+
+        #expect(model.state == .expanded)
+    }
+
+    @Test func aMessageIsStillThereAfterADragOut() {
+        let (model, _) = makeModel()
+        model.handleDrop([file("a.txt")])
+        model.handleDrop([file("a.txt")])
+
+        model.dragOutMoved(isInsidePanel: false)
+        model.dragOutEnded()
+
+        #expect(model.state == .collapsed)
+        #expect(model.notice == "a.txt is already on the shelf")
+    }
+
+    // MARK: - Notices
+
     @Test func aNewDuplicateReplacesTheOldNotice() {
         let (model, _) = makeModel()
         model.handleDrop([file("a.txt"), file("b.txt")])

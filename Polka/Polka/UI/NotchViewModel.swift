@@ -1,10 +1,17 @@
 import SwiftUI
 
-/// The four states from the PRD's interaction flow. "Dragging out" arrives in M2.
+/// The four states from the PRD's interaction flow.
 enum NotchState: Equatable {
     case collapsed
     case expanded
     case dropReady
+    /// An item is being dragged out and the pointer has left the panel.
+    case draggingOut
+
+    /// True when the shape is notch-sized and the pointer passes through to what's beneath.
+    var isAtNotchSize: Bool {
+        self == .collapsed || self == .draggingOut
+    }
 }
 
 @MainActor
@@ -27,7 +34,7 @@ final class NotchViewModel: ObservableObject {
     }
 
     var currentSize: CGSize {
-        state == .collapsed ? notchSize : expandedSize
+        state.isAtNotchSize ? notchSize : expandedSize
     }
 
     func handleDrop(_ items: [DroppedItem]) {
@@ -40,6 +47,20 @@ final class NotchViewModel: ObservableObject {
 
     func dismissNotice() {
         notice = nil
+    }
+
+    /// Shrinks the panel once a drag leaves it, so it doesn't cover what's underneath.
+    /// It stays shrunk if the pointer comes back, until the drag is over.
+    func dragOutMoved(isInsidePanel: Bool) {
+        if state == .expanded, !isInsidePanel {
+            state = .draggingOut
+        }
+    }
+
+    func dragOutEnded() {
+        if state == .draggingOut {
+            state = .collapsed
+        }
     }
 
     private static func alreadyOnShelfMessage(for duplicates: [ShelfItem.Draft]) -> String? {

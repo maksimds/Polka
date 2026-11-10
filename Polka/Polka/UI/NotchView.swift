@@ -11,13 +11,14 @@ struct NotchView: View {
     private var isTargeted: Bool { model.isDropTargeted }
 
     private var cornerRadius: CGFloat {
-        model.state == .collapsed ? 10 : 24
+        model.state.isAtNotchSize ? 10 : 24
     }
 
     var body: some View {
         VStack(spacing: 0) {
             content
-                .frame(width: model.currentSize.width, height: model.currentSize.height)
+                .frame(width: model.currentSize.width, height: model.currentSize.height, alignment: .top)
+                .clipped()
                 .background(
                     UnevenRoundedRectangle(bottomLeadingRadius: cornerRadius,
                                            bottomTrailingRadius: cornerRadius,
@@ -37,8 +38,12 @@ struct NotchView: View {
         switch model.state {
         case .collapsed:
             Color.clear
-        case .expanded:
+        case .expanded, .draggingOut:
+            // Keeps its full size and stays in place while the shape shrinks around it,
+            // so the tile a drag started from is still there when the drag ends.
             expandedContent
+                .frame(width: model.expandedSize.width, height: model.expandedSize.height)
+                .opacity(model.state == .draggingOut ? 0 : 1)
                 .transition(.opacity)
         case .dropReady:
             dropZone
@@ -53,7 +58,10 @@ struct NotchView: View {
                     .foregroundStyle(.white.opacity(0.6))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ShelfGridView(items: store.items, images: images, dragSource: dragSource)
+                ShelfGridView(items: store.items,
+                              images: images,
+                              dragSource: dragSource,
+                              onDelete: { store.remove(id: $0) })
             }
             // Below the grid so it never covers a tile, and tiles don't shift under the pointer.
             if let notice = model.notice {

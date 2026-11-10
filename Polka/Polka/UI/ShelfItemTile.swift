@@ -8,8 +8,10 @@ struct ShelfItemTile: View {
     let item: ShelfItem
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
+    let onDelete: @MainActor () -> Void
 
     @State private var loadedThumbnail: NSImage?
+    @State private var isHovering = false
 
     private var image: NSImage {
         loadedThumbnail ?? images.image(for: item)
@@ -35,11 +37,32 @@ struct ShelfItemTile: View {
         .frame(maxWidth: .infinity)
         .frame(height: Self.height)
         .overlay {
-            ShelfItemDragHandle(item: item, image: image, source: dragSource)
+            ShelfItemDragHandle(item: item, image: image, source: dragSource) { isHovering = $0 }
+        }
+        .overlay(alignment: .topTrailing) {
+            if isHovering {
+                deleteButton
+                    .padding(.trailing, 6)
+            }
         }
         .task(id: item.id) {
             loadedThumbnail = await images.loadThumbnail(for: item, side: Self.imageSide)
         }
+    }
+
+    /// Removes the item from the shelf. The original file is never touched.
+    private var deleteButton: some View {
+        Button(action: onDelete) {
+            Image(systemName: "xmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(.white)
+                .frame(width: 18, height: 18)
+                .background(Color(white: 0.3), in: Circle())
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Remove \(item.title) from the shelf")
     }
 }
 
