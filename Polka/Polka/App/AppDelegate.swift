@@ -4,13 +4,18 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchController: NotchPanelController?
+    private var expirySweeper: ExpirySweeper?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Unit tests run inside the app; the panel and its mouse monitors stay off for them.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
 
         Log.app.info("Polka launched")
-        let controller = NotchPanelController(store: makeStore())
+        let store = makeStore()
+        let sweeper = ExpirySweeper(store: store)
+        sweeper.start()
+        expirySweeper = sweeper
+        let controller = NotchPanelController(store: store)
         controller.start()
         notchController = controller
     }

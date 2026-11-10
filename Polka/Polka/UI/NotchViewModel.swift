@@ -28,9 +28,12 @@ final class NotchViewModel: ObservableObject {
     let expandedSize = CGSize(width: 520, height: 270)
 
     private let store: ShelfStore
+    private let temporaryLifetime: () -> TimeInterval
 
-    init(store: ShelfStore) {
+    init(store: ShelfStore,
+         temporaryLifetime: @escaping () -> TimeInterval = { ShelfSettings().temporaryLifetime }) {
         self.store = store
+        self.temporaryLifetime = temporaryLifetime
     }
 
     var currentSize: CGSize {
@@ -47,6 +50,16 @@ final class NotchViewModel: ObservableObject {
 
     func dismissNotice() {
         notice = nil
+    }
+
+    /// The tile's one-click toggle: a permanent item becomes temporary, and the other way round.
+    func toggleTemporary(_ id: ShelfItem.ID) {
+        guard let item = store.items.first(where: { $0.id == id }) else { return }
+        if item.isTemporary {
+            store.makePermanent(id: id)
+        } else {
+            store.makeTemporary(id: id, lifetime: temporaryLifetime())
+        }
     }
 
     /// Shrinks the panel once a drag leaves it, so it doesn't cover what's underneath.

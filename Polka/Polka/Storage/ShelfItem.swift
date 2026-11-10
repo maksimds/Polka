@@ -43,6 +43,15 @@ extension ShelfItem {
         }
     }
 
+    var isTemporary: Bool {
+        expiresAt != nil
+    }
+
+    func isExpired(at date: Date) -> Bool {
+        guard let expiresAt else { return false }
+        return expiresAt <= date
+    }
+
     /// The part of a new item that comes from what was dropped.
     /// The store fills in the rest (id, dates, position).
     struct Draft: Equatable {

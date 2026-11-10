@@ -61,7 +61,8 @@ struct NotchView: View {
                 ShelfGridView(items: store.items,
                               images: images,
                               dragSource: dragSource,
-                              onDelete: { store.remove(id: $0) })
+                              onDelete: { store.remove(id: $0) },
+                              onToggleTemporary: { model.toggleTemporary($0) })
             }
             // Below the grid so it never covers a tile, and tiles don't shift under the pointer.
             if let notice = model.notice {

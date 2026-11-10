@@ -67,6 +67,33 @@ final class ShelfStore: ObservableObject {
         return true
     }
 
+    /// Makes an item temporary: it is removed `lifetime` seconds from now.
+    func makeTemporary(id: ShelfItem.ID, lifetime: TimeInterval) {
+        let expiresAt = now().addingTimeInterval(lifetime)
+        update(id) { $0.expiresAt = expiresAt }
+    }
+
+    func makePermanent(id: ShelfItem.ID) {
+        update(id) { $0.expiresAt = nil }
+    }
+
+    /// Removes temporary items whose time is up and returns them.
+    @discardableResult
+    func removeExpired() -> [ShelfItem] {
+        let date = now()
+        let expired = items.filter { $0.isExpired(at: date) }
+        guard !expired.isEmpty else { return [] }
+        commit(items.filter { !$0.isExpired(at: date) })
+        return expired
+    }
+
+    private func update(_ id: ShelfItem.ID, _ change: (inout ShelfItem) -> Void) {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return }
+        var newItems = items
+        change(&newItems[index])
+        commit(newItems)
+    }
+
     /// Publishes a new list, keeping each item's `sortOrder` equal to its position.
     private func commit(_ newItems: [ShelfItem]) {
         items = newItems.enumerated().map { index, item in

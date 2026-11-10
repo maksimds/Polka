@@ -112,6 +112,8 @@ final class NotchPanelController {
         panel?.ignoresMouseEvents = state.isAtNotchSize
         if state != .collapsed { cancelHover() }
         if state != .expanded { cancelDelayedCollapse() }
+        // Expired items never show, even if the expiry timer ran late.
+        if state == .expanded { store.removeExpired() }
         Log.window.debug("State: \(String(describing: state), privacy: .public)")
     }
 
