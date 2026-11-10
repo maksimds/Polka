@@ -7,6 +7,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var expirySweeper: ExpirySweeper?
     private var copyKeeper: CopyKeeper?
     private var linkPreviewFetcher: LinkPreviewFetcher?
+    private var settingsWindow: SettingsWindowController?
+
+    /// One switch shared by the menu bar menu and the Settings window, so they always agree.
+    private(set) lazy var loginItem = LoginItem()
+
+    func showSettings() {
+        let controller = settingsWindow ?? SettingsWindowController(loginItem: loginItem)
+        settingsWindow = controller
+        controller.show()
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Unit tests run inside the app; the panel and its mouse monitors stay off for them.
@@ -36,7 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let images = ShelfItemImages(previewsFolder: locations?.previewsFolder)
-        let controller = NotchPanelController(store: store, images: images, copies: copyKeeper)
+        let controller = NotchPanelController(store: store,
+                                              images: images,
+                                              copies: copyKeeper,
+                                              openSettings: { [weak self] in self?.showSettings() })
         controller.start()
         notchController = controller
     }

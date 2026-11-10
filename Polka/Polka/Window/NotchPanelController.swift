@@ -8,6 +8,7 @@ import SwiftUI
 final class NotchPanelController {
     private let store: ShelfStore
     private let images: ShelfItemImages
+    private let openSettings: @MainActor () -> Void
     private let model: NotchViewModel
     private let dragMonitor = GlobalDragMonitor()
     private let dragSource = ShelfDragSource()
@@ -32,9 +33,13 @@ final class NotchPanelController {
     /// animation doesn't play out on the new one.
     private let collapseSettleTime: Duration = .milliseconds(500)
 
-    init(store: ShelfStore, images: ShelfItemImages, copies: CopyKeeper?) {
+    init(store: ShelfStore,
+         images: ShelfItemImages,
+         copies: CopyKeeper?,
+         openSettings: @escaping @MainActor () -> Void) {
         self.store = store
         self.images = images
+        self.openSettings = openSettings
         model = NotchViewModel(store: store, copies: copies)
     }
 
@@ -46,7 +51,10 @@ final class NotchPanelController {
         let hostingView = NSHostingView(rootView: NotchView(model: model,
                                                             store: store,
                                                             images: images,
-                                                            dragSource: dragSource))
+                                                            dragSource: dragSource,
+                                                            openSettings: { [weak self] in
+                                                                self?.openSettingsFromPanel()
+                                                            }))
         hostingView.sizingOptions = []
 
         let dropView = DropTargetView(frame: .zero)
@@ -149,6 +157,12 @@ final class NotchPanelController {
             store.refreshReferences()
         }
         Log.window.debug("State: \(String(describing: state), privacy: .public)")
+    }
+
+    /// The gear in the panel: the shelf gets out of the way, then Settings opens.
+    private func openSettingsFromPanel() {
+        model.state = .collapsed
+        openSettings()
     }
 
     // MARK: - Hover

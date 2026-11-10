@@ -6,18 +6,20 @@ import ServiceManagement
 ///
 /// macOS stores this, not Polka: it's the same switch as Polka's row under
 /// System Settings > General > Login Items, so either place can change it. Polka
-/// reads the current state again whenever one of its menus opens.
+/// reads the current state again whenever one of its menus opens, and whenever it
+/// becomes the active app (coming back to the Settings window from System Settings).
 @MainActor
 final class LoginItem: ObservableObject {
     @Published private(set) var isEnabled = false
 
     private let service = SMAppService.mainApp
-    private var menuObserver: AnyCancellable?
+    private var refreshObserver: AnyCancellable?
 
     init() {
         refresh()
-        menuObserver = NotificationCenter.default
-            .publisher(for: NSMenu.didBeginTrackingNotification)
+        let center = NotificationCenter.default
+        refreshObserver = center.publisher(for: NSMenu.didBeginTrackingNotification)
+            .merge(with: center.publisher(for: NSApplication.didBecomeActiveNotification))
             .sink { [weak self] _ in
                 MainActor.assumeIsolated { self?.refresh() }
             }

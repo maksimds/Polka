@@ -7,6 +7,7 @@ struct NotchView: View {
     @ObservedObject var store: ShelfStore
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
+    let openSettings: @MainActor () -> Void
 
     private var isTargeted: Bool { model.isDropTargeted }
 
@@ -43,6 +44,7 @@ struct NotchView: View {
             // so the tile a drag started from is still there when the drag ends.
             expandedContent
                 .frame(width: model.expandedSize.width, height: model.expandedSize.height)
+                .overlay(alignment: .topTrailing) { settingsButton }
                 .opacity(model.state == .draggingOut ? 0 : 1)
                 .transition(.opacity)
         case .dropReady:
@@ -84,6 +86,21 @@ struct NotchView: View {
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// Opens Settings. It sits in the strip beside the notch, at the top right, and
+    /// is as tall as the notch so the icon lines up with it.
+    private var settingsButton: some View {
+        Button(action: openSettings) {
+            Image(systemName: "gearshape.fill")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+                .frame(width: 28, height: model.notchSize.height)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.trailing, 10)
+        .accessibilityLabel("Settings")
     }
 
     private var dropZone: some View {

@@ -122,6 +122,46 @@ struct ShelfLifetimeTests {
         #expect(ShelfSettings(defaults: defaults).temporaryLifetime == 24 * 60 * 60)
     }
 
+    @Test func aLifetimeChosenInSettingsIsUsedForTheNextTemporaryItem() throws {
+        let suite = "PolkaTests-\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let settings = ShelfSettings(defaults: defaults)
+        let store = ShelfStore(now: { start })
+        store.add([fileDraft("old.txt"), fileDraft("new.txt")])
+        let model = NotchViewModel(store: store, temporaryLifetime: { settings.temporaryLifetime })
+        model.toggleTemporary(store.items[0].id)
+
+        settings.temporaryLifetime = 3 * 60 * 60
+        model.toggleTemporary(store.items[1].id)
+
+        #expect(defaults.double(forKey: ShelfSettings.temporaryLifetimeKey) == 3 * 60 * 60)
+        // The item made temporary before the change keeps its 24 hours.
+        #expect(store.items[0].expiresAt == start.addingTimeInterval(24 * 60 * 60))
+        #expect(store.items[1].expiresAt == start.addingTimeInterval(3 * 60 * 60))
+    }
+
+    @Test func settingsOffersTheStandardLifetimesPlusOneSetByHand() {
+        let standard = ShelfSettings.standardTemporaryLifetimes
+        #expect(standard.contains(ShelfSettings.defaultTemporaryLifetime))
+        #expect(ShelfSettings.temporaryLifetimeChoices(current: 6 * 60 * 60) == standard)
+
+        let byHand: TimeInterval = 30 * 60 * 60
+        let choices = ShelfSettings.temporaryLifetimeChoices(current: byHand)
+        #expect(choices.count == standard.count + 1)
+        #expect(choices.contains(byHand))
+        #expect(choices == choices.sorted())
+    }
+
+    @Test func lifetimesAreWrittenOutInWords() {
+        #expect(ShelfSettings.label(forLifetime: 60 * 60) == "1 hour")
+        #expect(ShelfSettings.label(forLifetime: 12 * 60 * 60) == "12 hours")
+        #expect(ShelfSettings.label(forLifetime: 24 * 60 * 60) == "1 day")
+        #expect(ShelfSettings.label(forLifetime: 3 * 24 * 60 * 60) == "3 days")
+        #expect(ShelfSettings.label(forLifetime: 7 * 24 * 60 * 60) == "1 week")
+        #expect(ShelfSettings.label(forLifetime: 30 * 60 * 60) == "1 day, 6 hours")
+    }
+
     // MARK: - Time left label
 
     @Test func timeLeftIsRoundedUpToAFriendlyUnit() throws {
