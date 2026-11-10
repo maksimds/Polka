@@ -3,7 +3,8 @@ import SwiftUI
 /// One item in the grid: thumbnail or icon, name and type (FR-2).
 struct ShelfItemTile: View {
     static let height: CGFloat = 100
-    private static let imageSide: CGFloat = 52
+    /// The picture's square, centered in its column.
+    static let imageSide: CGFloat = 52
 
     let item: ShelfItem
     /// False when the original file can't be found (FR-15).

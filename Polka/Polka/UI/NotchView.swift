@@ -15,6 +15,8 @@ struct NotchView: View {
 
     /// How much the closed notch swells just before it opens.
     private static let hoverGrowth = CGSize(width: 14, height: 4)
+    /// Space between the panel's sides and the tiles, also used by the header.
+    private static let sideInset: CGFloat = 16
 
     private var isTargeted: Bool { model.isDropTargeted }
     /// The shelf is showing and can be used.
@@ -95,7 +97,7 @@ struct NotchView: View {
         ZStack(alignment: .top) {
             expandedContent
                 .frame(width: model.expandedSize.width, height: model.expandedSize.height)
-                .overlay(alignment: .topTrailing) { settingsButton }
+                .overlay(alignment: .top) { header }
                 // Grows out of the notch together with the shape...
                 .scaleEffect(isOpen || reduceMotion ? 1 : 0.92, anchor: .top)
                 // ...fading in just behind it, and out quickly before it shrinks.
@@ -157,23 +159,50 @@ struct NotchView: View {
         }
         .font(.system(size: 13))
         .padding(.top, model.notchSize.height + 8)
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Self.sideInset)
         .padding(.bottom, 14)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    /// Opens Settings. It sits in the strip beside the notch, at the top right, and
-    /// is as tall as the notch so the icon lines up with it.
+    /// The strip beside the notch, laid out on the tiles' own grid: same columns, same
+    /// side inset, and each end held to a picture's width. So "Polka" starts exactly
+    /// where the first column's pictures start, and the gear ends exactly where the
+    /// last column's pictures end. The middle columns sit under the notch.
+    private var header: some View {
+        LazyVGrid(columns: ShelfGridView.columns, spacing: 0) {
+            nameLabel
+                .frame(width: ShelfItemTile.imageSide, alignment: .leading)
+            ForEach(0..<3, id: \.self) { _ in
+                Color.clear
+            }
+            settingsButton
+                .frame(width: ShelfItemTile.imageSide, alignment: .trailing)
+        }
+        .frame(height: model.notchSize.height)
+        .padding(.horizontal, Self.sideInset)
+    }
+
+    private var nameLabel: some View {
+        Text("Polka")
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(.white.opacity(0.55))
+            // Never squeezed by its column: a longer name would run on to the right.
+            .fixedSize()
+            .frame(height: model.notchSize.height)
+            .allowsHitTesting(false)
+    }
+
+    /// Opens Settings. The gear's own frame is just the symbol, so its edge is what
+    /// lines up with the tiles; the area you can click reaches 8 pt further around it.
     private var settingsButton: some View {
         Button(action: openSettings) {
             Image(systemName: "gearshape.fill")
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.white.opacity(0.55))
-                .frame(width: 28, height: model.notchSize.height)
-                .contentShape(Rectangle())
+                .frame(height: model.notchSize.height)
+                .contentShape(Rectangle().inset(by: -8))
         }
         .buttonStyle(.plain)
-        .padding(.trailing, 10)
         .accessibilityLabel("Settings")
     }
 

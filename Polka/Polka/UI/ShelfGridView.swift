@@ -19,7 +19,9 @@ struct ShelfGridView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 5)
+    /// Five equal columns. Shared with the panel's header, which lines its name and
+    /// gear up with the tiles.
+    static let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 5)
 
     /// A tile grows in when added and shrinks away when removed, while the others
     /// slide into place. Reduce Motion gets a fade.
@@ -35,7 +37,7 @@ struct ShelfGridView: View {
         GeometryReader { proxy in
             ScrollViewReader { scroller in
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: 8) {
+                    LazyVGrid(columns: Self.columns, spacing: 8) {
                         ForEach(items) { item in
                             ShelfItemTile(item: item,
                                           isAvailable: !missingItemIDs.contains(item.id),
