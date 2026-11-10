@@ -36,6 +36,11 @@ final class NotchViewModel: ObservableObject {
     /// Where a Shift-click range starts: the last item clicked without Shift.
     private var selectionAnchor: ShelfItem.ID?
     @Published var notchSize = CGSize(width: 200, height: 32)
+    /// False on a screen without a notch, where the closed panel is a pill instead.
+    @Published var hasNotch = true
+    /// True for the last moment of the hover delay, while the closed notch swells just
+    /// before the panel opens.
+    @Published var isAboutToOpen = false
     /// True while an acceptable drag hovers over the panel.
     @Published var isDropTargeted = false
     /// A message shown in the panel. It stays until the user closes it,

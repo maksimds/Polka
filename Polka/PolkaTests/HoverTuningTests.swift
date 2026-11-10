@@ -51,11 +51,11 @@ struct HoverTuningTests {
 
     // MARK: - Settings
 
-    @Test func theDefaultsAre150MillisecondsAndMedium() throws {
+    @Test func theDefaultsAre250MillisecondsAndSmall() throws {
         try withDefaults { defaults in
             let settings = ShelfSettings(defaults: defaults)
-            #expect(settings.hoverDelay == 150)
-            #expect(settings.hoverArea == .medium)
+            #expect(settings.hoverDelay == 250)
+            #expect(settings.hoverArea == .small)
         }
     }
 
@@ -74,7 +74,7 @@ struct HoverTuningTests {
         }
     }
 
-    @Test func theAreaIsSavedAndAnUnknownValueFallsBackToMedium() throws {
+    @Test func theAreaIsSavedAndAnUnknownValueFallsBackToTheDefault() throws {
         try withDefaults { defaults in
             let settings = ShelfSettings(defaults: defaults)
 
@@ -83,7 +83,7 @@ struct HoverTuningTests {
             #expect(defaults.string(forKey: ShelfSettings.hoverAreaKey) == "large")
 
             defaults.set("enormous", forKey: ShelfSettings.hoverAreaKey)
-            #expect(settings.hoverArea == .medium)
+            #expect(settings.hoverArea == .small)
         }
     }
 }

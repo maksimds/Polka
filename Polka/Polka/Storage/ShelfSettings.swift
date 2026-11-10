@@ -51,7 +51,7 @@ struct ShelfSettings {
     // MARK: - Hover
 
     static let hoverDelayKey = "hoverDelayMilliseconds"
-    static let defaultHoverDelay = 150
+    static let defaultHoverDelay = 250
     /// The delays Settings offers, in milliseconds. A stored value outside it counts
     /// as the nearest end.
     static let hoverDelayRange = 0...800
@@ -71,10 +71,11 @@ struct ShelfSettings {
     }
 
     static let hoverAreaKey = "hoverArea"
+    static let defaultHoverArea = HoverArea.small
 
     /// How far around the notch the pointer opens the panel.
     var hoverArea: HoverArea {
-        get { defaults.string(forKey: Self.hoverAreaKey).flatMap(HoverArea.init(rawValue:)) ?? .medium }
+        get { defaults.string(forKey: Self.hoverAreaKey).flatMap(HoverArea.init(rawValue:)) ?? Self.defaultHoverArea }
         nonmutating set { defaults.set(newValue.rawValue, forKey: Self.hoverAreaKey) }
     }
 }

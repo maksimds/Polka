@@ -8,7 +8,7 @@ struct SettingsView: View {
     /// `defaults write` while the window is open shows up too.
     @AppStorage(ShelfSettings.temporaryLifetimeKey) private var storedLifetime: Double = 0
     @AppStorage(ShelfSettings.hoverDelayKey) private var storedHoverDelay = ShelfSettings.defaultHoverDelay
-    @AppStorage(ShelfSettings.hoverAreaKey) private var hoverArea: HoverArea = .medium
+    @AppStorage(ShelfSettings.hoverAreaKey) private var hoverArea = ShelfSettings.defaultHoverArea
 
     private var lifetime: Binding<TimeInterval> {
         Binding(get: { ShelfSettings.temporaryLifetime(stored: storedLifetime) },

@@ -9,48 +9,117 @@ struct NotchView: View {
     let dragSource: ShelfDragSource
     let openSettings: @MainActor () -> Void
 
-    private var isTargeted: Bool { model.isDropTargeted }
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Goes up each time a drag arrives over the drop zone, to bounce its icon once.
+    @State private var dropArrivals = 0
 
-    private var cornerRadius: CGFloat {
-        model.state.isAtNotchSize ? 10 : 24
+    /// How much the closed notch swells just before it opens.
+    private static let hoverGrowth = CGSize(width: 14, height: 4)
+
+    private var isTargeted: Bool { model.isDropTargeted }
+    /// The shelf is showing and can be used.
+    private var isOpen: Bool { model.state == .expanded }
+
+    // MARK: - Shape
+
+    private var shapeSize: CGSize {
+        var size = model.currentSize
+        if model.state == .collapsed, model.isAboutToOpen, !reduceMotion {
+            size.width += Self.hoverGrowth.width
+            size.height += Self.hoverGrowth.height
+        }
+        return size
+    }
+
+    /// The outward curves where the shape meets the top of the screen. A real notch
+    /// has its own, so the closed shape there stays square and hidden inside it.
+    private var topRadius: CGFloat {
+        guard model.state.isAtNotchSize else { return 14 }
+        return model.hasNotch ? 0 : 6
+    }
+
+    /// Without a notch, the closed shape is a pill: its bottom is fully round.
+    private var bottomRadius: CGFloat {
+        guard model.state.isAtNotchSize else { return 24 }
+        return model.hasNotch ? 10 : shapeSize.height / 2
+    }
+
+    /// Opening: one smooth spring with a touch of bounce, shared by the shape and the
+    /// shelf inside it, so the shelf grows out of the notch as a single piece.
+    private static let openSpring = Animation.spring(duration: 0.42, bounce: 0.12)
+
+    /// Opening uses `openSpring`; closing is quicker and doesn't bounce. Reduce
+    /// Motion gets a plain ease. Read with the new state, so it picks the direction.
+    private var shapeAnimation: Animation {
+        if reduceMotion { return .easeInOut(duration: 0.2) }
+        return model.state.isAtNotchSize ? .spring(duration: 0.3, bounce: 0) : Self.openSpring
     }
 
     var body: some View {
         VStack(spacing: 0) {
             content
-                .frame(width: model.currentSize.width, height: model.currentSize.height, alignment: .top)
+                .frame(width: shapeSize.width, height: shapeSize.height, alignment: .top)
                 .clipped()
                 .background(
-                    UnevenRoundedRectangle(bottomLeadingRadius: cornerRadius,
-                                           bottomTrailingRadius: cornerRadius,
-                                           style: .continuous)
+                    NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
                         .fill(Color.black)
+                        // Lifts the open panel off whatever is behind it. Pushed down so
+                        // it falls below the panel rather than on the menu bar beside
+                        // it, and none while closed, where it would ring the notch. It
+                        // fades in as the opening settles, not while the shape grows.
+                        .animation(isOpen ? .easeOut(duration: 0.2).delay(0.2) : .easeIn(duration: 0.1)) {
+                            $0.shadow(color: .black.opacity(model.state.isAtNotchSize ? 0 : 0.3),
+                                      radius: 10, y: 9)
+                        }
                 )
             // Drops are received by DropTargetView (AppKit), which wraps this view.
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: model.state)
+        // When the state and the swell change together (the panel opening), the state's
+        // animation wins, since the modifier nearer the view applies last.
+        .animation(shapeAnimation, value: model.state)
+        // The same spring as the opening, so the swell flows into it without a seam.
+        .animation(reduceMotion ? nil : Self.openSpring, value: model.isAboutToOpen)
         .animation(.easeOut(duration: 0.15), value: model.notice)
     }
 
-    @ViewBuilder
+    // MARK: - Content
+
+    /// The shelf is built once and stays built while the panel is closed, hidden and
+    /// clipped to the notch. Opening only reveals it, so the first frames of the
+    /// animation never wait for the grid, its icons and thumbnails to be made. It also
+    /// keeps its full size while the shape shrinks around it, so the tile a drag out
+    /// started from is still there when the drag ends.
     private var content: some View {
-        switch model.state {
-        case .collapsed:
-            Color.clear
-        case .expanded, .draggingOut:
-            // Keeps its full size and stays in place while the shape shrinks around it,
-            // so the tile a drag started from is still there when the drag ends.
+        ZStack(alignment: .top) {
             expandedContent
                 .frame(width: model.expandedSize.width, height: model.expandedSize.height)
                 .overlay(alignment: .topTrailing) { settingsButton }
-                .opacity(model.state == .draggingOut ? 0 : 1)
-                .transition(.opacity)
-        case .dropReady:
-            dropZone
-                .transition(.opacity)
+                // Grows out of the notch together with the shape...
+                .scaleEffect(isOpen || reduceMotion ? 1 : 0.92, anchor: .top)
+                // ...fading in just behind it, and out quickly before it shrinks.
+                .animation(isOpen ? .easeOut(duration: 0.24).delay(0.04) : .easeIn(duration: 0.1)) {
+                    $0.opacity(isOpen ? 1 : 0)
+                }
+                // Hidden tiles can't be clicked or hovered.
+                .allowsHitTesting(isOpen)
+            if model.state == .dropReady {
+                dropZone
+                    .frame(width: model.expandedSize.width, height: model.expandedSize.height)
+                    .transition(dropZoneTransition)
+            }
         }
+    }
+
+    /// The drop zone is light enough to build when a drag starts. It arrives as the
+    /// shape opens and leaves quickly.
+    private var dropZoneTransition: AnyTransition {
+        let arrival: AnyTransition = reduceMotion
+            ? .opacity
+            : .opacity.combined(with: .scale(scale: 0.92, anchor: .top))
+        return .asymmetric(insertion: arrival.animation(.easeOut(duration: 0.24).delay(0.04)),
+                           removal: .opacity.animation(.easeIn(duration: 0.1)))
     }
 
     /// Nil when Polka has nowhere to keep copies, so tiles show no "Keep a Copy".
@@ -67,6 +136,7 @@ struct NotchView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ShelfGridView(items: store.items,
+                              isActive: isOpen,
                               missingItemIDs: store.missingItemIDs,
                               copyingItemIDs: store.copyingItemIDs,
                               selection: model.selection,
@@ -107,6 +177,8 @@ struct NotchView: View {
         .accessibilityLabel("Settings")
     }
 
+    // MARK: - Drop zone
+
     private var dropZone: some View {
         RoundedRectangle(cornerRadius: 14, style: .continuous)
             .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [6, 5]))
@@ -116,10 +188,22 @@ struct NotchView: View {
                     .fill(.white.opacity(isTargeted ? 0.12 : 0.04))
             )
             .overlay(
-                Text(isTargeted ? "Release to add" : "Drop here")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(.white)
+                VStack(spacing: 8) {
+                    Image(systemName: "tray.and.arrow.down.fill")
+                        .font(.system(size: 22, weight: .medium))
+                        .symbolEffect(.bounce, value: dropArrivals)
+                    Text(isTargeted ? "Release to add" : "Drop here")
+                        .font(.system(size: 14, weight: .semibold))
+                        .contentTransition(.opacity)
+                }
+                .foregroundStyle(.white.opacity(isTargeted ? 1 : 0.8))
             )
+            // Leans toward the pointer a little when a drag is over it.
+            .scaleEffect(isTargeted && !reduceMotion ? 1.015 : 1)
+            .animation(.easeOut(duration: 0.15), value: isTargeted)
+            .onChange(of: isTargeted) { _, targeted in
+                if targeted { dropArrivals += 1 }
+            }
             .padding(.top, model.notchSize.height + 8)
             .padding([.horizontal, .bottom], 16)
     }

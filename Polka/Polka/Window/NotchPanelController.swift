@@ -32,6 +32,9 @@ final class NotchPanelController {
     /// this long after collapsing before it moves to another screen, so the end of the
     /// animation doesn't play out on the new one.
     private let collapseSettleTime: Duration = .milliseconds(500)
+    /// How long before a hover opens the panel the notch starts to swell. Within about
+    /// a tenth of a second, the eye reads the two as a single motion.
+    private let swellLead: Duration = .milliseconds(100)
 
     init(store: ShelfStore,
          images: ShelfItemImages,
@@ -116,6 +119,7 @@ final class NotchPanelController {
         let geometry = NotchGeometry(screen: screen)
         self.geometry = geometry
         model.notchSize = geometry.notchRect.size
+        model.hasNotch = geometry.hasNotch
 
         // The panel is fixed at the largest size; SwiftUI animates the shape inside it.
         let size = CGSize(width: model.expandedSize.width + 80,
@@ -151,13 +155,16 @@ final class NotchPanelController {
         if state == .collapsed { collapsedAt = .now }
         if state != .collapsed { cancelHover() }
         if state != .expanded { cancelDelayedCollapse() }
-        // Expired items never show, even if the expiry timer ran late, and files that
-        // moved or went missing since the last look are caught before they're seen.
-        if state == .expanded {
-            store.removeExpired()
-            store.refreshReferences()
-        }
         Log.window.debug("State: \(String(describing: state), privacy: .public)")
+    }
+
+    /// Expired items never show, even if the expiry timer ran late, and files that
+    /// moved or went missing since the last look are caught before they're seen.
+    /// Run while the hover delay counts down or a drag is on its way, rather than as
+    /// the panel opens, so the opening animation never waits on the disk.
+    private func prepareToOpen() {
+        store.removeExpired()
+        store.refreshReferences()
     }
 
     /// The gear in the panel: the shelf gets out of the way, then Settings opens.
@@ -218,26 +225,49 @@ final class NotchPanelController {
 
     /// Waits for the hover delay from Settings (the accidental-open guard), then opens
     /// the panel if the pointer is still there.
+    ///
+    /// The notch starts to swell `swellLead` before the panel opens, not when the
+    /// pointer arrives. Started any earlier, the swell finishes and sits still before
+    /// the panel follows, which reads as two separate steps. This close, the swell
+    /// carries straight into the opening as one motion. The total wait is unchanged.
     private func scheduleExpand() {
         guard hoverTask == nil else { return }
+        prepareToOpen()
         let delay = Duration.milliseconds(settings.hoverDelay)
+        let lead = min(swellLead, delay)
         hoverTask = Task { [weak self] in
-            try? await Task.sleep(for: delay)
+            try? await Task.sleep(for: delay - lead)
+            guard !Task.isCancelled else { return }
+            self?.swellIfStillHovering()
+            try? await Task.sleep(for: lead)
             guard !Task.isCancelled else { return }
             self?.expandIfStillHovering()
         }
     }
 
+    private func swellIfStillHovering() {
+        guard let geometry, model.state == .collapsed,
+              geometry.hoverRect(area: settings.hoverArea).contains(NSEvent.mouseLocation) else { return }
+        model.isAboutToOpen = true
+    }
+
     private func expandIfStillHovering() {
         hoverTask = nil
         guard let geometry, model.state == .collapsed,
-              geometry.hoverRect(area: settings.hoverArea).contains(NSEvent.mouseLocation) else { return }
+              geometry.hoverRect(area: settings.hoverArea).contains(NSEvent.mouseLocation) else {
+            cancelHover()
+            return
+        }
         model.state = .expanded
     }
 
     private func cancelHover() {
         hoverTask?.cancel()
         hoverTask = nil
+        // Only when it changes: this runs on every mouse move away from the notch.
+        if model.isAboutToOpen {
+            model.isAboutToOpen = false
+        }
     }
 
     // MARK: - Leaving while a message is showing
@@ -277,6 +307,8 @@ final class NotchPanelController {
             guard let self, self.model.state != .dropReady else { return }
             // The drop zone opens on the screen the drag starts on...
             self.followPointer()
+            // A drop opens the shelf, so get it ready now.
+            self.prepareToOpen()
             self.model.state = .dropReady
         }
         dragMonitor.onDragMoved = { [weak self] in

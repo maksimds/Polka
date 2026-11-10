@@ -22,8 +22,10 @@ struct NotchGeometry {
                                height: topInset)
             hasNotch = true
         } else {
+            // A pill (FR-14) as tall as the menu bar and about as wide, relative to its
+            // height, as the MacBook's notch, so it reads as the same thing.
             let menuBarHeight = max(frame.maxY - screen.visibleFrame.maxY, 24)
-            let width: CGFloat = 200
+            let width: CGFloat = 160
             notchRect = CGRect(x: frame.midX - width / 2,
                                y: frame.maxY - menuBarHeight,
                                width: width,

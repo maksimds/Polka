@@ -11,6 +11,8 @@ struct ShelfItemTile: View {
     /// True while Polka is making a copy of the file.
     let isCopying: Bool
     let isSelected: Bool
+    /// False while the panel is closed or a drag out is running.
+    let isActive: Bool
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
     let onClick: @MainActor (SelectionClick) -> Void
@@ -90,13 +92,23 @@ struct ShelfItemTile: View {
             if isHovering || item.isTemporary {
                 lifetimeButton
                     .padding(.leading, 6)
+                    .transition(.opacity)
             }
         }
         .overlay(alignment: .topTrailing) {
             if isHovering {
                 deleteButton
                     .padding(.trailing, 6)
+                    .transition(.opacity)
             }
+        }
+        // Quick fades, so moving across the grid doesn't leave buttons flickering.
+        .animation(.easeOut(duration: 0.12), value: isHovering)
+        .animation(.easeOut(duration: 0.12), value: isSelected)
+        // The tile outlives the closed panel now, and a closing panel stops taking
+        // mouse events, so the pointer leaving may never be reported. Start clean.
+        .onChange(of: isActive) { _, active in
+            if !active { isHovering = false }
         }
         .task(id: item.id) {
             loadedThumbnail = await images.loadThumbnail(for: item, side: Self.imageSide)
