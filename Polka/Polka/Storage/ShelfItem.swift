@@ -17,7 +17,7 @@ struct ShelfItem: Identifiable, Codable, Equatable {
 
     /// What the item points at.
     enum Source: Codable, Equatable {
-        /// A file or folder on disk. `bookmark` lets M3 find a file after it moves.
+        /// A file or folder on disk. `bookmark` finds it again after it moves.
         case file(path: String, bookmark: Data?)
         case link(URL)
     }
@@ -65,7 +65,7 @@ extension ShelfItem {
             let isFolder = values?.isDirectory == true && values?.isPackage != true
             kind = isFolder ? .folder : .file
             title = url.lastPathComponent
-            source = .file(path: url.standardizedFileURL.path, bookmark: nil)
+            source = .file(path: url.standardizedFileURL.path, bookmark: FileReference.bookmark(for: url))
         }
 
         init(linkURL url: URL) {

@@ -3,6 +3,7 @@ import SwiftUI
 /// The shelf's items as a scrolling grid, newest first.
 struct ShelfGridView: View {
     let items: [ShelfItem]
+    let missingItemIDs: Set<ShelfItem.ID>
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
     let onDelete: @MainActor (ShelfItem.ID) -> Void
@@ -15,6 +16,7 @@ struct ShelfGridView: View {
             LazyVGrid(columns: columns, spacing: 8) {
                 ForEach(items) { item in
                     ShelfItemTile(item: item,
+                                  isAvailable: !missingItemIDs.contains(item.id),
                                   images: images,
                                   dragSource: dragSource,
                                   onDelete: { onDelete(item.id) },

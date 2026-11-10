@@ -59,6 +59,7 @@ struct NotchView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ShelfGridView(items: store.items,
+                              missingItemIDs: store.missingItemIDs,
                               images: images,
                               dragSource: dragSource,
                               onDelete: { store.remove(id: $0) },

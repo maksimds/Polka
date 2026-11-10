@@ -6,6 +6,8 @@ struct ShelfItemTile: View {
     private static let imageSide: CGFloat = 52
 
     let item: ShelfItem
+    /// False when the original file can't be found (FR-15).
+    let isAvailable: Bool
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
     let onDelete: @MainActor () -> Void
@@ -19,7 +21,8 @@ struct ShelfItemTile: View {
     }
 
     private var detailLine: String {
-        [item.typeLabel, item.timeLeftLabel(now: Date())]
+        guard isAvailable else { return "Unavailable" }
+        return [item.typeLabel, item.timeLeftLabel(now: Date())]
             .compactMap { $0 }
             .joined(separator: " · ")
     }
@@ -30,10 +33,12 @@ struct ShelfItemTile: View {
                 .resizable()
                 .scaledToFit()
                 .frame(width: Self.imageSide, height: Self.imageSide)
+                .saturation(isAvailable ? 1 : 0)
+                .opacity(isAvailable ? 1 : 0.35)
                 .padding(.bottom, 4)
             Text(item.title)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white)
+                .foregroundStyle(.white.opacity(isAvailable ? 1 : 0.5))
                 .lineLimit(1)
                 .truncationMode(.middle)
             Text(detailLine)
@@ -44,7 +49,10 @@ struct ShelfItemTile: View {
         .frame(maxWidth: .infinity)
         .frame(height: Self.height)
         .overlay {
-            ShelfItemDragHandle(item: item, image: image, source: dragSource) { isHovering = $0 }
+            ShelfItemDragHandle(item: item,
+                                image: image,
+                                source: dragSource,
+                                isDragEnabled: isAvailable) { isHovering = $0 }
         }
         .overlay(alignment: .topLeading) {
             // Temporary items always show it, so they stand out at a glance.

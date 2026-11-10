@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         Log.app.info("Polka launched")
         let store = makeStore()
+        store.refreshReferences()
         let sweeper = ExpirySweeper(store: store)
         sweeper.start()
         expirySweeper = sweeper

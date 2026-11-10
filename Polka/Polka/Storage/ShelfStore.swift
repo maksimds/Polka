@@ -13,6 +13,9 @@ final class ShelfStore: ObservableObject {
     }
 
     @Published private(set) var items: [ShelfItem]
+    /// File items whose original can't be found right now (FR-15). They stay on the
+    /// shelf and come back if the file does.
+    @Published private(set) var missingItemIDs: Set<ShelfItem.ID> = []
 
     private let persistence: ShelfPersistence
     private let now: () -> Date
@@ -85,6 +88,29 @@ final class ShelfStore: ObservableObject {
         guard !expired.isEmpty else { return [] }
         commit(items.filter { !$0.isExpired(at: date) })
         return expired
+    }
+
+    /// Checks every file item against the disk. A moved or renamed file is followed
+    /// through its bookmark, and one that is gone or in the Trash is marked missing.
+    func refreshReferences() {
+        var newItems = items
+        var missing = Set<ShelfItem.ID>()
+        var changed = false
+        for index in newItems.indices {
+            guard case .file(let path, let bookmark) = newItems[index].source else { continue }
+            switch FileReference.locate(path: path, bookmark: bookmark) {
+            case .unchanged:
+                break
+            case .updated(let newPath, let newBookmark):
+                newItems[index].source = .file(path: newPath, bookmark: newBookmark)
+                newItems[index].title = URL(fileURLWithPath: newPath).lastPathComponent
+                changed = true
+            case .missing:
+                missing.insert(newItems[index].id)
+            }
+        }
+        if changed { commit(newItems) }
+        if missing != missingItemIDs { missingItemIDs = missing }
     }
 
     private func update(_ id: ShelfItem.ID, _ change: (inout ShelfItem) -> Void) {

@@ -12,6 +12,8 @@ final class TileDragView: NSView {
     var image: NSImage?
     weak var source: ShelfDragSource?
     var onHoverChanged: ((Bool) -> Void)?
+    /// Off for items whose file is missing, so there is nothing broken to drag.
+    var isDragEnabled = true
 
     /// Where the press started. Nil once a drag has begun or the press has ended.
     private var pressPoint: NSPoint?
@@ -54,7 +56,7 @@ final class TileDragView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let pressPoint, let item, let image, let source else { return }
+        guard isDragEnabled, let pressPoint, let item, let image, let source else { return }
         let point = convert(event.locationInWindow, from: nil)
         guard hypot(point.x - pressPoint.x, point.y - pressPoint.y) >= dragThreshold else { return }
 
@@ -78,6 +80,7 @@ struct ShelfItemDragHandle: NSViewRepresentable {
     let item: ShelfItem
     let image: NSImage
     let source: ShelfDragSource
+    let isDragEnabled: Bool
     let onHoverChanged: (Bool) -> Void
 
     func makeNSView(context: Context) -> TileDragView {
@@ -88,6 +91,7 @@ struct ShelfItemDragHandle: NSViewRepresentable {
         view.item = item
         view.image = image
         view.source = source
+        view.isDragEnabled = isDragEnabled
         view.onHoverChanged = onHoverChanged
     }
 }
