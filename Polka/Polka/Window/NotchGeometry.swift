@@ -37,6 +37,21 @@ struct NotchGeometry {
         NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main
     }
 
+    /// The screen the pointer is on, or nil if it's on none of them.
+    static func screen(containing point: CGPoint) -> NSScreen? {
+        let screens = NSScreen.screens
+        return frameIndex(containing: point, in: screens.map(\.frame)).map { screens[$0] }
+    }
+
+    /// Which of the frames holds a pointer location. `NSMouseInRect` counts a frame's
+    /// top edge as inside and its bottom edge as outside (`CGRect.contains` does the
+    /// opposite). That matters with a display placed above the MacBook: the pointer
+    /// resting on the notch, at the very top of the built-in screen, must still count
+    /// as on the built-in screen, not on the bottom edge of the one above.
+    static func frameIndex(containing point: CGPoint, in frames: [CGRect]) -> Int? {
+        frames.firstIndex { NSMouseInRect(point, $0, false) }
+    }
+
     /// Area that triggers hover expansion: the notch plus a little slack on each side.
     var hoverRect: CGRect {
         CGRect(x: notchRect.minX - 12,

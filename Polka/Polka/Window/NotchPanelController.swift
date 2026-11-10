@@ -19,6 +19,7 @@ final class NotchPanelController {
     private var cancellables = Set<AnyCancellable>()
     private var hoverTask: Task<Void, Never>?
     private var delayedCollapseTask: Task<Void, Never>?
+    private var collapsedAt = ContinuousClock.now
 
     /// How long the pointer must rest on the notch before it expands (accidental-open guard).
     private let hoverDelay: Duration = .milliseconds(150)
@@ -26,6 +27,10 @@ final class NotchPanelController {
     private let noticeLeaveDelay: Duration = .seconds(3)
     /// Extra room around the expanded panel before leaving it collapses the panel.
     private let leaveMargin: CGFloat = 16
+    /// About how long the shape takes to shrink back to notch size. The panel waits
+    /// this long after collapsing before it moves to another screen, so the end of the
+    /// animation doesn't play out on the new one.
+    private let collapseSettleTime: Duration = .milliseconds(500)
 
     init(store: ShelfStore, images: ShelfItemImages, copies: CopyKeeper?) {
         self.store = store
@@ -75,11 +80,30 @@ final class NotchPanelController {
 
     // MARK: - Layout
 
+    /// Places the panel on the screen the pointer is on.
     private func layoutPanel() {
-        guard let panel, let screen = NotchGeometry.preferredScreen() else {
+        guard let screen = NotchGeometry.screen(containing: NSEvent.mouseLocation)
+                ?? NotchGeometry.preferredScreen() else {
             Log.window.error("No screen available for the notch panel")
             return
         }
+        place(on: screen)
+    }
+
+    /// Moves the panel to the pointer's screen if it isn't there already. There is one
+    /// panel that moves rather than one per screen, since the pointer can only be on
+    /// one screen at a time. A screen without a notch gets a pill at the top center.
+    private func followPointer() {
+        guard let geometry,
+              let screen = NotchGeometry.screen(containing: NSEvent.mouseLocation),
+              // By frame rather than by object, so a screen still counts as the same
+              // one if AppKit replaces its NSScreen object.
+              screen.frame != geometry.screen.frame else { return }
+        place(on: screen)
+    }
+
+    private func place(on screen: NSScreen) {
+        guard let panel else { return }
         let geometry = NotchGeometry(screen: screen)
         self.geometry = geometry
         model.notchSize = geometry.notchRect.size
@@ -115,6 +139,7 @@ final class NotchPanelController {
     private func apply(_ state: NotchState) {
         // Only take mouse and drag events when there is something to interact with.
         panel?.ignoresMouseEvents = state.isAtNotchSize
+        if state == .collapsed { collapsedAt = .now }
         if state != .collapsed { cancelHover() }
         if state != .expanded { cancelDelayedCollapse() }
         // Expired items never show, even if the expiry timer ran late, and files that
@@ -145,6 +170,10 @@ final class NotchPanelController {
     }
 
     private func pointerMoved() {
+        // Only a collapsed panel moves: an open one stays put until the pointer leaves it.
+        if model.state == .collapsed, ContinuousClock.now - collapsedAt >= collapseSettleTime {
+            followPointer()
+        }
         guard let geometry else { return }
         let point = NSEvent.mouseLocation
 
@@ -228,7 +257,14 @@ final class NotchPanelController {
     private func startDragMonitor() {
         dragMonitor.onDragStarted = { [weak self] in
             guard let self, self.model.state != .dropReady else { return }
+            // The drop zone opens on the screen the drag starts on...
+            self.followPointer()
             self.model.state = .dropReady
+        }
+        dragMonitor.onDragMoved = { [weak self] in
+            // ...and moves with it if the drag crosses to another screen.
+            guard let self, self.model.state == .dropReady else { return }
+            self.followPointer()
         }
         dragMonitor.onDragEnded = { [weak self] in
             self?.finishDrag()

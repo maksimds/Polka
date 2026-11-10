@@ -113,7 +113,7 @@ The two highest risks are window behavior and drag detection, so both are tested
 Open questions:
 
 - [x] Should new items default to temporary or permanent, and what is the default lifetime? Permanent by default. An item made temporary lasts 24 hours unless the setting is changed.
-- [ ] Should the panel follow the pointer to an external display or stay on the notch display?
+- [x] Should the panel follow the pointer to an external display or stay on the notch display? It follows the pointer. A screen without a notch shows the top-center pill from FR-14.
 - [x] Is fetching a link's page title in v1, or is the raw URL enough at first? In v1, a link shows its site's icon and is titled with the site's name and the page's address.
 
 ## Milestones

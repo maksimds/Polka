@@ -13,6 +13,10 @@ import AppKit
 final class GlobalDragMonitor {
     var onDragStarted: (@MainActor () -> Void)?
     var onDragEnded: (@MainActor () -> Void)?
+    /// Called over and over while a drag is active, from dragged events and from the
+    /// mouse-button poll, since dragged events may stop reaching global monitors once
+    /// the other app's drag is under way. The pointer may not have moved since the last call.
+    var onDragMoved: (@MainActor () -> Void)?
 
     private(set) var isDragging = false
     private var isOwnDragActive = false
@@ -68,7 +72,11 @@ final class GlobalDragMonitor {
     }
 
     private func mouseDragged() {
-        guard !isDragging, !isOwnDragActive, pasteboard.changeCount != changeCountAtMouseDown else { return }
+        if isDragging {
+            onDragMoved?()
+            return
+        }
+        guard !isOwnDragActive, pasteboard.changeCount != changeCountAtMouseDown else { return }
         isDragging = true
         let types = pasteboard.types?.map(\.rawValue).joined(separator: ", ") ?? "none"
         Log.input.debug("Drag started, pasteboard types: \(types, privacy: .public)")
@@ -85,6 +93,8 @@ final class GlobalDragMonitor {
             MainActor.assumeIsolated {
                 if NSEvent.pressedMouseButtons & 1 == 0 {
                     self?.endDrag()
+                } else {
+                    self?.onDragMoved?()
                 }
             }
         }

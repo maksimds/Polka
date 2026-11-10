@@ -9,6 +9,8 @@ Personal macOS menu bar app (Swift/SwiftUI + AppKit) that turns the MacBook notc
 - Dev machine: macOS 15.7.4, Xcode 16.3. Code is edited in VS Code; Xcode is for project settings and debugging.
 - App deployment target: macOS 14.0. Swift 5 language mode. Bundle ID `com.maksimds.Polka`, personal team signing.
 - Unsandboxed agent app (`LSUIElement = YES`, no Dock icon) with a `MenuBarExtra` Quit item.
+- Launch at login is an "Open at Login" checkmark in the menu bar menu, using `SMAppService.mainApp`. It's off until turned on. macOS keeps the setting (it's Polka's row in System Settings > Login Items), so Polka reads it again whenever a menu opens.
+- The panel follows the pointer. There is one panel, and it moves to whatever screen the pointer is on while it's collapsed or open as a drop zone, but never while expanded or during a drag out. A screen without a notch gets the top-center pill (FR-14).
 - Storage is a plain JSON file for v1, not SwiftData.
 - Hybrid storage: items reference the original by default, with an optional "keep a copy" for permanent items.
 - Deleting an item never deletes the original file.
@@ -31,9 +33,9 @@ Layers follow the PRD. Keep them separated.
 
 - `Polka/Polka.xcodeproj`
 - `Polka/Polka/PolkaApp.swift`: app entry, `MenuBarExtra`, `@NSApplicationDelegateAdaptor`
-- `Polka/Polka/App/`: `AppDelegate` (builds the store and helpers), `Log` (os.Logger, one category per layer), `ExpirySweeper` (removes expired items), `LinkPreviewFetcher` (site names and icons for links), `CopyKeeper` (makes kept copies, receives promised files, deletes unused copies)
-- `Polka/Polka/Window/`: `NotchGeometry` (notch rect, top-center fallback), `NotchPanel` (borderless non-activating `NSPanel`, all Spaces, never key), `NotchPanelController` (state machine, hover, layout, screen changes)
-- `Polka/Polka/Input/`: `GlobalDragMonitor` (detects a drag starting anywhere via drag pasteboard `changeCount`, global mouse monitors, and a mouse-button poll for drag end)
+- `Polka/Polka/App/`: `AppDelegate` (builds the store and helpers), `Log` (os.Logger, one category per layer), `ExpirySweeper` (removes expired items), `LinkPreviewFetcher` (site names and icons for links), `CopyKeeper` (makes kept copies, receives promised files, deletes unused copies), `LoginItem` (Open at Login)
+- `Polka/Polka/Window/`: `NotchGeometry` (notch rect, top-center fallback, which screen the pointer is on), `NotchPanel` (borderless non-activating `NSPanel`, all Spaces, never key), `NotchPanelController` (state machine, hover, layout, following the pointer between screens, screen changes)
+- `Polka/Polka/Input/`: `GlobalDragMonitor` (detects a drag starting anywhere via drag pasteboard `changeCount`, global mouse monitors, and a mouse-button poll for drag end that also reports the pointer while a drag goes on)
 - `Polka/Polka/DragDrop/`: `DropTargetView` (AppKit `NSDraggingDestination` wrapping the SwiftUI content), `DropReceiver` (reads file URLs, links and file promises from the pasteboard), `ShelfDragSource` (`NSDraggingSource` owned by the panel controller), `TileDragView` (AppKit layer on each tile that starts drags, reports hover and shows the right-click menu)
 - `Polka/Polka/UI/`: `NotchView`, `NotchViewModel` (`NotchState`), `ShelfGridView`, `ShelfItemTile`, `ShelfItemImages` (icons, Quick Look thumbnails and site icons), `NoticeBanner`
 - `Polka/Polka/Storage/`: `ShelfItem`, `ShelfStore`, `ShelfPersistence`, `JSONFileShelfPersistence` (shelf.json), `ShelfLocations` (Polka's Application Support folder), `ShelfCopies` (the Copies folder, and the only code that deletes copies), `ShelfSettings` (UserDefaults), `FileReference` (bookmarks, moved and missing files), `LinkNaming` (link titles). No AppKit or window dependencies, so it stays testable on its own.
@@ -65,6 +67,8 @@ Always build after changes to confirm it compiles. Hands-on testing (hover, drag
 - During `.draggingOut` the shape shrinks but the tiles stay mounted at full size with opacity 0, so the tile a drag started from still exists when the drag ends.
 - No mouse-moved events arrive during a drag, so check where the pointer is when one ends.
 - Tracking areas need `.activeAlways`, since Polka is rarely the active app.
+- Find the pointer's screen with `NSMouseInRect`, not `CGRect.contains`. The notch is at a screen's top edge, which `NSMouseInRect` counts as inside, so with a display placed above the MacBook the pointer resting on the notch still belongs to the built-in screen.
+- After the panel collapses, it waits for the shrink animation to finish before it moves to another screen, so the animation doesn't end on the new one.
 
 ## Working style
 
