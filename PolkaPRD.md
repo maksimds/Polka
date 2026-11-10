@@ -24,8 +24,8 @@ v1 is a lean shelf for files and links. Everything else waits until the core fee
 
 | Bucket | Items |
 | --- | --- |
-| In v1 | Hover to expand, drag in, drag out, files, folders, links, temporary and permanent items, delete, menu bar item, launch at login |
-| Later | Plain text and image snippets, search, tags or groups, quick look preview, link title and favicon fetch, pin to top, keyboard shortcut to open |
+| In v1 | Hover to expand, drag in, drag out, files, folders, links with page title and preview image, temporary and permanent items, delete, menu bar item, launch at login |
+| Later | Plain text and image snippets, search, tags or groups, quick look preview, pin to top, keyboard shortcut to open |
 | Out of scope | Cloud sync, iPhone companion, sharing with others, AirDrop, music or calendar widgets, App Store release |
 
 ## Functional requirements
@@ -39,7 +39,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-3 | Dragging an item out of the panel drops the real file or URL into the target app | P0 |
 | FR-4 | Starting a drag anywhere on screen opens the panel as a drop target before the pointer reaches it | P0 |
 | FR-5 | Dropping files or folders stores them as items | P0 |
-| FR-6 | Dropping a URL stores it as a link item with its URL and, when available, page title | P0 |
+| FR-6 | Dropping a URL stores it as a link item with its URL and, when available, its page title and preview image | P0 |
 | FR-7 | Each item is marked temporary (with expiry) or permanent, with a default and a one-click toggle | P0 |
 | FR-8 | Items can be deleted individually; deleting never removes the original file | P0 |
 | FR-9 | Clicking an item opens the file or link in its default app | P1 |
@@ -79,7 +79,7 @@ Key decisions:
 
 ## Data and storage
 
-Every shelf entry is one item, stored locally in the app's support folder. Nothing leaves the Mac.
+Every shelf entry is one item, stored locally in the app's support folder. Nothing leaves the Mac, except that adding a link fetches its page title and preview image from that website.
 
 | Field | Meaning |
 | --- | --- |
@@ -92,9 +92,9 @@ Every shelf entry is one item, stored locally in the app's support folder. Nothi
 | `expiresAt` | Empty for permanent items, otherwise the time the item is removed |
 | `sortOrder` | Position in the grid |
 
-Copy versus reference is a hybrid. Items default to reference, so no files are duplicated and the original stays the source of truth. Choosing to keep an item permanently offers a copy, so it survives if the original moves. Deleting an item removes the entry and any Polka copy, never the original file.
+Copy versus reference is a hybrid. Items default to reference, so no files are duplicated and the original stays the source of truth. An item's right-click menu offers to keep a copy, so it survives if the original moves. Deleting an item removes the entry and any Polka copy, never the original file.
 
-Temporary items are swept by a check at launch and on a timer. The default lifetime is a setting, not a hard-coded value.
+New items are permanent unless the user makes them temporary. A temporary item lasts 24 hours by default, and that lifetime is a setting, not a hard-coded value. Temporary items are swept by a check at launch and on a timer.
 
 ## Risks and open questions
 
@@ -111,9 +111,9 @@ The two highest risks are window behavior and drag detection, so both are tested
 
 Open questions:
 
-- [ ] Should new items default to temporary or permanent, and what is the default lifetime?
+- [x] Should new items default to temporary or permanent, and what is the default lifetime? Permanent by default. An item made temporary lasts 24 hours unless the setting is changed.
 - [ ] Should the panel follow the pointer to an external display or stay on the notch display?
-- [ ] Is fetching a link's page title in v1, or is the raw URL enough at first?
+- [x] Is fetching a link's page title in v1, or is the raw URL enough at first? In v1, links fetch their page title and preview image.
 
 ## Milestones
 
