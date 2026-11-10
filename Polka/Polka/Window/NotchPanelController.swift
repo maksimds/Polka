@@ -22,6 +22,7 @@ final class NotchPanelController {
     private var cancellables = Set<AnyCancellable>()
     private var hoverTask: Task<Void, Never>?
     private var delayedCollapseTask: Task<Void, Never>?
+    private var dragOpenTask: Task<Void, Never>?
     private var collapsedAt = ContinuousClock.now
 
     /// How long the pointer can be away before the panel collapses while a message is showing.
@@ -32,6 +33,10 @@ final class NotchPanelController {
     /// this long after collapsing before it moves to another screen, so the end of the
     /// animation doesn't play out on the new one.
     private let collapseSettleTime: Duration = .milliseconds(500)
+    /// How long a drag from another app runs before the drop zone opens, unless it
+    /// reaches the notch first. Quick drags, like moving a file between two Finder
+    /// windows, are often over by then and never open it.
+    private let dragOpenDelay: Duration = .milliseconds(500)
     /// How long before a hover opens the panel the notch starts to swell. Within about
     /// a tenth of a second, the eye reads the two as a single motion.
     private let swellLead: Duration = .milliseconds(100)
@@ -114,6 +119,13 @@ final class NotchPanelController {
         place(on: screen)
     }
 
+    /// Only a collapsed panel moves, and only once it has finished shrinking. An open
+    /// one stays put until the pointer leaves it.
+    private func followPointerIfSettled() {
+        guard model.state == .collapsed, ContinuousClock.now - collapsedAt >= collapseSettleTime else { return }
+        followPointer()
+    }
+
     private func place(on screen: NSScreen) {
         guard let panel else { return }
         let geometry = NotchGeometry(screen: screen)
@@ -192,10 +204,7 @@ final class NotchPanelController {
     }
 
     private func pointerMoved() {
-        // Only a collapsed panel moves: an open one stays put until the pointer leaves it.
-        if model.state == .collapsed, ContinuousClock.now - collapsedAt >= collapseSettleTime {
-            followPointer()
-        }
+        followPointerIfSettled()
         guard let geometry else { return }
         let point = NSEvent.mouseLocation
 
@@ -304,22 +313,64 @@ final class NotchPanelController {
 
     private func startDragMonitor() {
         dragMonitor.onDragStarted = { [weak self] in
-            guard let self, self.model.state != .dropReady else { return }
-            // The drop zone opens on the screen the drag starts on...
-            self.followPointer()
-            // A drop opens the shelf, so get it ready now.
-            self.prepareToOpen()
-            self.model.state = .dropReady
+            self?.dragStarted()
         }
         dragMonitor.onDragMoved = { [weak self] in
-            // ...and moves with it if the drag crosses to another screen.
-            guard let self, self.model.state == .dropReady else { return }
-            self.followPointer()
+            self?.dragMoved()
         }
         dragMonitor.onDragEnded = { [weak self] in
+            self?.cancelDragOpen()
             self?.finishDrag()
         }
         dragMonitor.start()
+    }
+
+    /// A drag from another app has started. The drop zone doesn't open right away,
+    /// which was distracting for drags that have nothing to do with Polka. It opens
+    /// as soon as the drag reaches the notch, or once it has run for `dragOpenDelay`.
+    private func dragStarted() {
+        guard model.state != .dropReady else { return }
+        // A drop opens the shelf, so get it ready while the drag is on its way.
+        prepareToOpen()
+        cancelDragOpen()
+        dragOpenTask = Task { [weak self, dragOpenDelay] in
+            try? await Task.sleep(for: dragOpenDelay)
+            guard !Task.isCancelled else { return }
+            self?.openDropZone()
+        }
+        // The drag may have started right at the notch.
+        dragMoved()
+    }
+
+    /// Called many times a second while a drag runs. Mouse-moved events don't arrive
+    /// during a drag, so this is where the panel follows the pointer and notices the
+    /// drag reaching the notch.
+    private func dragMoved() {
+        switch model.state {
+        case .dropReady:
+            // The drop zone moves with the drag if it crosses to another screen.
+            followPointer()
+        case .collapsed, .expanded:
+            followPointerIfSettled()
+            if let geometry, geometry.hoverRect(area: settings.hoverArea).contains(NSEvent.mouseLocation) {
+                openDropZone()
+            }
+        case .draggingOut:
+            break
+        }
+    }
+
+    private func openDropZone() {
+        cancelDragOpen()
+        guard dragMonitor.isDragging, model.state == .collapsed || model.state == .expanded else { return }
+        // The drop zone opens on the screen the drag is on.
+        followPointer()
+        model.state = .dropReady
+    }
+
+    private func cancelDragOpen() {
+        dragOpenTask?.cancel()
+        dragOpenTask = nil
     }
 
     private func startDragSource() {

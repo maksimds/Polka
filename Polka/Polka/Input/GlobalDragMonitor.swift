@@ -86,10 +86,12 @@ final class GlobalDragMonitor {
 
     /// Backup for drag end: a mouse-up during a drag session is not always delivered
     /// to global monitors (for example when the drop lands in Polka itself), so poll
-    /// the mouse button state while a drag is active.
+    /// the mouse button state while a drag is active. The same poll reports the
+    /// pointer, often enough (20 times a second) that the drop zone opens the moment
+    /// a drag reaches the notch. It only runs during a drag.
     private func startReleaseTimer() {
         releaseTimer?.invalidate()
-        releaseTimer = Timer.scheduledTimer(withTimeInterval: 0.15, repeats: true) { [weak self] _ in
+        releaseTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 if NSEvent.pressedMouseButtons & 1 == 0 {
                     self?.endDrag()

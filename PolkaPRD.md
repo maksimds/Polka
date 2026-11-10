@@ -37,7 +37,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-1 | A panel sits at the notch and expands when the pointer rests on it for a short delay | P0 |
 | FR-2 | The expanded panel shows stored items as a grid with thumbnail or icon, name and type | P0 |
 | FR-3 | Dragging an item out of the panel drops the real file or URL into the target app | P0 |
-| FR-4 | Starting a drag anywhere on screen opens the panel as a drop target before the pointer reaches it | P0 |
+| FR-4 | A drag from any app opens the panel as a drop target once it has lasted half a second, or as soon as it reaches the notch. A shorter drag elsewhere never opens it | P0 |
 | FR-5 | Dropping files or folders stores them as items | P0 |
 | FR-6 | Dropping a URL stores it as a link item titled with the site's name and the page's address (for example GitHub/apple/swift) and shown with the site's icon | P0 |
 | FR-7 | Each item is marked temporary (with expiry) or permanent, with a default and a one-click toggle | P0 |
@@ -54,7 +54,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 
 &#91;embedded content: notch states · 4 states, 6 transitions\]
 
-Hovering the notch expands the panel, and starting a drag anywhere on screen opens it as a drop target. If a drag ends somewhere else, the panel returns to collapsed.
+Hovering the notch expands the panel. A drag from any app opens it as a drop target once the drag has lasted half a second, or right away if it reaches the notch, so quick drags elsewhere don't flash the panel open. If a drag ends somewhere else, the panel returns to collapsed.
 
 ## Technical approach
 
