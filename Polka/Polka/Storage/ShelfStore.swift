@@ -16,6 +16,11 @@ final class ShelfStore: ObservableObject {
     /// File items whose original can't be found right now (FR-15). They stay on the
     /// shelf and come back if the file does.
     @Published private(set) var missingItemIDs: Set<ShelfItem.ID> = []
+    /// File items whose copy is being made right now. Not saved.
+    @Published private(set) var copyingItemIDs: Set<ShelfItem.ID> = []
+    /// True when a saved shelf existed but couldn't be read, so `items` may be
+    /// missing things that are still on disk, such as their copies.
+    private(set) var loadFailed = false
 
     private let persistence: ShelfPersistence
     private let now: () -> Date
@@ -29,6 +34,7 @@ final class ShelfStore: ObservableObject {
         } catch {
             Log.storage.error("Could not load the shelf: \(error.localizedDescription, privacy: .public)")
             items = []
+            loadFailed = true
         }
     }
 
@@ -36,7 +42,7 @@ final class ShelfStore: ObservableObject {
     /// is left where it is and reported in the result, so the UI can say so.
     @discardableResult
     func add(_ drafts: [ShelfItem.Draft]) -> AddResult {
-        var seen = Set(items.map(\.source.dedupeKey))
+        var seen = Set(items.flatMap(\.dedupeKeys))
         var newItems: [ShelfItem] = []
         var duplicates: [ShelfItem.Draft] = []
         let date = now()
@@ -50,7 +56,7 @@ final class ShelfStore: ObservableObject {
                                       kind: draft.kind,
                                       title: draft.title,
                                       source: draft.source,
-                                      storageMode: .reference,
+                                      storageMode: draft.storageMode,
                                       createdAt: date,
                                       expiresAt: nil,
                                       sortOrder: 0))
@@ -105,6 +111,63 @@ final class ShelfStore: ObservableObject {
         }
     }
 
+    // MARK: - Copies
+
+    func setCopying(_ id: ShelfItem.ID, _ isCopying: Bool) {
+        if isCopying {
+            copyingItemIDs.insert(id)
+        } else {
+            copyingItemIDs.remove(id)
+        }
+    }
+
+    /// Points a file item at Polka's copy instead of its original, and remembers the
+    /// original so the item can go back to it. Returns false if the item is gone or
+    /// is already a copy, in which case the new copy isn't used.
+    @discardableResult
+    func useCopy(id: ShelfItem.ID, at copy: URL) -> Bool {
+        guard let item = items.first(where: { $0.id == id }),
+              item.storageMode == .reference,
+              case .file(let path, let bookmark) = item.source else { return false }
+        update(id) { item in
+            item.original = ShelfItem.Original(path: path, bookmark: bookmark)
+            item.source = .file(path: copy.standardizedFileURL.path, bookmark: FileReference.bookmark(for: copy))
+            item.storageMode = .copy
+        }
+        missingItemIDs.remove(id)
+        return true
+    }
+
+    /// Points a kept copy back at its original, following it if it moved. Returns
+    /// false, and keeps the copy, if the original can't be found.
+    @discardableResult
+    func useOriginal(id: ShelfItem.ID) -> Bool {
+        guard let item = items.first(where: { $0.id == id }),
+              item.storageMode == .copy,
+              let original = item.original else { return false }
+        var path = original.path
+        var bookmark = original.bookmark
+        switch FileReference.locate(path: path, bookmark: bookmark) {
+        case .missing:
+            return false
+        case .unchanged:
+            break
+        case .updated(let newPath, let newBookmark):
+            path = newPath
+            bookmark = newBookmark
+        }
+        update(id) { item in
+            item.source = .file(path: path, bookmark: bookmark)
+            item.title = URL(fileURLWithPath: path).lastPathComponent
+            item.storageMode = .reference
+            item.original = nil
+        }
+        missingItemIDs.remove(id)
+        return true
+    }
+
+    // MARK: - References
+
     /// Checks every file item against the disk. A moved or renamed file is followed
     /// through its bookmark, and one that is gone or in the Trash is marked missing.
     func refreshReferences() {
@@ -122,6 +185,14 @@ final class ShelfStore: ObservableObject {
                 changed = true
             case .missing:
                 missing.insert(newItems[index].id)
+            }
+            // A kept copy's original is followed too, so the item can still go back to
+            // it and so dropping it again is still caught as a duplicate.
+            if let original = newItems[index].original,
+               case .updated(let newPath, let newBookmark) = FileReference.locate(path: original.path,
+                                                                                  bookmark: original.bookmark) {
+                newItems[index].original = ShelfItem.Original(path: newPath, bookmark: newBookmark)
+                changed = true
             }
         }
         if changed { commit(newItems) }

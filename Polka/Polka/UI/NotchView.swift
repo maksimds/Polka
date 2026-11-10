@@ -51,6 +51,12 @@ struct NotchView: View {
         }
     }
 
+    /// Nil when Polka has nowhere to keep copies, so tiles show no "Keep a Copy".
+    private var keepCopyAction: (@MainActor (ShelfItem.ID) -> Void)? {
+        guard model.canKeepCopies else { return nil }
+        return { [model] id in model.toggleKeepCopy(id) }
+    }
+
     private var expandedContent: some View {
         VStack(spacing: 8) {
             if store.items.isEmpty {
@@ -60,10 +66,12 @@ struct NotchView: View {
             } else {
                 ShelfGridView(items: store.items,
                               missingItemIDs: store.missingItemIDs,
+                              copyingItemIDs: store.copyingItemIDs,
                               images: images,
                               dragSource: dragSource,
                               onDelete: { store.remove(id: $0) },
-                              onToggleTemporary: { model.toggleTemporary($0) })
+                              onToggleTemporary: { model.toggleTemporary($0) },
+                              onToggleKeepCopy: keepCopyAction)
             }
             // Below the grid so it never covers a tile, and tiles don't shift under the pointer.
             if let notice = model.notice {

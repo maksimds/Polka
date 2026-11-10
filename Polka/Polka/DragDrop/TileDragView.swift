@@ -6,14 +6,27 @@ import SwiftUI
 /// This is AppKit for the same reason drops are: SwiftUI's drag support expects a
 /// window that can become key, and the notch panel never does. It also reports
 /// hover, using a tracking area marked `.activeAlways` so it works while another
-/// app is frontmost.
+/// app is frontmost, and shows the tile's right-click menu, because this layer sits
+/// on top of the tile and is what receives the click.
 final class TileDragView: NSView {
+    /// One entry in the tile's right-click menu.
+    struct MenuEntry {
+        let title: String
+        var isChecked = false
+        var isEnabled = true
+        let action: @MainActor () -> Void
+    }
+
     var item: ShelfItem?
     var image: NSImage?
     weak var source: ShelfDragSource?
     var onHoverChanged: ((Bool) -> Void)?
     /// Off for items whose file is missing, so there is nothing broken to drag.
     var isDragEnabled = true
+    /// Empty means no menu.
+    var menuEntries: [MenuEntry] = []
+    /// The entries of the menu that is open, so a choice runs the action it showed.
+    private var shownEntries: [MenuEntry] = []
 
     /// Where the press started. Nil once a drag has begun or the press has ended.
     private var pressPoint: NSPoint?
@@ -73,6 +86,32 @@ final class TileDragView: NSView {
     override func mouseUp(with event: NSEvent) {
         pressPoint = nil
     }
+
+    // MARK: - Right-click menu
+
+    /// AppKit asks for this on a right-click and shows the menu itself. A menu
+    /// doesn't need the panel to become key, so focus stays with the app in front.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard !menuEntries.isEmpty else { return nil }
+        shownEntries = menuEntries
+        let menu = NSMenu()
+        // Each entry says for itself whether it can be chosen.
+        menu.autoenablesItems = false
+        for (index, entry) in shownEntries.enumerated() {
+            let menuItem = NSMenuItem(title: entry.title, action: #selector(menuEntryChosen(_:)), keyEquivalent: "")
+            menuItem.target = self
+            menuItem.tag = index
+            menuItem.state = entry.isChecked ? .on : .off
+            menuItem.isEnabled = entry.isEnabled
+            menu.addItem(menuItem)
+        }
+        return menu
+    }
+
+    @objc private func menuEntryChosen(_ sender: NSMenuItem) {
+        guard shownEntries.indices.contains(sender.tag) else { return }
+        shownEntries[sender.tag].action()
+    }
 }
 
 /// Puts a `TileDragView` into the SwiftUI tile.
@@ -81,6 +120,7 @@ struct ShelfItemDragHandle: NSViewRepresentable {
     let image: NSImage
     let source: ShelfDragSource
     let isDragEnabled: Bool
+    let menuEntries: [TileDragView.MenuEntry]
     let onHoverChanged: (Bool) -> Void
 
     func makeNSView(context: Context) -> TileDragView {
@@ -92,6 +132,7 @@ struct ShelfItemDragHandle: NSViewRepresentable {
         view.image = image
         view.source = source
         view.isDragEnabled = isDragEnabled
+        view.menuEntries = menuEntries
         view.onHoverChanged = onHoverChanged
     }
 }

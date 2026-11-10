@@ -27,10 +27,10 @@ final class NotchPanelController {
     /// Extra room around the expanded panel before leaving it collapses the panel.
     private let leaveMargin: CGFloat = 16
 
-    init(store: ShelfStore, images: ShelfItemImages) {
+    init(store: ShelfStore, images: ShelfItemImages, copies: CopyKeeper?) {
         self.store = store
         self.images = images
-        model = NotchViewModel(store: store)
+        model = NotchViewModel(store: store, copies: copies)
     }
 
     func start() {
@@ -47,6 +47,9 @@ final class NotchPanelController {
         let dropView = DropTargetView(frame: .zero)
         dropView.onTargetChanged = { [weak self] targeted in
             self?.model.isDropTargeted = targeted
+        }
+        dropView.onPromisesDropped = { [weak self] promises in
+            self?.model.receivePromisedFiles(promises)
         }
         dropView.onDrop = { [weak self] items in
             self?.model.handleDrop(items)

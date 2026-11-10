@@ -8,10 +8,14 @@ struct ShelfItemTile: View {
     let item: ShelfItem
     /// False when the original file can't be found (FR-15).
     let isAvailable: Bool
+    /// True while Polka is making a copy of the file.
+    let isCopying: Bool
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
     let onDelete: @MainActor () -> Void
     let onToggleTemporary: @MainActor () -> Void
+    /// Nil when Polka has nowhere to keep copies.
+    let onToggleKeepCopy: (@MainActor () -> Void)?
 
     @State private var loadedThumbnail: NSImage?
     @State private var isHovering = false
@@ -21,10 +25,22 @@ struct ShelfItemTile: View {
     }
 
     private var detailLine: String {
+        if isCopying { return "Copying…" }
         guard isAvailable else { return "Unavailable" }
-        return [item.typeLabel, item.timeLeftLabel(now: Date())]
+        return [item.typeLabel, item.storageMode == .copy ? "Copy" : nil, item.timeLeftLabel(now: Date())]
             .compactMap { $0 }
             .joined(separator: " · ")
+    }
+
+    /// "Keep a Copy", checked for a copy, for files and folders. Unchecking it goes back
+    /// to the original, so it can't be unchecked for a promised file, which has none.
+    private var menuEntries: [TileDragView.MenuEntry] {
+        guard item.kind != .link, let onToggleKeepCopy else { return [] }
+        let isCopy = item.storageMode == .copy
+        return [TileDragView.MenuEntry(title: "Keep a Copy",
+                                       isChecked: isCopy,
+                                       isEnabled: !isCopying && (isCopy ? item.original != nil : isAvailable),
+                                       action: onToggleKeepCopy)]
     }
 
     var body: some View {
@@ -51,7 +67,8 @@ struct ShelfItemTile: View {
             ShelfItemDragHandle(item: item,
                                 image: image,
                                 source: dragSource,
-                                isDragEnabled: isAvailable) { isHovering = $0 }
+                                isDragEnabled: isAvailable,
+                                menuEntries: menuEntries) { isHovering = $0 }
         }
         .overlay(alignment: .topLeading) {
             // Temporary items always show it, so they stand out at a glance.

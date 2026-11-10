@@ -12,6 +12,10 @@ import AppKit
 final class DropTargetView: NSView {
     var onTargetChanged: (@MainActor (Bool) -> Void)?
     var onDrop: (@MainActor ([DroppedItem]) -> Void)?
+    /// The one exception to waiting a tick: an app's file promise has to be asked for
+    /// during the drop itself, while the drag is still going. Whatever it calls must
+    /// only start receiving, and leave state changes until the files arrive.
+    var onPromisesDropped: (@MainActor ([NSFilePromiseReceiver]) -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -57,10 +61,14 @@ final class DropTargetView: NSView {
         let items = DropReceiver.items(from: sender.draggingPasteboard)
         let accepted = !items.isEmpty
         Log.drop.debug("Drop performed, accepted: \(accepted)")
-        if accepted {
-            DispatchQueue.main.async { [weak self] in self?.onDrop?(items) }
+        guard accepted else { return false }
+
+        let promises = items.compactMap(\.promise)
+        if !promises.isEmpty {
+            onPromisesDropped?(promises)
         }
-        return accepted
+        DispatchQueue.main.async { [weak self] in self?.onDrop?(items) }
+        return true
     }
 
     override func concludeDragOperation(_ sender: NSDraggingInfo?) {

@@ -11,8 +11,14 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     enum StorageMode: String, Codable {
         /// Points at the original file. The default.
         case reference
-        /// Points at a duplicate kept by Polka.
+        /// Points at a duplicate kept by Polka, in its Copies folder.
         case copy
+    }
+
+    /// The file a kept copy was made from, so the item can go back to it.
+    struct Original: Codable, Equatable {
+        var path: String
+        var bookmark: Data?
     }
 
     /// What the item points at.
@@ -54,6 +60,9 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     /// For links: what the preview fetch found. Nil until it has run, which also
     /// means shelves saved before previews existed still load.
     var linkPreview: LinkPreview? = nil
+    /// For a kept copy: the original it was made from. Nil for references, and for
+    /// files an app handed over as a promise, which never had an original on disk.
+    var original: Original? = nil
 }
 
 extension ShelfItem {
@@ -80,14 +89,18 @@ extension ShelfItem {
         let kind: Kind
         let title: String
         let source: Source
+        let storageMode: StorageMode
 
-        init(fileURL url: URL) {
+        /// `storageMode` is `.copy` for a file that already sits in Polka's Copies
+        /// folder, such as one an app wrote there to keep a promise.
+        init(fileURL url: URL, storageMode: StorageMode = .reference) {
             let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isPackageKey])
             // An app or other package is technically a folder, but it reads as one file.
             let isFolder = values?.isDirectory == true && values?.isPackage != true
             kind = isFolder ? .folder : .file
             title = url.lastPathComponent
             source = .file(path: url.standardizedFileURL.path, bookmark: FileReference.bookmark(for: url))
+            self.storageMode = storageMode
         }
 
         init(linkURL url: URL) {
@@ -95,7 +108,18 @@ extension ShelfItem {
             // Named from the address right away; a name the site declares replaces it later.
             title = LinkNaming.title(for: url, siteName: nil)
             source = .link(url)
+            storageMode = .reference
         }
+    }
+
+    /// Everything this item stands for when checking a drop for duplicates. A kept
+    /// copy still stands for its original, so dropping the original again adds nothing.
+    var dedupeKeys: [String] {
+        var keys = [source.dedupeKey]
+        if let original {
+            keys.append(Source.file(path: original.path, bookmark: nil).dedupeKey)
+        }
+        return keys
     }
 }
 

@@ -62,7 +62,7 @@ struct DragOutTests {
 }
 
 /// Stands in for AppKit's drag information, which only exists during a real drag.
-private final class FakeDrag: NSObject, NSDraggingInfo {
+final class FakeDrag: NSObject, NSDraggingInfo {
     let draggingPasteboard: NSPasteboard
     let draggingSource: Any?
 

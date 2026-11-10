@@ -14,6 +14,11 @@ struct ShelfLocations {
         folder.appendingPathComponent("Previews", isDirectory: true)
     }
 
+    /// Polka's own duplicates: kept copies and files that apps hand over by promise.
+    var copiesFolder: URL {
+        folder.appendingPathComponent("Copies", isDirectory: true)
+    }
+
     static func standard(fileManager: FileManager = .default) throws -> ShelfLocations {
         let support = try fileManager.url(for: .applicationSupportDirectory,
                                           in: .userDomainMask,

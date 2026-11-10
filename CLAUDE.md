@@ -18,7 +18,10 @@ Personal macOS menu bar app (Swift/SwiftUI + AppKit) that turns the MacBook notc
 - Dropping something already on the shelf adds nothing and shows a message inside the panel. The message only closes with its × button. While it is up, the panel collapses after the pointer has been away for 3 seconds, and the message is still there on the next hover.
 - Link tiles show the site's icon (from LinkPresentation, else the site's `/favicon.ico`) and are titled "site/address path", like `GitHub/apple/swift`. The site name is the one the page declares (`og:site_name`), otherwise the capitalized domain (`Linkedin`). Requests are never disguised as a browser: a site that refuses Polka (LinkedIn) just gets the fallbacks.
 - A file whose original can't be found stays on the shelf as "Unavailable" and can't be dragged. Anything Polka deletes from disk must be inside its own Application Support folder.
-- "Keep a copy" lives in the tile's right-click menu.
+- "Keep a copy" lives in the tile's right-click menu, as a checkmark item for files and folders. Checking it copies the original in the background and points the item at the copy. Unchecking it goes back to the original and deletes the copy, but only if the original can still be found; otherwise the copy stays and a message says so.
+- Copies live in `Copies/<UUID>/<file name>` inside Polka's folder, one folder per copy, so a copy keeps its real name when dragged out. A copy is deleted once no item uses it (removed, expired, or back on its original). Leftover folders are cleared at launch, except when shelf.json couldn't be read.
+- Files that apps hand over as a promise (Photos, Mail, browser images) are written into a new copy folder and stored as copies with no original. They aren't checked for duplicates.
+- A drop is read as real files first, then file promises, then links. A browser image offers both its address and a promise, and the image wins. A promise of a .webloc or .url file means the link.
 - The Xcode project uses synchronized folders: new files under `Polka/Polka/` join the target automatically. Don't hand-edit `project.pbxproj` unless necessary.
 - `buildServer.json` and `.vscode/settings.json` are local-only and git-ignored.
 
@@ -28,12 +31,12 @@ Layers follow the PRD. Keep them separated.
 
 - `Polka/Polka.xcodeproj`
 - `Polka/Polka/PolkaApp.swift`: app entry, `MenuBarExtra`, `@NSApplicationDelegateAdaptor`
-- `Polka/Polka/App/`: `AppDelegate` (builds the store and helpers), `Log` (os.Logger, one category per layer), `ExpirySweeper` (removes expired items), `LinkPreviewFetcher` (site names and icons for links)
+- `Polka/Polka/App/`: `AppDelegate` (builds the store and helpers), `Log` (os.Logger, one category per layer), `ExpirySweeper` (removes expired items), `LinkPreviewFetcher` (site names and icons for links), `CopyKeeper` (makes kept copies, receives promised files, deletes unused copies)
 - `Polka/Polka/Window/`: `NotchGeometry` (notch rect, top-center fallback), `NotchPanel` (borderless non-activating `NSPanel`, all Spaces, never key), `NotchPanelController` (state machine, hover, layout, screen changes)
 - `Polka/Polka/Input/`: `GlobalDragMonitor` (detects a drag starting anywhere via drag pasteboard `changeCount`, global mouse monitors, and a mouse-button poll for drag end)
-- `Polka/Polka/DragDrop/`: `DropTargetView` (AppKit `NSDraggingDestination` wrapping the SwiftUI content), `DropReceiver` (reads URLs from the pasteboard), `ShelfDragSource` (`NSDraggingSource` owned by the panel controller), `TileDragView` (AppKit layer on each tile that starts drags and reports hover)
+- `Polka/Polka/DragDrop/`: `DropTargetView` (AppKit `NSDraggingDestination` wrapping the SwiftUI content), `DropReceiver` (reads file URLs, links and file promises from the pasteboard), `ShelfDragSource` (`NSDraggingSource` owned by the panel controller), `TileDragView` (AppKit layer on each tile that starts drags, reports hover and shows the right-click menu)
 - `Polka/Polka/UI/`: `NotchView`, `NotchViewModel` (`NotchState`), `ShelfGridView`, `ShelfItemTile`, `ShelfItemImages` (icons, Quick Look thumbnails and site icons), `NoticeBanner`
-- `Polka/Polka/Storage/`: `ShelfItem`, `ShelfStore`, `ShelfPersistence`, `JSONFileShelfPersistence` (shelf.json), `ShelfLocations` (Polka's Application Support folder), `ShelfSettings` (UserDefaults), `FileReference` (bookmarks, moved and missing files), `LinkNaming` (link titles). No AppKit or window dependencies, so it stays testable on its own.
+- `Polka/Polka/Storage/`: `ShelfItem`, `ShelfStore`, `ShelfPersistence`, `JSONFileShelfPersistence` (shelf.json), `ShelfLocations` (Polka's Application Support folder), `ShelfCopies` (the Copies folder, and the only code that deletes copies), `ShelfSettings` (UserDefaults), `FileReference` (bookmarks, moved and missing files), `LinkNaming` (link titles). No AppKit or window dependencies, so it stays testable on its own.
 - `Polka/PolkaTests/`: unit tests. They run inside the app, and `AppDelegate` skips the panel while they do. A test that opens a real `NotchPanel` makes `AppLaunchTests` fail, because tests run in parallel.
 
 ## Build, run, test, logs
@@ -55,6 +58,8 @@ Always build after changes to confirm it compiles. Hands-on testing (hover, drag
 - SwiftUI `Button` and tap gestures do work in the never-key panel. Only dragging needs AppKit.
 - The panel is a fixed-size transparent window, and SwiftUI animates the shape inside it. `ignoresMouseEvents` is true only while the shape is notch-sized (`.collapsed` or `.draggingOut`), so clicks pass through. It also removes the window as a drop target, which is what lets a drag reach whatever is behind the panel.
 - Inside drag callbacks, read the pasteboard right away but defer state changes by one run-loop tick. Changing state during the callback produces the system log "Reentrant message: kDragIPCCompleted ...".
+- A file promise is the one exception: `receivePromisedFiles` is called inside `performDragOperation`, while the drag is still going. It only starts receiving; items are added when the files arrive.
+- The tile's right-click menu comes from `TileDragView.menu(for:)`, because that AppKit layer covers the tile and is what receives the click.
 - Drags out start in the AppKit `TileDragView`. `ShelfDragSource` belongs to the controller rather than a tile, so AppKit always has a live source to report to.
 - Polka must not treat its own drags as incoming: `GlobalDragMonitor` ignores them (`beginOwnDrag`, `endOwnDrag`), and `DropTargetView` refuses any drag with a `draggingSource`, which AppKit only sets for drags from the same app.
 - During `.draggingOut` the shape shrinks but the tiles stay mounted at full size with opacity 0, so the tile a drag started from still exists when the drag ends.

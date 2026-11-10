@@ -88,11 +88,12 @@ Every shelf entry is one item, stored locally in the app's support folder. Nothi
 | `title` | Display name (file name or page title) |
 | `source` | Bookmark or path for references, or URL for links |
 | `storageMode` | reference (points at the original) or copy (a duplicate kept by Polka) |
+| `original` | For a kept copy, the file it was made from, so the item can go back to it |
 | `createdAt` | When the item was added |
 | `expiresAt` | Empty for permanent items, otherwise the time the item is removed |
 | `sortOrder` | Position in the grid |
 
-Copy versus reference is a hybrid. Items default to reference, so no files are duplicated and the original stays the source of truth. An item's right-click menu offers to keep a copy, so it survives if the original moves. Deleting an item removes the entry and any Polka copy, never the original file.
+Copy versus reference is a hybrid. Items default to reference, so no files are duplicated and the original stays the source of truth. An item's right-click menu offers to keep a copy, so it survives if the original moves. Files that an app hands over as a promise rather than a file on disk, such as a photo from Photos, a Mail attachment or an image from a browser, are stored as copies, since there is no original to point at. Deleting an item removes the entry and any Polka copy, never the original file.
 
 New items are permanent unless the user makes them temporary. A temporary item lasts 24 hours by default, and that lifetime is a setting, not a hard-coded value. Temporary items are swept by a check at launch and on a timer.
 

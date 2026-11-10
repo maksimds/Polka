@@ -5,6 +5,7 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchController: NotchPanelController?
     private var expirySweeper: ExpirySweeper?
+    private var copyKeeper: CopyKeeper?
     private var linkPreviewFetcher: LinkPreviewFetcher?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -15,6 +16,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let locations = makeLocations()
         let store = makeStore(locations: locations)
         store.refreshReferences()
+
+        // Before the sweeper, so a copy whose item expires while Polka was closed is
+        // deleted right away.
+        if let locations {
+            let keeper = CopyKeeper(store: store, copies: ShelfCopies(folder: locations.copiesFolder))
+            keeper.start()
+            copyKeeper = keeper
+        }
 
         let sweeper = ExpirySweeper(store: store)
         sweeper.start()
@@ -27,13 +36,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         let images = ShelfItemImages(previewsFolder: locations?.previewsFolder)
-        let controller = NotchPanelController(store: store, images: images)
+        let controller = NotchPanelController(store: store, images: images, copies: copyKeeper)
         controller.start()
         notchController = controller
     }
 
     /// Polka's Application Support folder. Without it Polka still runs, but the shelf
-    /// only lasts until it quits and links get no saved previews.
+    /// only lasts until it quits, links get no saved previews, and nothing can be
+    /// kept as a copy.
     private func makeLocations() -> ShelfLocations? {
         do {
             let locations = try ShelfLocations.standard()

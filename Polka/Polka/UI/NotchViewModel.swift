@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// The four states from the PRD's interaction flow.
@@ -28,20 +29,30 @@ final class NotchViewModel: ObservableObject {
     let expandedSize = CGSize(width: 520, height: 270)
 
     private let store: ShelfStore
+    /// Nil when Polka has no folder of its own to keep copies in.
+    private let copies: CopyKeeper?
     private let temporaryLifetime: () -> TimeInterval
 
     init(store: ShelfStore,
+         copies: CopyKeeper? = nil,
          temporaryLifetime: @escaping () -> TimeInterval = { ShelfSettings().temporaryLifetime }) {
         self.store = store
+        self.copies = copies
         self.temporaryLifetime = temporaryLifetime
+    }
+
+    var canKeepCopies: Bool {
+        copies != nil
     }
 
     var currentSize: CGSize {
         state.isAtNotchSize ? notchSize : expandedSize
     }
 
+    /// Promised files aren't in `items` as drafts: they're added by
+    /// `receivePromisedFiles` once the app that promised them has written them.
     func handleDrop(_ items: [DroppedItem]) {
-        let result = store.add(items.map(ShelfItem.Draft.init))
+        let result = store.add(items.compactMap(ShelfItem.Draft.init))
         if let message = Self.alreadyOnShelfMessage(for: result.duplicates) {
             notice = message
         }
@@ -59,6 +70,38 @@ final class NotchViewModel: ObservableObject {
             store.makePermanent(id: id)
         } else {
             store.makeTemporary(id: id, lifetime: temporaryLifetime())
+        }
+    }
+
+    /// Starts receiving the files an app promised in a drop. Called during the drop
+    /// itself, so it changes nothing now; a failure shows a message later.
+    func receivePromisedFiles(_ promises: [NSFilePromiseReceiver]) {
+        guard let copies else {
+            Log.drop.error("A promised file was dropped, but Polka has no folder to put it in")
+            return
+        }
+        copies.receive(promises) { [weak self] fileName in
+            self?.notice = "Couldn't get \(fileName ?? "a file") from the app it came from"
+        }
+    }
+
+    /// The tile's "Keep a Copy" menu item. Checking it copies the original into
+    /// Polka's folder; unchecking it goes back to the original and deletes the copy.
+    func toggleKeepCopy(_ id: ShelfItem.ID) {
+        guard let copies,
+              let item = store.items.first(where: { $0.id == id }),
+              case .file = item.source else { return }
+        switch item.storageMode {
+        case .reference:
+            Task {
+                if await !copies.keepCopy(of: id) {
+                    notice = "Couldn't keep a copy of \(item.title)"
+                }
+            }
+        case .copy:
+            if !store.useOriginal(id: id) {
+                notice = "Can't find the original of \(item.title), so the copy stays"
+            }
         }
     }
 
@@ -86,10 +129,11 @@ final class NotchViewModel: ObservableObject {
 }
 
 private extension ShelfItem.Draft {
-    init(_ dropped: DroppedItem) {
+    init?(_ dropped: DroppedItem) {
         switch dropped {
         case .file(let url): self.init(fileURL: url)
         case .link(let url): self.init(linkURL: url)
+        case .promise: return nil
         }
     }
 }
