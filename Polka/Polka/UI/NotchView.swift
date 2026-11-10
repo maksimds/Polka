@@ -69,8 +69,12 @@ struct NotchView: View {
                 ShelfGridView(items: store.items,
                               missingItemIDs: store.missingItemIDs,
                               copyingItemIDs: store.copyingItemIDs,
+                              selection: model.selection,
                               images: images,
                               dragSource: dragSource,
+                              onClick: { model.click($0, $1) },
+                              onClearSelection: { model.clearSelection() },
+                              itemsToDrag: { model.itemsToDrag(from: $0) },
                               onDelete: { store.remove(id: $0) },
                               onToggleTemporary: { model.toggleTemporary($0) },
                               onToggleKeepCopy: keepCopyAction)

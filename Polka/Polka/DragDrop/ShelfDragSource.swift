@@ -14,16 +14,37 @@ final class ShelfDragSource: NSObject, NSDraggingSource {
     /// Called one run-loop tick after a drag ends, however it ended.
     var onEnded: (@MainActor () -> Void)?
 
-    func startDrag(of item: ShelfItem,
-                   image: NSImage,
-                   imageFrame: NSRect,
-                   from view: NSView,
-                   event: NSEvent) {
+    private let images: ShelfItemImages
+    /// Side of each item's picture under the pointer.
+    private let previewSide: CGFloat = 52
+
+    init(images: ShelfItemImages) {
+        self.images = images
+        super.init()
+    }
+
+    /// Starts one drag carrying every item in `items`, each as its own file or link,
+    /// so a drop into Finder or Mail gets them all. `point` is in `view`'s coordinates.
+    func startDrag(of items: [ShelfItem], at point: NSPoint, from view: NSView, event: NSEvent) {
+        guard !items.isEmpty else { return }
         onWillStart?()
-        Log.drop.debug("Dragging out \(item.title, privacy: .public)")
-        let draggingItem = NSDraggingItem(pasteboardWriter: Self.pasteboardWriter(for: item))
-        draggingItem.setDraggingFrame(imageFrame, contents: image)
-        view.beginDraggingSession(with: [draggingItem], event: event, source: self)
+        Log.drop.debug("""
+            Dragging out \(items.map(\.title).joined(separator: ", "), privacy: .public)
+            """)
+        let frame = NSRect(x: point.x - previewSide / 2,
+                           y: point.y - previewSide / 2,
+                           width: previewSide,
+                           height: previewSide)
+        let draggingItems = items.map { item in
+            let draggingItem = NSDraggingItem(pasteboardWriter: Self.pasteboardWriter(for: item))
+            // A tile's picture is cached by then, so this is the thumbnail it shows.
+            draggingItem.setDraggingFrame(frame, contents: images.image(for: item))
+            return draggingItem
+        }
+        let session = view.beginDraggingSession(with: draggingItems, event: event, source: self)
+        // Several items gather into a pile under the pointer, as in Finder, and macOS
+        // shows how many there are.
+        session.draggingFormation = items.count > 1 ? .pile : .default
     }
 
     /// What the target app receives: the real file, or the link as both a URL and

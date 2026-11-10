@@ -15,9 +15,26 @@ enum NotchState: Equatable {
     }
 }
 
+/// How a click on a tile changes the selection, from the keys held during the click.
+enum SelectionClick: Equatable {
+    /// A plain click: just this item.
+    case only
+    /// Command-click: adds the item, or removes it if it was selected.
+    case toggle
+    /// Shift-click: every item from the last one clicked to this one.
+    case range
+}
+
 @MainActor
 final class NotchViewModel: ObservableObject {
-    @Published var state: NotchState = .collapsed
+    /// Closing the panel clears the selection, so it always opens with nothing selected.
+    @Published var state: NotchState = .collapsed {
+        didSet { if state == .collapsed { clearSelection() } }
+    }
+    /// Selected tiles. A drag that starts on one of them carries them all (FR-10).
+    @Published private(set) var selection: Set<ShelfItem.ID> = []
+    /// Where a Shift-click range starts: the last item clicked without Shift.
+    private var selectionAnchor: ShelfItem.ID?
     @Published var notchSize = CGSize(width: 200, height: 32)
     /// True while an acceptable drag hovers over the panel.
     @Published var isDropTargeted = false
@@ -104,6 +121,54 @@ final class NotchViewModel: ObservableObject {
             }
         }
     }
+
+    // MARK: - Selection
+
+    /// Selects tiles the way Finder does in icon view.
+    func click(_ id: ShelfItem.ID, _ kind: SelectionClick) {
+        switch kind {
+        case .only:
+            selection = [id]
+            selectionAnchor = id
+        case .toggle:
+            if selection.contains(id) {
+                selection.remove(id)
+            } else {
+                selection.insert(id)
+            }
+            selectionAnchor = id
+        case .range:
+            let ids = store.items.map(\.id)
+            guard let anchor = selectionAnchor,
+                  let start = ids.firstIndex(of: anchor),
+                  let end = ids.firstIndex(of: id) else {
+                // Nothing to measure from yet, so it's a plain click.
+                click(id, .only)
+                return
+            }
+            selection = Set(ids[min(start, end)...max(start, end)])
+        }
+    }
+
+    func clearSelection() {
+        selection = []
+        selectionAnchor = nil
+    }
+
+    /// What a drag that starts on `id` carries: that item first, then every other
+    /// selected item, in shelf order. Items whose file is missing stay behind.
+    /// Like in Finder, dragging an item that isn't selected selects it alone.
+    func itemsToDrag(from id: ShelfItem.ID) -> [ShelfItem] {
+        if !selection.contains(id) {
+            click(id, .only)
+        }
+        let draggable = store.items.filter {
+            selection.contains($0.id) && !store.missingItemIDs.contains($0.id)
+        }
+        return draggable.filter { $0.id == id } + draggable.filter { $0.id != id }
+    }
+
+    // MARK: - Drag out
 
     /// Shrinks the panel once a drag leaves it, so it doesn't cover what's underneath.
     /// It stays shrunk if the pointer comes back, until the drag is over.

@@ -47,4 +47,52 @@ struct ShelfSettings {
         formatter.maximumUnitCount = 2
         return formatter.string(from: seconds) ?? "\(Int(seconds)) seconds"
     }
+
+    // MARK: - Hover
+
+    static let hoverDelayKey = "hoverDelayMilliseconds"
+    static let defaultHoverDelay = 150
+    /// The delays Settings offers, in milliseconds. A stored value outside it counts
+    /// as the nearest end.
+    static let hoverDelayRange = 0...800
+
+    /// How long the pointer has to stay on the notch before the panel opens, in
+    /// milliseconds. Zero opens it right away.
+    var hoverDelay: Int {
+        get { Self.hoverDelay(stored: defaults.object(forKey: Self.hoverDelayKey) as? Int) }
+        nonmutating set { defaults.set(newValue, forKey: Self.hoverDelayKey) }
+    }
+
+    /// The delay a stored value stands for. Nothing stored means the default; zero is
+    /// a real choice here, unlike for the lifetime.
+    static func hoverDelay(stored: Int?) -> Int {
+        guard let stored else { return defaultHoverDelay }
+        return min(max(stored, hoverDelayRange.lowerBound), hoverDelayRange.upperBound)
+    }
+
+    static let hoverAreaKey = "hoverArea"
+
+    /// How far around the notch the pointer opens the panel.
+    var hoverArea: HoverArea {
+        get { defaults.string(forKey: Self.hoverAreaKey).flatMap(HoverArea.init(rawValue:)) ?? .medium }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: Self.hoverAreaKey) }
+    }
+}
+
+/// The hover area setting. The sizes in points are in `NotchGeometry`.
+enum HoverArea: String, CaseIterable {
+    /// Just the notch.
+    case small
+    /// The notch and a little around it.
+    case medium
+    /// A wide margin around the notch.
+    case large
+
+    var title: String {
+        switch self {
+        case .small: return "Small"
+        case .medium: return "Medium"
+        case .large: return "Large"
+        }
+    }
 }

@@ -10,8 +10,12 @@ struct ShelfItemTile: View {
     let isAvailable: Bool
     /// True while Polka is making a copy of the file.
     let isCopying: Bool
+    let isSelected: Bool
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
+    let onClick: @MainActor (SelectionClick) -> Void
+    /// This item, or the whole selection if this item is in it.
+    let itemsToDrag: @MainActor () -> [ShelfItem]
     let onDelete: @MainActor () -> Void
     let onToggleTemporary: @MainActor () -> Void
     /// Nil when Polka has nowhere to keep copies.
@@ -49,13 +53,23 @@ struct ShelfItemTile: View {
                 .frame(width: Self.imageSide, height: Self.imageSide)
                 .saturation(isAvailable ? 1 : 0)
                 .opacity(isAvailable ? 1 : 0.35)
+                // Selected, as in Finder: a soft square behind the picture...
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.white.opacity(isSelected ? 0.16 : 0))
+                        .padding(-5)
+                )
                 .padding(.bottom, 4)
             Text(item.title)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.white.opacity(isAvailable ? 1 : 0.5))
+                .foregroundStyle(.white.opacity(isAvailable || isSelected ? 1 : 0.5))
                 .lineLimit(1)
                 // File names keep their extension; link titles keep the site name.
                 .truncationMode(item.kind == .link ? .tail : .middle)
+                // ...and the name in an accent-colored capsule.
+                .padding(.horizontal, 5)
+                .padding(.vertical, 1)
+                .background(Capsule().fill(Color.accentColor.opacity(isSelected ? 1 : 0)))
             Text(detailLine)
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.55))
@@ -64,11 +78,12 @@ struct ShelfItemTile: View {
         .frame(maxWidth: .infinity)
         .frame(height: Self.height)
         .overlay {
-            ShelfItemDragHandle(item: item,
-                                image: image,
-                                source: dragSource,
+            ShelfItemDragHandle(source: dragSource,
                                 isDragEnabled: isAvailable,
-                                menuEntries: menuEntries) { isHovering = $0 }
+                                menuEntries: menuEntries,
+                                onHoverChanged: { isHovering = $0 },
+                                onClick: onClick,
+                                itemsToDrag: itemsToDrag)
         }
         .overlay(alignment: .topLeading) {
             // Temporary items always show it, so they stand out at a glance.

@@ -11,7 +11,9 @@ final class NotchPanelController {
     private let openSettings: @MainActor () -> Void
     private let model: NotchViewModel
     private let dragMonitor = GlobalDragMonitor()
-    private let dragSource = ShelfDragSource()
+    private let dragSource: ShelfDragSource
+    /// Read on every use, so a change in Settings applies right away.
+    private let settings = ShelfSettings()
     private var panel: NotchPanel?
     private var geometry: NotchGeometry?
 
@@ -22,8 +24,6 @@ final class NotchPanelController {
     private var delayedCollapseTask: Task<Void, Never>?
     private var collapsedAt = ContinuousClock.now
 
-    /// How long the pointer must rest on the notch before it expands (accidental-open guard).
-    private let hoverDelay: Duration = .milliseconds(150)
     /// How long the pointer can be away before the panel collapses while a message is showing.
     private let noticeLeaveDelay: Duration = .seconds(3)
     /// Extra room around the expanded panel before leaving it collapses the panel.
@@ -40,6 +40,7 @@ final class NotchPanelController {
         self.store = store
         self.images = images
         self.openSettings = openSettings
+        dragSource = ShelfDragSource(images: images)
         model = NotchViewModel(store: store, copies: copies)
     }
 
@@ -193,7 +194,7 @@ final class NotchPanelController {
 
         switch model.state {
         case .collapsed:
-            if geometry.hoverRect.contains(point) {
+            if geometry.hoverRect(area: settings.hoverArea).contains(point) {
                 scheduleExpand()
             } else {
                 cancelHover()
@@ -215,10 +216,13 @@ final class NotchPanelController {
         }
     }
 
+    /// Waits for the hover delay from Settings (the accidental-open guard), then opens
+    /// the panel if the pointer is still there.
     private func scheduleExpand() {
         guard hoverTask == nil else { return }
-        hoverTask = Task { [weak self, hoverDelay] in
-            try? await Task.sleep(for: hoverDelay)
+        let delay = Duration.milliseconds(settings.hoverDelay)
+        hoverTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }
             self?.expandIfStillHovering()
         }
@@ -227,7 +231,7 @@ final class NotchPanelController {
     private func expandIfStillHovering() {
         hoverTask = nil
         guard let geometry, model.state == .collapsed,
-              geometry.hoverRect.contains(NSEvent.mouseLocation) else { return }
+              geometry.hoverRect(area: settings.hoverArea).contains(NSEvent.mouseLocation) else { return }
         model.state = .expanded
     }
 

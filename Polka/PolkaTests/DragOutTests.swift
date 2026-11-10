@@ -54,7 +54,7 @@ struct DragOutTests {
     @Test func aDragOutOfThePanelIsRejected() {
         let view = DropTargetView(frame: .zero)
         let drag = FakeDrag(pasteboard: pasteboard(holding: ShelfDragSource.pasteboardWriter(for: fileItem)),
-                            source: ShelfDragSource())
+                            source: ShelfDragSource(images: ShelfItemImages(previewsFolder: nil)))
 
         #expect(view.draggingEntered(drag) == [])
         #expect(view.draggingUpdated(drag) == [])

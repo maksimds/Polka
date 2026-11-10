@@ -52,12 +52,27 @@ struct NotchGeometry {
         frames.firstIndex { NSMouseInRect(point, $0, false) }
     }
 
-    /// Area that triggers hover expansion: the notch plus a little slack on each side.
-    var hoverRect: CGRect {
-        CGRect(x: notchRect.minX - 12,
-               y: notchRect.minY - 4,
-               width: notchRect.width + 24,
-               height: notchRect.height + 8)
+    /// Area that opens the panel when the pointer stays in it: the notch plus the
+    /// margin the Hover area setting asks for.
+    func hoverRect(area: HoverArea) -> CGRect {
+        Self.hoverRect(around: notchRect, area: area)
+    }
+
+    /// Every size keeps 4 points above the notch. The pointer at the very top of a
+    /// screen sits on the rect's top edge, which `CGRect.contains` leaves out.
+    static func hoverRect(around notch: CGRect, area: HoverArea) -> CGRect {
+        let side: CGFloat
+        let below: CGFloat
+        switch area {
+        case .small: (side, below) = (0, 0)
+        case .medium: (side, below) = (12, 4)
+        case .large: (side, below) = (32, 12)
+        }
+        let above: CGFloat = 4
+        return CGRect(x: notch.minX - side,
+                      y: notch.minY - below,
+                      width: notch.width + 2 * side,
+                      height: notch.height + below + above)
     }
 
     /// Area the expanded panel covers, hanging down from the top of the screen.
