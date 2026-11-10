@@ -12,11 +12,13 @@ Personal macOS menu bar app (Swift/SwiftUI + AppKit) that turns the MacBook notc
 - Storage is a plain JSON file for v1, not SwiftData.
 - Hybrid storage: items reference the original by default, with an optional "keep a copy" for permanent items.
 - Deleting an item never deletes the original file.
-- New items are permanent by default. Temporary is opt-in per item.
+- New items are permanent by default. Temporary is opt-in per item and lasts 24 hours, a setting stored under `temporaryLifetimeSeconds` until the M4 Settings window exists.
 - Items stay on the shelf after being dragged out.
 - Drag out offers copy only, so a drop into Finder can never move the original.
 - Dropping something already on the shelf adds nothing and shows a message inside the panel. The message only closes with its × button. While it is up, the panel collapses after the pointer has been away for 3 seconds, and the message is still there on the next hover.
-- Link items fetch a preview in v1.
+- Link tiles show the site's icon (from LinkPresentation, else the site's `/favicon.ico`) and are titled "site/address path", like `GitHub/apple/swift`. The site name is the one the page declares (`og:site_name`), otherwise the capitalized domain (`Linkedin`). Requests are never disguised as a browser: a site that refuses Polka (LinkedIn) just gets the fallbacks.
+- A file whose original can't be found stays on the shelf as "Unavailable" and can't be dragged. Anything Polka deletes from disk must be inside its own Application Support folder.
+- "Keep a copy" lives in the tile's right-click menu.
 - The Xcode project uses synchronized folders: new files under `Polka/Polka/` join the target automatically. Don't hand-edit `project.pbxproj` unless necessary.
 - `buildServer.json` and `.vscode/settings.json` are local-only and git-ignored.
 
@@ -26,12 +28,12 @@ Layers follow the PRD. Keep them separated.
 
 - `Polka/Polka.xcodeproj`
 - `Polka/Polka/PolkaApp.swift`: app entry, `MenuBarExtra`, `@NSApplicationDelegateAdaptor`
-- `Polka/Polka/App/`: `AppDelegate`, `Log` (os.Logger, one category per layer)
+- `Polka/Polka/App/`: `AppDelegate` (builds the store and helpers), `Log` (os.Logger, one category per layer), `ExpirySweeper` (removes expired items), `LinkPreviewFetcher` (site names and icons for links)
 - `Polka/Polka/Window/`: `NotchGeometry` (notch rect, top-center fallback), `NotchPanel` (borderless non-activating `NSPanel`, all Spaces, never key), `NotchPanelController` (state machine, hover, layout, screen changes)
 - `Polka/Polka/Input/`: `GlobalDragMonitor` (detects a drag starting anywhere via drag pasteboard `changeCount`, global mouse monitors, and a mouse-button poll for drag end)
 - `Polka/Polka/DragDrop/`: `DropTargetView` (AppKit `NSDraggingDestination` wrapping the SwiftUI content), `DropReceiver` (reads URLs from the pasteboard), `ShelfDragSource` (`NSDraggingSource` owned by the panel controller), `TileDragView` (AppKit layer on each tile that starts drags and reports hover)
-- `Polka/Polka/UI/`: `NotchView`, `NotchViewModel` (`NotchState`), `ShelfGridView`, `ShelfItemTile`, `ShelfItemImages` (icons and Quick Look thumbnails), `NoticeBanner`
-- `Polka/Polka/Storage/`: `ShelfItem`, `ShelfStore`, `ShelfPersistence`. No AppKit or window dependencies, so it stays testable on its own.
+- `Polka/Polka/UI/`: `NotchView`, `NotchViewModel` (`NotchState`), `ShelfGridView`, `ShelfItemTile`, `ShelfItemImages` (icons, Quick Look thumbnails and site icons), `NoticeBanner`
+- `Polka/Polka/Storage/`: `ShelfItem`, `ShelfStore`, `ShelfPersistence`, `JSONFileShelfPersistence` (shelf.json), `ShelfLocations` (Polka's Application Support folder), `ShelfSettings` (UserDefaults), `FileReference` (bookmarks, moved and missing files), `LinkNaming` (link titles). No AppKit or window dependencies, so it stays testable on its own.
 - `Polka/PolkaTests/`: unit tests. They run inside the app, and `AppDelegate` skips the panel while they do. A test that opens a real `NotchPanel` makes `AppLaunchTests` fail, because tests run in parallel.
 
 ## Build, run, test, logs

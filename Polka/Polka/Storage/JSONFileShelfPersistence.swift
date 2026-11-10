@@ -27,18 +27,6 @@ final class JSONFileShelfPersistence: ShelfPersistence {
         self.fileManager = fileManager
     }
 
-    /// `~/Library/Application Support/com.maksimds.Polka/shelf.json`
-    static func defaultFileURL(fileManager: FileManager = .default) throws -> URL {
-        let support = try fileManager.url(for: .applicationSupportDirectory,
-                                          in: .userDomainMask,
-                                          appropriateFor: nil,
-                                          create: true)
-        let folderName = Bundle.main.bundleIdentifier ?? "com.maksimds.Polka"
-        return support
-            .appendingPathComponent(folderName, isDirectory: true)
-            .appendingPathComponent("shelf.json")
-    }
-
     func load() throws -> [ShelfItem] {
         guard fileManager.fileExists(atPath: fileURL.path) else { return [] }
         do {

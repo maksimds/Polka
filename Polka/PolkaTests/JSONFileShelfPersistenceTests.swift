@@ -113,7 +113,7 @@ struct JSONFileShelfPersistenceTests {
             let second = ShelfStore(persistence: JSONFileShelfPersistence(fileURL: fileURL))
 
             #expect(second.items == first.items)
-            #expect(second.items.map(\.title) == ["b.txt", "example.com"])
+            #expect(second.items.map(\.title) == ["b.txt", "Example"])
         }
     }
 }

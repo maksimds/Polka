@@ -7,6 +7,7 @@ import SwiftUI
 @MainActor
 final class NotchPanelController {
     private let store: ShelfStore
+    private let images: ShelfItemImages
     private let model: NotchViewModel
     private let dragMonitor = GlobalDragMonitor()
     private let dragSource = ShelfDragSource()
@@ -26,8 +27,9 @@ final class NotchPanelController {
     /// Extra room around the expanded panel before leaving it collapses the panel.
     private let leaveMargin: CGFloat = 16
 
-    init(store: ShelfStore) {
+    init(store: ShelfStore, images: ShelfItemImages) {
         self.store = store
+        self.images = images
         model = NotchViewModel(store: store)
     }
 
@@ -38,7 +40,7 @@ final class NotchPanelController {
                                defer: false)
         let hostingView = NSHostingView(rootView: NotchView(model: model,
                                                             store: store,
-                                                            images: ShelfItemImages(),
+                                                            images: images,
                                                             dragSource: dragSource))
         hostingView.sizingOptions = []
 

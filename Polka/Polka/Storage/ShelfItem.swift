@@ -22,6 +22,25 @@ struct ShelfItem: Identifiable, Codable, Equatable {
         case link(URL)
     }
 
+    /// What a link's preview fetch found (FR-6): the name the site gives itself and its icon.
+    struct LinkPreview: Codable, Equatable {
+        /// Raised whenever what a preview holds changes, so older ones are fetched again.
+        static let currentVersion = 2
+
+        /// When the fetch finished, whether or not it found anything.
+        var fetchedAt: Date
+        /// The site's own name from its `og:site_name` tag, if the page declares one.
+        var siteName: String?
+        /// The site's icon, saved in Polka's Previews folder.
+        var iconFileName: String?
+        /// Nil for previews saved before versions existed.
+        var version: Int? = LinkPreview.currentVersion
+
+        var isCurrent: Bool {
+            version == Self.currentVersion
+        }
+    }
+
     let id: UUID
     var kind: Kind
     var title: String
@@ -32,6 +51,9 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     var expiresAt: Date?
     /// Position in the grid. Zero is the first tile.
     var sortOrder: Int
+    /// For links: what the preview fetch found. Nil until it has run, which also
+    /// means shelves saved before previews existed still load.
+    var linkPreview: LinkPreview? = nil
 }
 
 extension ShelfItem {
@@ -70,15 +92,9 @@ extension ShelfItem {
 
         init(linkURL url: URL) {
             kind = .link
-            title = Self.linkTitle(for: url)
+            // Named from the address right away; a name the site declares replaces it later.
+            title = LinkNaming.title(for: url, siteName: nil)
             source = .link(url)
-        }
-
-        /// Host plus path, so two links from one site stay distinguishable.
-        /// Page titles are an open question for M3.
-        private static func linkTitle(for url: URL) -> String {
-            guard let host = url.host else { return url.absoluteString }
-            return url.path == "/" ? host : host + url.path
         }
     }
 }

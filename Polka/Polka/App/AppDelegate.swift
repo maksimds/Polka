@@ -1,39 +1,55 @@
 import AppKit
 
-/// Starts the notch panel once the app has launched.
+/// Builds the shelf and the helpers around it, then starts the notch panel.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchController: NotchPanelController?
     private var expirySweeper: ExpirySweeper?
+    private var linkPreviewFetcher: LinkPreviewFetcher?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Unit tests run inside the app; the panel and its mouse monitors stay off for them.
         guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
 
         Log.app.info("Polka launched")
-        let store = makeStore()
+        let locations = makeLocations()
+        let store = makeStore(locations: locations)
         store.refreshReferences()
+
         let sweeper = ExpirySweeper(store: store)
         sweeper.start()
         expirySweeper = sweeper
-        let controller = NotchPanelController(store: store)
+
+        if let locations {
+            let fetcher = LinkPreviewFetcher(store: store, previewsFolder: locations.previewsFolder)
+            fetcher.start()
+            linkPreviewFetcher = fetcher
+        }
+
+        let images = ShelfItemImages(previewsFolder: locations?.previewsFolder)
+        let controller = NotchPanelController(store: store, images: images)
         controller.start()
         notchController = controller
     }
 
-    /// The shelf, saved to a JSON file. If there is nowhere to save it, Polka still
-    /// runs, but the shelf only lasts until it quits.
-    private func makeStore() -> ShelfStore {
+    /// Polka's Application Support folder. Without it Polka still runs, but the shelf
+    /// only lasts until it quits and links get no saved previews.
+    private func makeLocations() -> ShelfLocations? {
         do {
-            let fileURL = try JSONFileShelfPersistence.defaultFileURL()
-            Log.storage.info("Shelf file: \(fileURL.path, privacy: .public)")
-            return ShelfStore(persistence: JSONFileShelfPersistence(fileURL: fileURL))
+            let locations = try ShelfLocations.standard()
+            Log.storage.info("Shelf file: \(locations.shelfFile.path, privacy: .public)")
+            return locations
         } catch {
             Log.storage.error("""
                 No Application Support folder, so the shelf won't be saved: \
                 \(error.localizedDescription, privacy: .public)
                 """)
-            return ShelfStore()
+            return nil
         }
+    }
+
+    private func makeStore(locations: ShelfLocations?) -> ShelfStore {
+        guard let locations else { return ShelfStore() }
+        return ShelfStore(persistence: JSONFileShelfPersistence(fileURL: locations.shelfFile))
     }
 }

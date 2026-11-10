@@ -50,9 +50,9 @@ struct ShelfStoreTests {
         }
     }
 
-    @Test func linkTitleKeepsHostAndPath() {
-        #expect(linkDraft("https://example.com/docs/page").title == "example.com/docs/page")
-        #expect(linkDraft("https://example.com/").title == "example.com")
+    @Test func linkTitleIsSiteNameAndPath() {
+        #expect(linkDraft("https://example.com/docs/page").title == "Example/docs/page")
+        #expect(linkDraft("https://example.com/").title == "Example")
         #expect(linkDraft("mailto:someone@example.com").title == "mailto:someone@example.com")
         #expect(linkDraft("https://example.com/").kind == .link)
     }

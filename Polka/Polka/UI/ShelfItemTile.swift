@@ -29,9 +29,7 @@ struct ShelfItemTile: View {
 
     var body: some View {
         VStack(spacing: 2) {
-            Image(nsImage: image)
-                .resizable()
-                .scaledToFit()
+            artwork
                 .frame(width: Self.imageSide, height: Self.imageSide)
                 .saturation(isAvailable ? 1 : 0)
                 .opacity(isAvailable ? 1 : 0.35)
@@ -40,7 +38,8 @@ struct ShelfItemTile: View {
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(.white.opacity(isAvailable ? 1 : 0.5))
                 .lineLimit(1)
-                .truncationMode(.middle)
+                // File names keep their extension; link titles keep the site name.
+                .truncationMode(item.kind == .link ? .tail : .middle)
             Text(detailLine)
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.55))
@@ -69,6 +68,36 @@ struct ShelfItemTile: View {
         }
         .task(id: item.id) {
             loadedThumbnail = await images.loadThumbnail(for: item, side: Self.imageSide)
+        }
+    }
+
+    /// A link shows its site's icon. A large icon (the kind made for phone home screens)
+    /// fills a rounded square; a small favicon sits on a light card, as browsers show it.
+    /// File icons and thumbnails keep their own shape.
+    @ViewBuilder
+    private var artwork: some View {
+        if item.linkPreview?.iconFileName != nil {
+            if image.size.width >= 96 {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: Self.imageSide, height: Self.imageSide)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(Color.white)
+                    .overlay(
+                        Image(nsImage: image)
+                            .resizable()
+                            .interpolation(.high)
+                            .scaledToFit()
+                            .frame(width: 28, height: 28)
+                    )
+            }
+        } else {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
         }
     }
 

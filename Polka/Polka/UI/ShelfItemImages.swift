@@ -2,16 +2,25 @@ import AppKit
 import QuickLookThumbnailing
 import UniformTypeIdentifiers
 
-/// Icons and thumbnails for shelf items, kept in memory so reopening the panel is instant.
+/// Icons, thumbnails and site icons for shelf items, kept in memory so reopening the
+/// panel is instant.
 @MainActor
 final class ShelfItemImages {
+    private let previewsFolder: URL?
     private let icons = NSCache<NSUUID, NSImage>()
     private let thumbnails = NSCache<NSUUID, NSImage>()
+    private let siteIcons = NSCache<NSString, NSImage>()
 
-    /// The best image ready right now: the thumbnail if it has loaded, otherwise the icon.
+    init(previewsFolder: URL? = nil) {
+        self.previewsFolder = previewsFolder
+    }
+
+    /// The best image ready right now: a file's thumbnail or a link's site icon if
+    /// there is one, otherwise the generic icon.
     func image(for item: ShelfItem) -> NSImage {
         let key = item.id as NSUUID
         if let thumbnail = thumbnails.object(forKey: key) { return thumbnail }
+        if let siteIcon = siteIcon(for: item) { return siteIcon }
         if let icon = icons.object(forKey: key) { return icon }
         let icon = makeIcon(for: item)
         icons.setObject(icon, forKey: key)
@@ -34,6 +43,14 @@ final class ShelfItemImages {
         }
         thumbnails.setObject(result.nsImage, forKey: key)
         return result.nsImage
+    }
+
+    private func siteIcon(for item: ShelfItem) -> NSImage? {
+        guard let name = item.linkPreview?.iconFileName, let previewsFolder else { return nil }
+        if let cached = siteIcons.object(forKey: name as NSString) { return cached }
+        guard let image = NSImage(contentsOf: previewsFolder.appendingPathComponent(name)) else { return nil }
+        siteIcons.setObject(image, forKey: name as NSString)
+        return image
     }
 
     private func makeIcon(for item: ShelfItem) -> NSImage {

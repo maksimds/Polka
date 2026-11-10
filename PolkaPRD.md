@@ -24,7 +24,7 @@ v1 is a lean shelf for files and links. Everything else waits until the core fee
 
 | Bucket | Items |
 | --- | --- |
-| In v1 | Hover to expand, drag in, drag out, files, folders, links with page title and preview image, temporary and permanent items, delete, menu bar item, launch at login |
+| In v1 | Hover to expand, drag in, drag out, files, folders, links with their site's name and icon, temporary and permanent items, delete, menu bar item, launch at login |
 | Later | Plain text and image snippets, search, tags or groups, quick look preview, pin to top, keyboard shortcut to open |
 | Out of scope | Cloud sync, iPhone companion, sharing with others, AirDrop, music or calendar widgets, App Store release |
 
@@ -39,7 +39,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-3 | Dragging an item out of the panel drops the real file or URL into the target app | P0 |
 | FR-4 | Starting a drag anywhere on screen opens the panel as a drop target before the pointer reaches it | P0 |
 | FR-5 | Dropping files or folders stores them as items | P0 |
-| FR-6 | Dropping a URL stores it as a link item with its URL and, when available, its page title and preview image | P0 |
+| FR-6 | Dropping a URL stores it as a link item titled with the site's name and the page's address (for example GitHub/apple/swift) and shown with the site's icon | P0 |
 | FR-7 | Each item is marked temporary (with expiry) or permanent, with a default and a one-click toggle | P0 |
 | FR-8 | Items can be deleted individually; deleting never removes the original file | P0 |
 | FR-9 | Clicking an item opens the file or link in its default app | P1 |
@@ -79,7 +79,7 @@ Key decisions:
 
 ## Data and storage
 
-Every shelf entry is one item, stored locally in the app's support folder. Nothing leaves the Mac, except that adding a link fetches its page title and preview image from that website.
+Every shelf entry is one item, stored locally in the app's support folder. Nothing leaves the Mac, except that adding a link asks that website for its name and icon.
 
 | Field | Meaning |
 | --- | --- |
@@ -113,7 +113,7 @@ Open questions:
 
 - [x] Should new items default to temporary or permanent, and what is the default lifetime? Permanent by default. An item made temporary lasts 24 hours unless the setting is changed.
 - [ ] Should the panel follow the pointer to an external display or stay on the notch display?
-- [x] Is fetching a link's page title in v1, or is the raw URL enough at first? In v1, links fetch their page title and preview image.
+- [x] Is fetching a link's page title in v1, or is the raw URL enough at first? In v1, a link shows its site's icon and is titled with the site's name and the page's address.
 
 ## Milestones
 

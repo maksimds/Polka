@@ -90,6 +90,21 @@ final class ShelfStore: ObservableObject {
         return expired
     }
 
+    /// Records what a link's preview fetch found. A site name the page declares
+    /// replaces the one taken from the address.
+    func applyLinkPreview(id: ShelfItem.ID, siteName: String?, iconFileName: String?) {
+        let fetchedAt = now()
+        let trimmed = siteName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let declaredName = (trimmed?.isEmpty ?? true) ? nil : trimmed
+        update(id) { item in
+            guard case .link(let url) = item.source else { return }
+            item.title = LinkNaming.title(for: url, siteName: declaredName)
+            item.linkPreview = ShelfItem.LinkPreview(fetchedAt: fetchedAt,
+                                                     siteName: declaredName,
+                                                     iconFileName: iconFileName)
+        }
+    }
+
     /// Checks every file item against the disk. A moved or renamed file is followed
     /// through its bookmark, and one that is gone or in the Trash is marked missing.
     func refreshReferences() {

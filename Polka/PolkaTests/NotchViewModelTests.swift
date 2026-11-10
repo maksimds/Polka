@@ -23,7 +23,7 @@ struct NotchViewModelTests {
 
         model.handleDrop([file("a.txt"), link("https://example.com/a")])
 
-        #expect(store.items.map(\.title) == ["a.txt", "example.com/a"])
+        #expect(store.items.map(\.title) == ["a.txt", "Example/a"])
         #expect(store.items.map(\.kind) == [.file, .link])
         #expect(model.state == .expanded)
         #expect(model.notice == nil)
@@ -47,7 +47,7 @@ struct NotchViewModelTests {
         model.handleDrop([link("https://example.com/a")])
 
         #expect(store.items.count == 1)
-        #expect(model.notice == "example.com/a is already on the shelf")
+        #expect(model.notice == "Example/a is already on the shelf")
     }
 
     @Test func severalDuplicatesAreCountedAndNewFilesStillGetAdded() {
