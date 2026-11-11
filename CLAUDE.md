@@ -34,6 +34,7 @@ Personal macOS menu bar app (Swift/SwiftUI + AppKit) that turns the MacBook notc
 - A drop is read as real files first, then file promises, then links. A browser image offers both its address and a promise, and the image wins. A promise of a .webloc or .url file means the link.
 - The Xcode project uses synchronized folders: new files under `Polka/Polka/` join the target automatically. Don't hand-edit `project.pbxproj` unless necessary.
 - `buildServer.json` and `.vscode/settings.json` are local-only and git-ignored.
+- The daily copy is `/Applications/Polka.app`, a Release build. The Desktop alias and Open at Login both launch it. Builds from Xcode or `xcodebuild` go to DerivedData and never update it, so `install.sh` at the repo root rebuilds it (into the git-ignored `Polka/build/`), replaces it and relaunches it. Open at Login points at whichever copy turned it on, so turn it on from the installed copy, not a Debug build.
 
 ## Layout
 
@@ -55,6 +56,7 @@ From `Polka/`:
 
 - Build: `xcodebuild -project Polka.xcodeproj -scheme Polka -configuration Debug build -quiet`
 - Run: `pkill Polka; open ~/Library/Developer/Xcode/DerivedData/Polka-*/Build/Products/Debug/Polka.app`
+- Install the daily copy: `../install.sh`. Only when the user asks, since it quits the copy they're using and replaces it.
 - Unit tests: `xcodebuild -project Polka.xcodeproj -scheme Polka -destination 'platform=macOS,arch=arm64' test -only-testing:PolkaTests -quiet`
 - Logs: `log stream --level debug --predicate 'subsystem == "com.maksimds.Polka"'`
 
