@@ -223,6 +223,15 @@ final class NotchViewModel: ObservableObject {
         return (files.filter { $0.id == id } + files.filter { $0.id != id }).map { $0.urlToOpen() }
     }
 
+    /// The tile's "Remove" menu item: the whole selection if `id` is in it, otherwise
+    /// just `id`, like Quick Look and Get Info. Only the shelf entries go; original
+    /// files are never touched.
+    func remove(from id: ShelfItem.ID) {
+        let ids = selection.contains(id) ? selection : [id]
+        store.remove(ids: ids)
+        selection.subtract(ids)
+    }
+
     /// For something that went wrong outside the panel, such as a file that wouldn't open.
     func showNotice(_ message: String) {
         notice = message

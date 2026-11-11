@@ -19,7 +19,12 @@ struct ShelfItemTile: View {
     let onClick: @MainActor (SelectionClick) -> Void
     /// This item, or the whole selection if this item is in it.
     let itemsToDrag: @MainActor () -> [ShelfItem]
+    /// The × button: this item alone.
     let onDelete: @MainActor () -> Void
+    /// The menu's "Remove": this item, or the whole selection if this item is in it.
+    let onRemoveFromMenu: @MainActor () -> Void
+    /// How many items are selected, for the menu's "Remove 3 Items".
+    let selectionCount: Int
     let onToggleTemporary: @MainActor () -> Void
     /// Nil when Polka has nowhere to keep copies.
     let onToggleKeepCopy: (@MainActor () -> Void)?
@@ -54,9 +59,9 @@ struct ShelfItemTile: View {
 
     /// Quick Look and Get Info for files and folders, then how Polka keeps the item:
     /// "Temporary", checked while it has an expiry, and for files and folders "Keep a
-    /// Copy", checked for a copy. Links have no file to show or copy, so they only get
-    /// "Temporary". Unchecking "Keep a Copy" goes back to the original, so it can't be
-    /// unchecked for a promised file, which has none.
+    /// Copy", checked for a copy. Links have no file to show or copy, so they skip
+    /// those. "Remove" comes last, set apart. Unchecking "Keep a Copy" goes back to the
+    /// original, so it can't be unchecked for a promised file, which has none.
     private var menuEntries: [TileDragView.MenuEntry] {
         let isFile = item.kind != .link
         var entries: [TileDragView.MenuEntry] = []
@@ -75,6 +80,11 @@ struct ShelfItemTile: View {
                                                   isEnabled: !isCopying && (isCopy ? item.original != nil : isAvailable),
                                                   action: onToggleKeepCopy))
         }
+        // A destructive choice says how much it removes when it's more than this tile.
+        let removeCount = isSelected ? max(selectionCount, 1) : 1
+        entries.append(TileDragView.MenuEntry(title: removeCount > 1 ? "Remove \(removeCount) Items" : "Remove",
+                                              startsGroup: true,
+                                              action: onRemoveFromMenu))
         return entries
     }
 

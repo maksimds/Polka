@@ -25,6 +25,7 @@ struct ShelfGridView: View {
     let onClearSelection: @MainActor () -> Void
     let itemsToDrag: @MainActor (ShelfItem.ID) -> [ShelfItem]
     let onDelete: @MainActor (ShelfItem.ID) -> Void
+    let onRemoveFromMenu: @MainActor (ShelfItem.ID) -> Void
     let onToggleTemporary: @MainActor (ShelfItem.ID) -> Void
     let onToggleKeepCopy: (@MainActor (ShelfItem.ID) -> Void)?
     let commands: ShelfItemCommands
@@ -76,6 +77,8 @@ struct ShelfGridView: View {
                                           onClick: { onClick(item.id, $0) },
                                           itemsToDrag: { itemsToDrag(item.id) },
                                           onDelete: { onDelete(item.id) },
+                                          onRemoveFromMenu: { onRemoveFromMenu(item.id) },
+                                          selectionCount: selection.count,
                                           onToggleTemporary: { onToggleTemporary(item.id) },
                                           onToggleKeepCopy: onToggleKeepCopy.map { toggle in { toggle(item.id) } },
                                           onOpen: { commands.open(item.id) },

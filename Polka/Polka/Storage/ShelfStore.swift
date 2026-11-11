@@ -76,6 +76,13 @@ final class ShelfStore: ObservableObject {
         return true
     }
 
+    /// Removes several shelf entries at once, with one save. The original files are
+    /// never touched.
+    func remove(ids: Set<ShelfItem.ID>) {
+        guard items.contains(where: { ids.contains($0.id) }) else { return }
+        commit(items.filter { !ids.contains($0.id) })
+    }
+
     /// Makes an item temporary: it is removed `lifetime` seconds from now.
     func makeTemporary(id: ShelfItem.ID, lifetime: TimeInterval) {
         let expiresAt = now().addingTimeInterval(lifetime)

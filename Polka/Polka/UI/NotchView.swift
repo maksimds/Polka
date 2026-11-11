@@ -149,6 +149,7 @@ struct NotchView: View {
                               onClearSelection: { model.clearSelection() },
                               itemsToDrag: { model.itemsToDrag(from: $0) },
                               onDelete: { store.remove(id: $0) },
+                              onRemoveFromMenu: { model.remove(from: $0) },
                               onToggleTemporary: { model.toggleTemporary($0) },
                               onToggleKeepCopy: keepCopyAction,
                               commands: commands,

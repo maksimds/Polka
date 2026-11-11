@@ -120,6 +120,30 @@ struct SelectionTests {
         #expect(model.selection == [ids[0]])
     }
 
+    // MARK: - Remove from the menu
+
+    @Test func removingAnUnselectedTileRemovesOnlyThatOne() {
+        let (model, store, ids) = makeModel()
+        model.click(ids[0], .only)
+        model.click(ids[1], .toggle)
+
+        model.remove(from: ids[3])
+
+        #expect(store.items.map(\.id) == [ids[0], ids[1], ids[2], ids[4]])
+        #expect(model.selection == [ids[0], ids[1]])
+    }
+
+    @Test func removingASelectedTileRemovesTheWholeSelection() {
+        let (model, store, ids) = makeModel()
+        model.click(ids[0], .only)
+        model.click(ids[2], .toggle)
+
+        model.remove(from: ids[2])
+
+        #expect(store.items.map(\.id) == [ids[1], ids[3], ids[4]])
+        #expect(model.selection.isEmpty)
+    }
+
     // MARK: - Selection rectangle
 
     @Test func aRectangleReplacesTheSelectionAndFollowsWhatItTouches() {
