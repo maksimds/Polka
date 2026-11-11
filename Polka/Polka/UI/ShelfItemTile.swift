@@ -52,22 +52,27 @@ struct ShelfItemTile: View {
             .joined(separator: " · ")
     }
 
-    /// For files and folders: Quick Look and Get Info, then "Keep a Copy", checked for a
-    /// copy. Links have no file to show, so they get no menu. Unchecking "Keep a Copy"
-    /// goes back to the original, so it can't be unchecked for a promised file, which
-    /// has none.
+    /// Quick Look and Get Info for files and folders, then how Polka keeps the item:
+    /// "Temporary", checked while it has an expiry, and for files and folders "Keep a
+    /// Copy", checked for a copy. Links have no file to show or copy, so they only get
+    /// "Temporary". Unchecking "Keep a Copy" goes back to the original, so it can't be
+    /// unchecked for a promised file, which has none.
     private var menuEntries: [TileDragView.MenuEntry] {
-        guard item.kind != .link else { return [] }
-        var entries = [
-            TileDragView.MenuEntry(title: "Quick Look", isEnabled: isAvailable, action: onQuickLook),
-            TileDragView.MenuEntry(title: "Get Info", isEnabled: isAvailable, action: onShowInfo),
-        ]
-        if let onToggleKeepCopy {
+        let isFile = item.kind != .link
+        var entries: [TileDragView.MenuEntry] = []
+        if isFile {
+            entries.append(TileDragView.MenuEntry(title: "Quick Look", isEnabled: isAvailable, action: onQuickLook))
+            entries.append(TileDragView.MenuEntry(title: "Get Info", isEnabled: isAvailable, action: onShowInfo))
+        }
+        entries.append(TileDragView.MenuEntry(title: "Temporary",
+                                              isChecked: item.isTemporary,
+                                              startsGroup: true,
+                                              action: onToggleTemporary))
+        if isFile, let onToggleKeepCopy {
             let isCopy = item.storageMode == .copy
             entries.append(TileDragView.MenuEntry(title: "Keep a Copy",
                                                   isChecked: isCopy,
                                                   isEnabled: !isCopying && (isCopy ? item.original != nil : isAvailable),
-                                                  startsGroup: true,
                                                   action: onToggleKeepCopy))
         }
         return entries
@@ -126,14 +131,6 @@ struct ShelfItemTile: View {
                                 onDoubleClick: onOpen,
                                 itemsToDrag: itemsToDrag)
         }
-        .overlay(alignment: .topLeading) {
-            // Temporary items always show it, so they stand out at a glance.
-            if isHovering || item.isTemporary {
-                lifetimeButton
-                    .padding(.leading, 6)
-                    .transition(.opacity)
-            }
-        }
         .overlay(alignment: .topTrailing) {
             if isHovering {
                 deleteButton
@@ -187,41 +184,20 @@ struct ShelfItemTile: View {
         }
     }
 
-    /// One click switches the item between permanent and temporary.
-    private var lifetimeButton: some View {
-        cornerButton(symbol: item.isTemporary ? "clock.fill" : "clock",
-                     foreground: item.isTemporary ? .black : .white,
-                     background: item.isTemporary ? .orange : Color(white: 0.3),
-                     label: item.isTemporary ? "Keep \(item.title) permanently" : "Make \(item.title) temporary",
-                     action: onToggleTemporary)
-    }
-
-    /// Removes the item from the shelf. The original file is never touched.
+    /// Removes the item from the shelf. The original file is never touched. A small
+    /// round button with a larger invisible hit area.
     private var deleteButton: some View {
-        cornerButton(symbol: "xmark",
-                     foreground: .white,
-                     background: Color(white: 0.3),
-                     label: "Remove \(item.title) from the shelf",
-                     action: onDelete)
-    }
-
-    /// A small round button with a larger invisible hit area.
-    private func cornerButton(symbol: String,
-                              foreground: Color,
-                              background: Color,
-                              label: String,
-                              action: @escaping @MainActor () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
+        Button(action: onDelete) {
+            Image(systemName: "xmark")
                 .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(foreground)
+                .foregroundStyle(.white)
                 .frame(width: 18, height: 18)
-                .background(background, in: Circle())
+                .background(Color(white: 0.3), in: Circle())
                 .frame(width: 26, height: 26)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(label)
+        .accessibilityLabel("Remove \(item.title) from the shelf")
     }
 }
 

@@ -85,7 +85,7 @@ final class NotchViewModel: ObservableObject {
         notice = nil
     }
 
-    /// The tile's one-click toggle: a permanent item becomes temporary, and the other way round.
+    /// The tile's "Temporary" menu item: a permanent item becomes temporary, and the other way round.
     func toggleTemporary(_ id: ShelfItem.ID) {
         guard let item = store.items.first(where: { $0.id == id }) else { return }
         if item.isTemporary {

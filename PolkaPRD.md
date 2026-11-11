@@ -40,7 +40,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-4 | A drag from any app opens the panel as a drop target once it has lasted half a second, or as soon as it reaches the notch. A shorter drag elsewhere never opens it | P0 |
 | FR-5 | Dropping files or folders stores them as items | P0 |
 | FR-6 | Dropping a URL stores it as a link item titled with the site's name and the page's address (for example GitHub/apple/swift) and shown with the site's icon | P0 |
-| FR-7 | Each item is marked temporary (with expiry) or permanent, with a default and a one-click toggle | P0 |
+| FR-7 | Each item is marked temporary (with expiry) or permanent, with a default and a toggle in the item's right-click menu | P0 |
 | FR-8 | Items can be deleted individually; deleting never removes the original file | P0 |
 | FR-9 | Double-clicking an item opens the file in its default app or the link in the default browser | P1 |
 | FR-10 | Multi-select, by clicking or by dragging a selection rectangle over free space as on the desktop, and drag several items out at once | P1 |
