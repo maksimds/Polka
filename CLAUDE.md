@@ -56,7 +56,7 @@ From `Polka/`:
 
 - Build: `xcodebuild -project Polka.xcodeproj -scheme Polka -configuration Debug build -quiet`
 - Run: `pkill Polka; open ~/Library/Developer/Xcode/DerivedData/Polka-*/Build/Products/Debug/Polka.app`
-- Install the daily copy: `../install.sh`. Only when the user asks, since it quits the copy they're using and replaces it.
+- Install the daily copy: `../install.sh`. Run it after each commit the user asks for (see Working style), or when they ask. It quits the copy they're using and replaces it.
 - Unit tests: `xcodebuild -project Polka.xcodeproj -scheme Polka -destination 'platform=macOS,arch=arm64' test -only-testing:PolkaTests -quiet`
 - Logs: `log stream --level debug --predicate 'subsystem == "com.maksimds.Polka"'`
 
@@ -90,6 +90,7 @@ Always build after changes to confirm it compiles. Hands-on testing (hover, drag
 
 - One branch per milestone step unless the user asks for something else for that milestone. `main` stays buildable. Tag each finished milestone (`m2`, ...).
 - Don't commit or push until the user asks. They test first, then say when.
+- After each commit the user asks for, on any branch, run `install.sh` so the daily copy in `/Applications` has the approved code, and say which version went in. Never install untested work between commits.
 - Propose a short plan before writing code for each step, and wait for a go-ahead on anything large.
 - After each change, explain what changed and how to test it. The user is a BSIT student and UI/UX designer, comfortable with concepts but still learning Swift and AppKit, so include short explanations of non-obvious AppKit behavior.
 - Writing style: professional but human, no em-dashes.
