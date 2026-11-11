@@ -1,4 +1,5 @@
 import AppKit
+import Quartz
 
 /// Builds the shelf and the helpers around it, then starts the notch panel.
 @MainActor
@@ -11,9 +12,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// One switch shared by the menu bar menu and the Settings window, so they always agree.
     private(set) lazy var loginItem = LoginItem()
+    /// Shared by Settings and Quick Look, the two windows that take focus.
+    private lazy var focus = FocusReturner()
+    private lazy var quickLook = QuickLookController(focus: focus)
 
     func showSettings() {
-        let controller = settingsWindow ?? SettingsWindowController(loginItem: loginItem)
+        let controller = settingsWindow ?? SettingsWindowController(loginItem: loginItem, focus: focus)
         settingsWindow = controller
         controller.show()
     }
@@ -49,9 +53,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = NotchPanelController(store: store,
                                               images: images,
                                               copies: copyKeeper,
+                                              quickLook: quickLook,
                                               openSettings: { [weak self] in self?.showSettings() })
         controller.start()
         notchController = controller
+    }
+
+    // MARK: - Quick Look control
+
+    // Quick Look asks down the responder chain for an object to supply its files,
+    // starting at the key window. Polka's panels never become key, so the question
+    // reaches the end of the chain: the app delegate. SwiftUI's own app delegate
+    // passes it on to this one, and this one to the Quick Look controller.
+
+    nonisolated override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {
+        MainActor.assumeIsolated { quickLook.isOpen }
+    }
+
+    nonisolated override func beginPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { quickLook.beginControl(panel) }
+    }
+
+    nonisolated override func endPreviewPanelControl(_ panel: QLPreviewPanel!) {
+        MainActor.assumeIsolated { quickLook.endControl(panel) }
     }
 
     /// Polka's Application Support folder. Without it Polka still runs, but the shelf

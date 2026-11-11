@@ -74,6 +74,16 @@ extension ShelfItem {
         }
     }
 
+    /// What opening the item opens, and what Quick Look and Get Info show: a kept
+    /// copy's original while it can still be found, since that's the real file,
+    /// otherwise the item's own file. A link's web address.
+    func urlToOpen(fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) -> URL {
+        if let original, fileExists(original.path) {
+            return URL(fileURLWithPath: original.path)
+        }
+        return url
+    }
+
     var isTemporary: Bool {
         expiresAt != nil
     }

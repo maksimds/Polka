@@ -5,15 +5,18 @@ import SwiftUI
 ///
 /// This is AppKit for the same reason drops are: SwiftUI's drag support expects a
 /// window that can become key, and the notch panel never does. Because this layer
-/// sits on top of the tile and receives every press, it also reports clicks (for
-/// selecting), reports hover with a tracking area marked `.activeAlways` so it
-/// works while another app is frontmost, and shows the tile's right-click menu.
+/// sits on top of the tile and receives the presses on its picture and name, it also
+/// reports clicks (for selecting) and double-clicks (for opening), reports hover with
+/// a tracking area marked `.activeAlways` so it works while another app is
+/// frontmost, and shows the tile's right-click menu.
 final class TileDragView: NSView {
     /// One entry in the tile's right-click menu.
     struct MenuEntry {
         let title: String
         var isChecked = false
         var isEnabled = true
+        /// Puts a divider above this entry, to start a new group.
+        var startsGroup = false
         let action: @MainActor () -> Void
     }
 
@@ -21,12 +24,19 @@ final class TileDragView: NSView {
     var onHoverChanged: ((Bool) -> Void)?
     /// A press that ended without becoming a drag.
     var onClick: ((SelectionClick) -> Void)?
+    /// The second click of a double-click. The first one has already selected the tile.
+    var onDoubleClick: (() -> Void)?
     /// Asked when a drag begins: this tile's item, or the whole selection.
     var itemsToDrag: (() -> [ShelfItem])?
     /// Off for items whose file is missing, so there is nothing broken to drag.
     var isDragEnabled = true
     /// Empty means no menu.
     var menuEntries: [MenuEntry] = []
+    /// Where a press counts, measured from the top left as SwiftUI does: the picture
+    /// and the text under it, like an icon on the desktop. Presses on the blank rest
+    /// of the tile fall through to the grid, where they clear the selection or start
+    /// a selection rectangle. Nil means the whole tile.
+    var pressArea: CGRect?
     /// The entries of the menu that is open, so a choice runs the action it showed.
     private var shownEntries: [MenuEntry] = []
 
@@ -62,6 +72,19 @@ final class TileDragView: NSView {
         onHoverChanged?(false)
     }
 
+    /// AppKit asks this to find which view gets a press, a right-click or a scroll.
+    /// Returning nil passes it to whatever is behind. Hover isn't affected: the
+    /// tracking area still covers the whole tile, so its buttons show anywhere on it.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let pressArea, let superview else { return super.hitTest(point) }
+        // `point` is in the superview's coordinates, and AppKit measures from the bottom.
+        let local = convert(point, from: superview)
+        let fromTop = CGPoint(x: local.x, y: bounds.height - local.y)
+        // A little slack, so the edge of a picture or name isn't fiddly to hit.
+        guard pressArea.insetBy(dx: -4, dy: -4).contains(fromTop) else { return nil }
+        return super.hitTest(point)
+    }
+
     /// Accepts the press even though the panel's window is not key.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
@@ -84,9 +107,14 @@ final class TileDragView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
-        // Still set means the pointer never moved far enough to drag.
+        // Still set means the pointer never moved far enough to drag. macOS counts the
+        // clicks itself, using the double-click speed set in System Settings.
         if pressPoint != nil {
-            onClick?(pressClick)
+            if event.clickCount == 2 {
+                onDoubleClick?()
+            } else {
+                onClick?(pressClick)
+            }
         }
         pressPoint = nil
     }
@@ -102,6 +130,9 @@ final class TileDragView: NSView {
         // Each entry says for itself whether it can be chosen.
         menu.autoenablesItems = false
         for (index, entry) in shownEntries.enumerated() {
+            if entry.startsGroup, index > 0 {
+                menu.addItem(.separator())
+            }
             let menuItem = NSMenuItem(title: entry.title, action: #selector(menuEntryChosen(_:)), keyEquivalent: "")
             menuItem.target = self
             menuItem.tag = index
@@ -136,8 +167,10 @@ struct ShelfItemDragHandle: NSViewRepresentable {
     let source: ShelfDragSource
     let isDragEnabled: Bool
     let menuEntries: [TileDragView.MenuEntry]
+    let pressArea: CGRect?
     let onHoverChanged: (Bool) -> Void
     let onClick: (SelectionClick) -> Void
+    let onDoubleClick: () -> Void
     let itemsToDrag: () -> [ShelfItem]
 
     func makeNSView(context: Context) -> TileDragView {
@@ -148,8 +181,10 @@ struct ShelfItemDragHandle: NSViewRepresentable {
         view.source = source
         view.isDragEnabled = isDragEnabled
         view.menuEntries = menuEntries
+        view.pressArea = pressArea
         view.onHoverChanged = onHoverChanged
         view.onClick = onClick
+        view.onDoubleClick = onDoubleClick
         view.itemsToDrag = itemsToDrag
     }
 }

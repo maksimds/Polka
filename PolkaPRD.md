@@ -24,8 +24,8 @@ v1 is a lean shelf for files and links. Everything else waits until the core fee
 
 | Bucket | Items |
 | --- | --- |
-| In v1 | Hover to expand, drag in, drag out, files, folders, links with their site's name and icon, temporary and permanent items, delete, menu bar item, launch at login |
-| Later | Plain text and image snippets, search, tags or groups, quick look preview, pin to top, keyboard shortcut to open |
+| In v1 | Hover to expand, drag in, drag out, files, folders, links with their site's name and icon, temporary and permanent items, delete, open, Quick Look and Get Info, menu bar item, launch at login |
+| Later | Plain text and image snippets, search, tags or groups, pin to top, keyboard shortcut to open |
 | Out of scope | Cloud sync, iPhone companion, sharing with others, AirDrop, music or calendar widgets, App Store release |
 
 ## Functional requirements
@@ -42,13 +42,14 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-6 | Dropping a URL stores it as a link item titled with the site's name and the page's address (for example GitHub/apple/swift) and shown with the site's icon | P0 |
 | FR-7 | Each item is marked temporary (with expiry) or permanent, with a default and a one-click toggle | P0 |
 | FR-8 | Items can be deleted individually; deleting never removes the original file | P0 |
-| FR-9 | Clicking an item opens the file or link in its default app | P1 |
-| FR-10 | Multi-select and drag several items out at once | P1 |
+| FR-9 | Double-clicking an item opens the file in its default app or the link in the default browser | P1 |
+| FR-10 | Multi-select, by clicking or by dragging a selection rectangle over free space as on the desktop, and drag several items out at once | P1 |
 | FR-11 | The panel collapses when the pointer leaves, and never while a drag is active over it | P0 |
 | FR-12 | The app runs as a menu bar agent with no Dock icon, a settings window and launch at login | P1 |
 | FR-13 | Items persist across app restarts and reboots | P0 |
 | FR-14 | The panel behaves correctly on non-notch displays by showing a top-center pill | P2 |
 | FR-15 | Broken references (moved or deleted originals) are shown as unavailable, not silently dropped | P1 |
+| FR-16 | A file's right-click menu offers Quick Look and Get Info, which work as they do in Finder | P2 |
 
 ## Interaction flow
 

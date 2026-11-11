@@ -23,9 +23,22 @@ struct ShelfItemTile: View {
     let onToggleTemporary: @MainActor () -> Void
     /// Nil when Polka has nowhere to keep copies.
     let onToggleKeepCopy: (@MainActor () -> Void)?
+    /// Double-click.
+    let onOpen: @MainActor () -> Void
+    /// This item, or the whole selection if this item is in it.
+    let onQuickLook: @MainActor () -> Void
+    /// This item, or the whole selection if this item is in it.
+    let onShowInfo: @MainActor () -> Void
+    /// Where the picture and text are in the grid's visible area, for the selection
+    /// rectangle. Nil once the tile is gone.
+    let onPressAreaMoved: @MainActor (CGRect?) -> Void
 
     @State private var loadedThumbnail: NSImage?
     @State private var isHovering = false
+    /// The picture and text, within the tile. Presses only count there.
+    @State private var pressArea: CGRect?
+
+    private static let coordinateSpace = "ShelfItemTile"
 
     private var image: NSImage {
         loadedThumbnail ?? images.image(for: item)
@@ -39,15 +52,25 @@ struct ShelfItemTile: View {
             .joined(separator: " · ")
     }
 
-    /// "Keep a Copy", checked for a copy, for files and folders. Unchecking it goes back
-    /// to the original, so it can't be unchecked for a promised file, which has none.
+    /// For files and folders: Quick Look and Get Info, then "Keep a Copy", checked for a
+    /// copy. Links have no file to show, so they get no menu. Unchecking "Keep a Copy"
+    /// goes back to the original, so it can't be unchecked for a promised file, which
+    /// has none.
     private var menuEntries: [TileDragView.MenuEntry] {
-        guard item.kind != .link, let onToggleKeepCopy else { return [] }
-        let isCopy = item.storageMode == .copy
-        return [TileDragView.MenuEntry(title: "Keep a Copy",
-                                       isChecked: isCopy,
-                                       isEnabled: !isCopying && (isCopy ? item.original != nil : isAvailable),
-                                       action: onToggleKeepCopy)]
+        guard item.kind != .link else { return [] }
+        var entries = [
+            TileDragView.MenuEntry(title: "Quick Look", isEnabled: isAvailable, action: onQuickLook),
+            TileDragView.MenuEntry(title: "Get Info", isEnabled: isAvailable, action: onShowInfo),
+        ]
+        if let onToggleKeepCopy {
+            let isCopy = item.storageMode == .copy
+            entries.append(TileDragView.MenuEntry(title: "Keep a Copy",
+                                                  isChecked: isCopy,
+                                                  isEnabled: !isCopying && (isCopy ? item.original != nil : isAvailable),
+                                                  startsGroup: true,
+                                                  action: onToggleKeepCopy))
+        }
+        return entries
     }
 
     var body: some View {
@@ -78,14 +101,29 @@ struct ShelfItemTile: View {
                 .foregroundStyle(.white.opacity(0.55))
                 .lineLimit(1)
         }
+        // The picture and text, measured before the tile stretches to its column. Like
+        // an icon on the desktop, that's the part you can press; the rest is free space.
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .named(Self.coordinateSpace))
+        } action: { area in
+            pressArea = area
+        }
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .named(ShelfGridView.viewportSpace))
+        } action: { area in
+            onPressAreaMoved(area)
+        }
         .frame(maxWidth: .infinity)
         .frame(height: Self.height)
+        .coordinateSpace(.named(Self.coordinateSpace))
         .overlay {
             ShelfItemDragHandle(source: dragSource,
                                 isDragEnabled: isAvailable,
                                 menuEntries: menuEntries,
+                                pressArea: pressArea,
                                 onHoverChanged: { isHovering = $0 },
                                 onClick: onClick,
+                                onDoubleClick: onOpen,
                                 itemsToDrag: itemsToDrag)
         }
         .overlay(alignment: .topLeading) {
@@ -113,6 +151,9 @@ struct ShelfItemTile: View {
         }
         .task(id: item.id) {
             loadedThumbnail = await images.loadThumbnail(for: item, side: Self.imageSide)
+        }
+        .onDisappear {
+            onPressAreaMoved(nil)
         }
     }
 

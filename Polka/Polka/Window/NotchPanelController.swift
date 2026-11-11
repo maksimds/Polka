@@ -9,6 +9,7 @@ final class NotchPanelController {
     private let store: ShelfStore
     private let images: ShelfItemImages
     private let openSettings: @MainActor () -> Void
+    private let quickLook: QuickLookController
     private let model: NotchViewModel
     private let dragMonitor = GlobalDragMonitor()
     private let dragSource: ShelfDragSource
@@ -44,9 +45,11 @@ final class NotchPanelController {
     init(store: ShelfStore,
          images: ShelfItemImages,
          copies: CopyKeeper?,
+         quickLook: QuickLookController,
          openSettings: @escaping @MainActor () -> Void) {
         self.store = store
         self.images = images
+        self.quickLook = quickLook
         self.openSettings = openSettings
         dragSource = ShelfDragSource(images: images)
         model = NotchViewModel(store: store, copies: copies)
@@ -63,7 +66,8 @@ final class NotchPanelController {
                                                             dragSource: dragSource,
                                                             openSettings: { [weak self] in
                                                                 self?.openSettingsFromPanel()
-                                                            }))
+                                                            },
+                                                            commands: itemCommands))
         hostingView.sizingOptions = []
 
         let dropView = DropTargetView(frame: .zero)
@@ -183,6 +187,41 @@ final class NotchPanelController {
     private func openSettingsFromPanel() {
         model.state = .collapsed
         openSettings()
+    }
+
+    // MARK: - Opening and inspecting items
+
+    /// Each one collapses the panel first, so it isn't covering what opens. The files
+    /// are worked out before that, since collapsing clears the selection.
+    private var itemCommands: ShelfItemCommands {
+        ShelfItemCommands(open: { [weak self] in self?.openItem($0) },
+                          quickLook: { [weak self] in self?.quickLookItems(from: $0) },
+                          showInfo: { [weak self] in self?.showInfoForItems(from: $0) })
+    }
+
+    /// Double-click. A file that can't be found does nothing, as it can't be dragged.
+    private func openItem(_ id: ShelfItem.ID) {
+        guard let url = model.urlToOpen(id) else { return }
+        model.state = .collapsed
+        if !ItemOpener.open(url) {
+            model.showNotice("Couldn't open \(url.lastPathComponent)")
+        }
+    }
+
+    private func quickLookItems(from id: ShelfItem.ID) {
+        let files = model.filesToShow(from: id)
+        guard !files.isEmpty else { return }
+        model.state = .collapsed
+        quickLook.show(files)
+    }
+
+    private func showInfoForItems(from id: ShelfItem.ID) {
+        let files = model.filesToShow(from: id)
+        guard !files.isEmpty else { return }
+        model.state = .collapsed
+        if !ItemOpener.showInfo(for: files) {
+            model.showNotice("Couldn't open Get Info in Finder")
+        }
     }
 
     // MARK: - Hover

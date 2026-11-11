@@ -160,6 +160,36 @@ final class NotchViewModel: ObservableObject {
         selectionAnchor = nil
     }
 
+    /// What was selected when the selection rectangle started, for Shift and Command.
+    private var selectionBeforeMarquee: Set<ShelfItem.ID> = []
+    private var marqueeKind = SelectionClick.only
+
+    /// A drag on free space starts a selection rectangle, as on the desktop. On its own
+    /// it replaces the selection, with Shift (`.range`) it adds to it, and with Command
+    /// (`.toggle`) it flips each tile it covers.
+    func beginMarquee(_ kind: SelectionClick) {
+        marqueeKind = kind
+        selectionBeforeMarquee = selection
+        if kind == .only {
+            selectionAnchor = nil
+        }
+    }
+
+    /// Called as the rectangle moves with every tile it touches, so tiles light up as
+    /// it reaches them and go dark again if it pulls back.
+    func updateMarquee(touching ids: Set<ShelfItem.ID>) {
+        let newSelection: Set<ShelfItem.ID>
+        switch marqueeKind {
+        case .only: newSelection = ids
+        case .range: newSelection = selectionBeforeMarquee.union(ids)
+        case .toggle: newSelection = selectionBeforeMarquee.symmetricDifference(ids)
+        }
+        // Called on every mouse move; only a real change redraws the shelf.
+        if newSelection != selection {
+            selection = newSelection
+        }
+    }
+
     /// What a drag that starts on `id` carries: that item first, then every other
     /// selected item, in shelf order. Items whose file is missing stay behind.
     /// Like in Finder, dragging an item that isn't selected selects it alone.
@@ -171,6 +201,31 @@ final class NotchViewModel: ObservableObject {
             selection.contains($0.id) && !store.missingItemIDs.contains($0.id)
         }
         return draggable.filter { $0.id == id } + draggable.filter { $0.id != id }
+    }
+
+    // MARK: - Opening and inspecting
+
+    /// What a double-click on `id` opens. Nil for a file that can't be found.
+    func urlToOpen(_ id: ShelfItem.ID) -> URL? {
+        guard !store.missingItemIDs.contains(id),
+              let item = store.items.first(where: { $0.id == id }) else { return nil }
+        return item.urlToOpen()
+    }
+
+    /// The files a right-click choice on `id` (Quick Look, Get Info) acts on: the
+    /// whole selection if `id` is in it, otherwise just `id`, with `id` first, like a
+    /// drag. Links have no file and missing files can't be shown, so both stay out.
+    func filesToShow(from id: ShelfItem.ID) -> [URL] {
+        let ids = selection.contains(id) ? selection : [id]
+        let files = store.items.filter {
+            ids.contains($0.id) && $0.kind != .link && !store.missingItemIDs.contains($0.id)
+        }
+        return (files.filter { $0.id == id } + files.filter { $0.id != id }).map { $0.urlToOpen() }
+    }
+
+    /// For something that went wrong outside the panel, such as a file that wouldn't open.
+    func showNotice(_ message: String) {
+        notice = message
     }
 
     // MARK: - Drag out

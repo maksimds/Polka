@@ -8,6 +8,7 @@ struct NotchView: View {
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
     let openSettings: @MainActor () -> Void
+    let commands: ShelfItemCommands
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Goes up each time a drag arrives over the drop zone, to bounce its icon once.
@@ -149,7 +150,10 @@ struct NotchView: View {
                               itemsToDrag: { model.itemsToDrag(from: $0) },
                               onDelete: { store.remove(id: $0) },
                               onToggleTemporary: { model.toggleTemporary($0) },
-                              onToggleKeepCopy: keepCopyAction)
+                              onToggleKeepCopy: keepCopyAction,
+                              commands: commands,
+                              onMarqueeBegan: { model.beginMarquee($0) },
+                              onMarqueeChanged: { model.updateMarquee(touching: $0) })
             }
             // Below the grid so it never covers a tile, and tiles don't shift under the pointer.
             if let notice = model.notice {

@@ -10,30 +10,19 @@ import SwiftUI
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let loginItem: LoginItem
+    /// Gives focus back to the app you were in once Settings closes.
+    private let focus: FocusReturner
     private var window: NSWindow?
-    /// The app you were in before Settings took focus, so it can get focus back.
-    private var previousApp: NSRunningApplication?
-    private var activationObserver: NSObjectProtocol?
     private var hasBeenPlaced = false
 
-    init(loginItem: LoginItem) {
+    init(loginItem: LoginItem, focus: FocusReturner) {
         self.loginItem = loginItem
+        self.focus = focus
         super.init()
-
-        // Keeps track of the last other app you used, in case you switch to another
-        // one and back while Settings is open.
-        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.didActivateApplicationNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            MainActor.assumeIsolated { self?.remember(app) }
-        }
     }
 
     func show() {
-        remember(NSWorkspace.shared.frontmostApplication)
+        focus.rememberFrontmostApp()
         let window = self.window ?? makeWindow()
         self.window = window
         if !window.isVisible {
@@ -56,21 +45,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Polka has no other window that can take focus, so when Settings closes macOS
     /// leaves Polka active with nothing to type into. Hand focus back instead.
     func windowWillClose(_ notification: Notification) {
-        // Closed while you were already in another app: leave focus where it is.
-        guard NSApp.isActive, let app = previousApp, !app.isTerminated else { return }
-        // Polka is active, so it can pass activation on to another app.
-        let activated = app.activate(from: .current, options: [])
-        Log.app.debug("""
-            Settings closed, focus back to \(app.localizedName ?? "?", privacy: .public): \(activated)
-            """)
+        focus.handBack(after: "Settings")
     }
 
     // MARK: - Private
-
-    private func remember(_ app: NSRunningApplication?) {
-        guard let app, app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
-        previousApp = app
-    }
 
     private func makeWindow() -> NSWindow {
         let content = NSHostingController(rootView: SettingsView(loginItem: loginItem))

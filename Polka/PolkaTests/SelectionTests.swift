@@ -119,4 +119,40 @@ struct SelectionTests {
         #expect(model.state == .draggingOut)
         #expect(model.selection == [ids[0]])
     }
+
+    // MARK: - Selection rectangle
+
+    @Test func aRectangleReplacesTheSelectionAndFollowsWhatItTouches() {
+        let (model, _, ids) = makeModel()
+        model.click(ids[0], .only)
+
+        model.beginMarquee(.only)
+        model.updateMarquee(touching: [ids[2], ids[3]])
+        #expect(model.selection == [ids[2], ids[3]])
+
+        // Pulled back off a tile, the tile goes dark again.
+        model.updateMarquee(touching: [ids[2]])
+        #expect(model.selection == [ids[2]])
+    }
+
+    @Test func shiftAddsTheRectangleToTheSelection() {
+        let (model, _, ids) = makeModel()
+        model.click(ids[0], .only)
+
+        model.beginMarquee(.range)
+        model.updateMarquee(touching: [ids[0], ids[3]])
+
+        #expect(model.selection == [ids[0], ids[3]])
+    }
+
+    @Test func commandFlipsEachTileTheRectangleTouches() {
+        let (model, _, ids) = makeModel()
+        model.click(ids[0], .only)
+        model.click(ids[1], .toggle)
+
+        model.beginMarquee(.toggle)
+        model.updateMarquee(touching: [ids[1], ids[2]])
+
+        #expect(model.selection == [ids[0], ids[2]])
+    }
 }
