@@ -9,6 +9,8 @@ struct NotchView: View {
     let dragSource: ShelfDragSource
     let openSettings: @MainActor () -> Void
     let commands: ShelfItemCommands
+    /// The pointer in the panel's SwiftUI space, for the drop zone's eyes.
+    let pointer: @MainActor () -> CGPoint?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Goes up each time a drag arrives over the drop zone, to bounce its icon once.
@@ -18,6 +20,10 @@ struct NotchView: View {
     private static let hoverGrowth = CGSize(width: 14, height: 4)
     /// Space between the panel's sides and the tiles, also used by the header.
     private static let sideInset: CGFloat = 16
+    /// Space between the notch and the drop zone's eyes.
+    private static let eyesTopGap: CGFloat = 9.9
+    /// Space between the eyes and the dashed box below them.
+    private static let eyesBottomGap: CGFloat = 11.88
 
     private var isTargeted: Bool { model.isDropTargeted }
     /// The shelf is showing and can be used.
@@ -217,7 +223,22 @@ struct NotchView: View {
 
     // MARK: - Drop zone
 
+    /// Eyes hanging just under the notch, watching the drag, over the dashed box.
     private var dropZone: some View {
+        VStack(spacing: 0) {
+            DropZoneEyes(pointer: pointer, isTargeted: isTargeted)
+                // Just the eyes' own height, so its middle is where they look from.
+                // They can lean past it a little as they turn; nothing clips them.
+                .frame(height: DropZoneEyes.eyeSize.height)
+                .padding(.top, Self.eyesTopGap)
+                .padding(.bottom, Self.eyesBottomGap)
+            dropBox
+        }
+        .padding(.top, model.notchSize.height)
+        .padding([.horizontal, .bottom], 16)
+    }
+
+    private var dropBox: some View {
         RoundedRectangle(cornerRadius: 14, style: .continuous)
             .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [6, 5]))
             .foregroundStyle(.white.opacity(isTargeted ? 0.9 : 0.4))
@@ -242,7 +263,5 @@ struct NotchView: View {
             .onChange(of: isTargeted) { _, targeted in
                 if targeted { dropArrivals += 1 }
             }
-            .padding(.top, model.notchSize.height + 8)
-            .padding([.horizontal, .bottom], 16)
     }
 }

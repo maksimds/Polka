@@ -67,7 +67,10 @@ final class NotchPanelController {
                                                             openSettings: { [weak self] in
                                                                 self?.openSettingsFromPanel()
                                                             },
-                                                            commands: itemCommands))
+                                                            commands: itemCommands,
+                                                            pointer: { [weak self] in
+                                                                self?.pointerInPanel()
+                                                            }))
         hostingView.sizingOptions = []
 
         let dropView = DropTargetView(frame: .zero)
@@ -134,6 +137,14 @@ final class NotchPanelController {
               // one if AppKit replaces its NSScreen object.
               screen.frame != geometry.screen.frame else { return }
         place(on: screen)
+    }
+
+    /// The pointer in the panel's SwiftUI space: the hosting view fills the panel, and
+    /// SwiftUI measures from its top left, while screen points go up from the bottom.
+    private func pointerInPanel() -> CGPoint? {
+        guard let frame = panel?.frame else { return nil }
+        let pointer = NSEvent.mouseLocation
+        return CGPoint(x: pointer.x - frame.minX, y: frame.maxY - pointer.y)
     }
 
     /// Only a collapsed panel moves, and only once it has finished shrinking. An open
