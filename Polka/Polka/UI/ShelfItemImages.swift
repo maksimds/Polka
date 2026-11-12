@@ -12,6 +12,8 @@ final class ShelfItemImages {
     private let siteIcons = NSCache<NSString, NSImage>()
     /// By icon file name. An icon file never changes, so neither does its style.
     private var siteIconStyles: [String: SiteIconStyle] = [:]
+    /// By image, which is kept and reused for as long as it's shown.
+    private let visibleBounds = NSCache<NSImage, NSValue>()
 
     init(previewsFolder: URL? = nil) {
         self.previewsFolder = previewsFolder
@@ -99,6 +101,56 @@ final class ShelfItemImages {
         guard coverage > 0 else { return false }
         return Double(seeThrough) / Double(side * side) >= seeThroughShare
             && brightness / coverage <= darkLuminance
+    }
+
+    // MARK: - Visible part
+
+    /// The part of `image` that isn't see-through, as shares of its width and height,
+    /// measured from the top left: what a tile counts as its picture. A folder or a
+    /// document icon leaves see-through room around its drawing; a photo has none.
+    /// Measured once per image.
+    func visibleBounds(of image: NSImage) -> CGRect {
+        if let known = visibleBounds.object(forKey: image) { return known.rectValue }
+        let bounds = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            .map(Self.visibleBounds(of:)) ?? Self.wholeImage
+        visibleBounds.setObject(NSValue(rect: bounds), forKey: image)
+        return bounds
+    }
+
+    /// All of an image, as shares of its width and height.
+    nonisolated static let wholeImage = CGRect(x: 0, y: 0, width: 1, height: 1)
+
+    /// The smallest rectangle around every pixel that's at least a tenth opaque, on a
+    /// 64 × 64 copy, as shares of the image's width and height from the top left.
+    /// All of it when nothing shows.
+    nonisolated static func visibleBounds(of image: CGImage) -> CGRect {
+        let side = 64
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8,
+                                      bytesPerRow: side * 4, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return wholeImage
+        }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        guard let data = context.data else { return wholeImage }
+        let pixels = data.bindMemory(to: UInt8.self, capacity: side * side * 4)
+
+        var left = side, top = side, right = -1, bottom = -1
+        // Rows in memory run from the top of the image down.
+        for row in 0..<side {
+            for column in 0..<side where pixels[(row * side + column) * 4 + 3] >= 26 {
+                left = min(left, column)
+                right = max(right, column)
+                top = min(top, row)
+                bottom = max(bottom, row)
+            }
+        }
+        guard right >= 0 else { return wholeImage }
+        let scale = CGFloat(side)
+        return CGRect(x: CGFloat(left) / scale,
+                      y: CGFloat(top) / scale,
+                      width: CGFloat(right - left + 1) / scale,
+                      height: CGFloat(bottom - top + 1) / scale)
     }
 
     // MARK: - Site icons

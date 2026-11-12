@@ -46,8 +46,12 @@ struct ShelfItemTile: View {
 
     @State private var loadedThumbnail: NSImage?
     @State private var isHovering = false
-    /// The picture and text, within the tile. Presses only count there.
+    /// The picture and text together, within the tile, for placing the picture.
     @State private var pressArea: CGRect?
+    /// The name (with its selection capsule) and the type line, as drawn, within the
+    /// tile. Part of the tile's shape for hover and presses.
+    @State private var nameFrame: CGRect?
+    @State private var typeLineFrame: CGRect?
 
     private static let coordinateSpace = "ShelfItemTile"
 
@@ -117,13 +121,24 @@ struct ShelfItemTile: View {
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
                 .background(Capsule().fill(Color.accentColor.opacity(isSelected ? 1 : 0)))
+                .onGeometryChange(for: CGRect.self) { proxy in
+                    proxy.frame(in: .named(Self.coordinateSpace))
+                } action: { frame in
+                    nameFrame = frame
+                }
             Text(detailLine)
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.55))
                 .lineLimit(1)
+                .onGeometryChange(for: CGRect.self) { proxy in
+                    proxy.frame(in: .named(Self.coordinateSpace))
+                } action: { frame in
+                    typeLineFrame = frame
+                }
         }
         // The picture and text, measured before the tile stretches to its column. Like
-        // an icon on the desktop, that's the part you can press; the rest is free space.
+        // an icon on the desktop, only what's drawn of them counts as the tile, for
+        // presses and hover (`tileShape`); the rest of the column is free space.
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .named(Self.coordinateSpace))
         } action: { area in
@@ -145,7 +160,9 @@ struct ShelfItemTile: View {
         .overlay {
             ShelfItemDragHandle(source: dragSource,
                                 menuEntries: menuEntries,
-                                pressArea: pressArea,
+                                shape: tileShape,
+                                removeButtonArea: removeButtonArea,
+                                isHovering: isHovering,
                                 onHoverChanged: { isHovering = $0 },
                                 onClick: onClick,
                                 onDoubleClick: onOpen,
@@ -269,13 +286,52 @@ struct ShelfItemTile: View {
                        y: pressArea.minY + picture.minY + Self.removeBadgeInset + drop)
     }
 
+    /// The picture as drawn, in the picture square. A link's icon or card fills it. A
+    /// file's thumbnail or icon is fitted, and only its visible part counts, without
+    /// the see-through room a folder or a document icon leaves around its drawing.
+    private var drawnPicture: CGRect {
+        let fitted = visiblePicture
+        guard item.linkPreview?.iconFileName == nil else { return fitted }
+        let visible = images.visibleBounds(of: image)
+        return CGRect(x: fitted.minX + visible.minX * fitted.width,
+                      y: fitted.minY + visible.minY * fitted.height,
+                      width: visible.width * fitted.width,
+                      height: visible.height * fitted.height)
+    }
+
+    /// What counts as the tile for hover and presses, in the tile: the picture as
+    /// drawn, the name and the type line, each as wide as it's drawn. The small gaps
+    /// between them count too, so moving down the tile doesn't leave it and come back.
+    /// Empty until the tile has been measured.
+    private var tileShape: [CGRect] {
+        guard let pressArea else { return [] }
+        var parts = [drawnPicture.offsetBy(dx: pressArea.midX - Self.imageSide / 2, dy: pressArea.minY)]
+        parts += [nameFrame, typeLineFrame].compactMap { $0 }
+        // Top to bottom: each part reaches down to the next one.
+        for index in parts.indices.dropLast() where parts[index + 1].minY > parts[index].maxY {
+            parts[index].size.height = parts[index + 1].minY - parts[index].minY
+        }
+        return parts
+    }
+
+    /// The remove button's area in the tile, its invisible margin included.
+    private var removeButtonArea: CGRect? {
+        removeBadgeCenter.map {
+            CGRect(x: $0.x - Self.removeButtonSide / 2, y: $0.y - Self.removeButtonSide / 2,
+                   width: Self.removeButtonSide, height: Self.removeButtonSide)
+        }
+    }
+
+    /// The remove button: its badge with an invisible margin around it, easier to hit.
+    private static let removeButtonSide: CGFloat = 26
+
     /// Removes the item from the shelf. The original file is never touched. The badge
     /// iPhone puts on an app being deleted, with a × for its minus, and a larger
     /// invisible hit area.
     private var deleteButton: some View {
         Button(action: onDelete) {
             GlassRemoveBadge()
-                .frame(width: 26, height: 26)
+                .frame(width: Self.removeButtonSide, height: Self.removeButtonSide)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
