@@ -115,10 +115,10 @@ enum ShelfSort: String, CaseIterable {
         }
     }
 
-    /// The tile's title, compared the way Finder compares names: case doesn't count,
-    /// and numbers count as numbers, so "file2" comes before "file10".
+    /// The tile's name, a given one included, compared the way Finder compares names:
+    /// case doesn't count, and numbers count as numbers, so "file2" comes before "file10".
     private static func compareNames(_ a: ShelfItem, _ b: ShelfItem) -> ComparisonResult {
-        a.title.localizedStandardCompare(b.title)
+        a.displayName.localizedStandardCompare(b.displayName)
     }
 }
 

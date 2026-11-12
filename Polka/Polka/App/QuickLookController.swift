@@ -3,14 +3,6 @@ import Quartz
 
 /// Shows files in macOS's Quick Look panel, as pressing Space does in Finder: the
 /// arrow keys move through several files, and Space or Esc closes it.
-///
-/// Quick Look only gets those keys while Polka is the active app, so, as for
-/// Settings, Polka activates itself while it's open and hands focus back after.
-/// The notch panel collapses first and still never takes focus itself.
-///
-/// Quick Look finds the object that supplies its files by asking down the responder
-/// chain. Polka's panels never become key, so the question reaches the app
-/// delegate, which passes it on to `isOpen`, `beginControl` and `endControl`.
 @MainActor
 final class QuickLookController: NSObject {
     private let focus: FocusReturner
@@ -33,8 +25,6 @@ final class QuickLookController: NSObject {
             isOpen = true
             focus.rememberFrontmostApp()
         }
-        // A window from an inactive app can't take keystrokes. You asked for Quick
-        // Look, so focus moving to it is expected here.
         NSApp.activate()
         observeClose(of: panel)
 
@@ -46,8 +36,6 @@ final class QuickLookController: NSObject {
             panel.makeKeyAndOrderFront(nil)
         }
         panel.currentPreviewItemIndex = 0
-        // If macOS turns the activation down, the panel still comes to the front,
-        // and one click on it gives it the keys.
         panel.orderFrontRegardless()
     }
 

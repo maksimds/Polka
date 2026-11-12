@@ -82,6 +82,61 @@ struct LinkPreviewTests {
         #expect(LinkNaming.declaredSiteName(inHTML: #"<meta property="og:site_name" content="  ">"#) == nil)
     }
 
+    // MARK: - Icons the page names
+
+    /// Notion's pages: LinkPresentation can't load them, and the site has no /favicon.ico,
+    /// but the page's head lists both of these.
+    @Test func thePagesOwnIconsComeFirstWithTheTouchIconAhead() {
+        let html = #"""
+            <head><link rel="shortcut icon" type="image/x-icon" href="/images/favicon.ico"/>
+            <link rel="apple-touch-icon" href="/images/logo-ios.png"></head>
+            """#
+        let page = url("https://app.notion.com/p/abc?v=1")
+
+        #expect(LinkPreviewFetcher.iconCandidates(inHTML: html, pageURL: page) == [
+            url("https://app.notion.com/images/logo-ios.png"),
+            url("https://app.notion.com/images/favicon.ico"),
+            url("https://app.notion.com/favicon.ico"),
+        ])
+    }
+
+    @Test func withoutIconTagsOnlyTheSitesFaviconIsTried() {
+        #expect(LinkPreviewFetcher.iconCandidates(inHTML: "", pageURL: url("http://localhost:8080/a/b"))
+                == [url("http://localhost:8080/favicon.ico")])
+    }
+
+    @Test func iconAddressesAreReadTheWayBrowsersReadThem() {
+        let html = #"""
+            <LINK REL=icon HREF=//cdn.example.com/a.png>
+            <link href='icons/b.png?x=1&amp;y=2' rel='icon'>
+            <link rel="mask-icon" href="/pinned.svg">
+            <link rel="stylesheet" href="/style.css">
+            <link data-rel="icon" rel="preload" href="/not-an-icon.png">
+            """#
+        let page = url("https://example.com/docs/page")
+
+        #expect(LinkPreviewFetcher.iconCandidates(inHTML: html, pageURL: page) == [
+            url("https://cdn.example.com/a.png"),
+            url("https://example.com/docs/icons/b.png?x=1&y=2"),
+            url("https://example.com/favicon.ico"),
+        ])
+    }
+
+    @Test func onlyWebAddressesAreTriedEachOnceAndOnlyAFew() {
+        let html = #"""
+            <link rel="icon" href="data:image/svg+xml,<svg></svg>">
+            <link rel="icon" href="smb://example.com/icon.png">
+            <link rel="icon" href="/favicon.ico">
+            <link rel="icon" href="/1.png"><link rel="icon" href="/2.png"><link rel="icon" href="/3.png">
+            """#
+
+        #expect(LinkPreviewFetcher.iconCandidates(inHTML: html, pageURL: url("https://example.com/")) == [
+            url("https://example.com/favicon.ico"),
+            url("https://example.com/1.png"),
+            url("https://example.com/2.png"),
+        ])
+    }
+
     // MARK: - Store
 
     @Test func aDroppedLinkIsNamedFromItsAddressRightAway() {

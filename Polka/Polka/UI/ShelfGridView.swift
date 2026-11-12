@@ -11,6 +11,14 @@ struct ShelfItemCommands {
     let showInfo: @MainActor (ShelfItem.ID) -> Void
 }
 
+/// Right-click > Rename: the tile's name turns into a field, and the edit ends by
+/// keeping what's typed or, with Esc, the old name.
+struct ShelfRenameActions {
+    let begin: @MainActor (ShelfItem.ID) -> Void
+    let finish: @MainActor (ShelfItem.ID, String) -> Void
+    let cancel: @MainActor (ShelfItem.ID) -> Void
+}
+
 /// The shelf's items as a scrolling grid, in the shelf's order. New items arrive at
 /// the top left. While tiles are being moved, `items` is the order they'd have if
 /// dropped now, so the others slide aside to make room. Sorted by Kind or File Type,
@@ -41,9 +49,19 @@ struct ShelfGridView: View {
     let dragContents: @MainActor (ShelfItem.ID) -> ShelfDragContents
     let onDelete: @MainActor (ShelfItem.ID) -> Void
     let onRemoveFromMenu: @MainActor (ShelfItem.ID) -> Void
+    /// Removed tiles taking their pictures for the dust, just before they leave.
+    let dissolvingItemIDs: Set<ShelfItem.ID>
+    /// True while the tiles close the gap dust left, which they do slowly.
+    let isClosingDustGap: Bool
+    let dust: DustField
+    /// A removed tile has handed its picture to the dust, and can leave the shelf.
+    let onDissolved: @MainActor (ShelfItem.ID) -> Void
     let onToggleTemporary: @MainActor (ShelfItem.ID) -> Void
     let onToggleKeepCopy: (@MainActor (ShelfItem.ID) -> Void)?
     let commands: ShelfItemCommands
+    /// The tile whose name is being edited, if any.
+    let renamingItemID: ShelfItem.ID?
+    let rename: ShelfRenameActions
     /// A selection rectangle starts, with the keys held: Shift adds, Command flips.
     let onMarqueeBegan: @MainActor (SelectionClick) -> Void
     /// The rectangle moved; these are the tiles it touches now.
@@ -68,17 +86,33 @@ struct ShelfGridView: View {
     /// in it, and the selection rectangle is drawn in it.
     static let viewportSpace = "ShelfGridViewport"
 
+    /// Room above the first row. A tall picture's remove badge rises a little above
+    /// its tile, and with nothing above the first row (no group title), the scroll
+    /// view's top edge cut it off. Two rows still fit without scrolling.
+    static let topInset: CGFloat = 6
+
+    /// The grid's content, room above the first row included, for scrolling to the top.
+    private static let topID = "ShelfGridTop"
+
     /// A tile grows in when added and shrinks away when removed, while the others
     /// slide into place. Reduce Motion gets a fade.
     private var tileTransition: AnyTransition {
         reduceMotion ? .opacity : .scale(scale: 0.8).combined(with: .opacity)
     }
 
+    /// How long tiles take to close the gap left by tiles turning to dust: as long as
+    /// the front takes to cross a tile, as in Telegram, so the shelf settles while the
+    /// dust rises instead of sliding under a tile that's still there.
+    static let dustGapDuration: TimeInterval = 0.8
+
     /// With Reduce Motion, tiles making room for a moved one jump to their places
     /// instead of sliding there.
     private var reflowAnimation: Animation? {
         if reduceMotion {
             return isMovingTiles ? nil : .easeInOut(duration: 0.2)
+        }
+        if isClosingDustGap {
+            return .smooth(duration: Self.dustGapDuration)
         }
         return .snappy(duration: 0.28)
     }
@@ -106,12 +140,18 @@ struct ShelfGridView: View {
                                           dragContents: { dragContents(item.id) },
                                           onDelete: { onDelete(item.id) },
                                           onRemoveFromMenu: { onRemoveFromMenu(item.id) },
+                                          isDissolving: dissolvingItemIDs.contains(item.id),
+                                          onDissolve: { dissolve(item.id, picture: $0, scale: $1) },
                                           selectionCount: selection.count,
                                           onToggleTemporary: { onToggleTemporary(item.id) },
                                           onToggleKeepCopy: onToggleKeepCopy.map { toggle in { toggle(item.id) } },
                                           onOpen: { commands.open(item.id) },
                                           onQuickLook: { commands.quickLook(item.id) },
                                           onShowInfo: { commands.showInfo(item.id) },
+                                          isRenaming: renamingItemID == item.id,
+                                          onRename: { rename.begin(item.id) },
+                                          onRenameFinished: { rename.finish(item.id, $0) },
+                                          onRenameCancelled: { rename.cancel(item.id) },
                                           onPressAreaMoved: { pressAreas.frames[item.id] = $0 },
                                           onPictureInSlotMeasured: { geometry.pictureInSlot = $0 })
                                 .transition(tileTransition)
@@ -128,6 +168,8 @@ struct ShelfGridView: View {
                     .animation(reflowAnimation, value: items.map(\.id))
                     // A change of groups alone, such as Kind to File Type, slides too.
                     .animation(reflowAnimation, value: groups)
+                    // Outside the measured grid, so the spot math is unchanged.
+                    .padding(.top, Self.topInset)
                     // At least as tall as the visible area, so a click or drag anywhere
                     // around the tiles reaches the gestures below. Presses on a tile's
                     // picture or name never get here: its AppKit layer takes them first.
@@ -135,6 +177,8 @@ struct ShelfGridView: View {
                     .contentShape(Rectangle())
                     .onTapGesture(perform: onClearSelection)
                     .simultaneousGesture(marqueeGesture(within: CGRect(origin: .zero, size: proxy.size)))
+                    // To scroll all the way up, room above the first row included.
+                    .id(Self.topID)
                 }
                 .coordinateSpace(.named(Self.viewportSpace))
                 .onGeometryChange(for: CGRect.self) { proxy in
@@ -166,6 +210,24 @@ struct ShelfGridView: View {
         }
     }
 
+    // MARK: - Turning to dust
+
+    /// A removed tile's picture turns to dust right where the tile is drawn, and only
+    /// as much of it as the grid shows. The picture's top left is
+    /// `ShelfItemTile.snapshotMargin` above and left of the tile's picture and text,
+    /// which is what `pressAreas` holds, in the grid's visible area.
+    private func dissolve(_ id: ShelfItem.ID, picture: CGImage?, scale: CGFloat) {
+        if let picture, let area = pressAreas.frames[id] {
+            let viewport = geometry.viewport
+            let margin = ShelfItemTile.snapshotMargin
+            dust.scatter(picture,
+                         scale: scale,
+                         at: CGPoint(x: viewport.minX + area.minX - margin, y: viewport.minY + area.minY - margin),
+                         within: viewport)
+        }
+        onDissolved(id)
+    }
+
     // MARK: - Scrolling on opening
 
     /// The top, or, after a drop, as far down as it takes to show the new item. On a
@@ -181,6 +243,11 @@ struct ShelfGridView: View {
             // The highest row that still keeps the new item in view when it's at the top.
             let lowestTop = placement.tiles[index].maxY - geometry.viewport.height
             row = placement.rows.first { $0.minY >= lowestTop - 0.5 } ?? firstRow
+        }
+        // The first row goes back to the very top, keeping the room above it.
+        if row == firstRow {
+            scroller.scrollTo(Self.topID, anchor: .top)
+            return
         }
         switch row.start {
         case .header(let group):
@@ -200,7 +267,12 @@ struct ShelfGridView: View {
         let lastRow = (items.count - 1) / ShelfGridLayout.columnCount
         let row = min(max(edge == .top ? topRow - 1 : topRow + 1, 0), lastRow)
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
-            scroller.scrollTo(items[row * ShelfGridLayout.columnCount].id, anchor: .top)
+            // The first row goes back to the very top, keeping the room above it.
+            if row == 0 {
+                scroller.scrollTo(Self.topID, anchor: .top)
+            } else {
+                scroller.scrollTo(items[row * ShelfGridLayout.columnCount].id, anchor: .top)
+            }
         }
     }
 

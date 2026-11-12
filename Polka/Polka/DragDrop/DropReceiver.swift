@@ -8,18 +8,27 @@ enum DroppedItem: Equatable {
     /// A file the source app will write once asked, such as a photo from Photos, a
     /// Mail attachment or an image from a browser. There is no file on disk yet.
     case promise(NSFilePromiseReceiver)
+    /// An address that isn't a web link, such as `smb:` or an app's own scheme. It's
+    /// never stored (see `LinkInput.isWebAddress`); the panel says why instead.
+    case refusedLink(URL)
 
     var label: String {
         switch self {
         case .file(let url): return "File: \(url.lastPathComponent)"
         case .link(let url): return "Link: \(url.absoluteString)"
         case .promise(let receiver): return "Promised file: \(receiver.fileTypes.joined(separator: ", "))"
+        case .refusedLink(let url): return "Not a web link (\(url.scheme ?? "no scheme"))"
         }
     }
 
     var promise: NSFilePromiseReceiver? {
         guard case .promise(let receiver) = self else { return nil }
         return receiver
+    }
+
+    var isRefusedLink: Bool {
+        guard case .refusedLink = self else { return false }
+        return true
     }
 }
 
@@ -37,6 +46,10 @@ enum DropReceiver {
     /// Real files come first, then promised files, then links. A browser dragging an
     /// image offers both the image's address and a promise of the image itself, and
     /// the image is what's wanted. A promise of a bookmark file, though, means the link.
+    ///
+    /// Only web links are kept. A web page decides what its draggable elements carry,
+    /// so a drag can bring any address at all; anything else comes back as a
+    /// `refusedLink`, so the panel can say why nothing was added.
     static func items(from pasteboard: NSPasteboard) -> [DroppedItem] {
         let types = pasteboard.types?.map(\.rawValue).joined(separator: ", ") ?? "none"
         Log.drop.debug("Drop pasteboard types: \(types, privacy: .public)")
@@ -51,7 +64,10 @@ enum DropReceiver {
         if !urls.contains(where: \.isFileURL), !wantedPromises.isEmpty {
             items = wantedPromises.map { .promise($0) }
         } else {
-            items = urls.map { $0.isFileURL ? .file($0) : .link($0) }
+            items = urls.map { url in
+                if url.isFileURL { return .file(url) }
+                return LinkInput.isWebAddress(url) ? .link(url) : .refusedLink(url)
+            }
         }
 
         if items.isEmpty {

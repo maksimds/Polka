@@ -24,7 +24,7 @@ v1 is a lean shelf for files and links. Everything else waits until the core fee
 
 | Bucket | Items |
 | --- | --- |
-| In v1 | Hover to expand, drag in, drag out, files, folders, links with their site's name and icon, temporary and permanent items, delete, open, Quick Look and Get Info, menu bar item, launch at login |
+| In v1 | Hover to expand, drag in, drag out, files, folders, links with their site's name and icon, temporary and permanent items, delete, open, Quick Look and Get Info, renaming a tile, menu bar item, launch at login |
 | Later | Plain text and image snippets, search, tags or groups, pin to top, keyboard shortcut to open |
 | Out of scope | Cloud sync, iPhone companion, sharing with others, AirDrop, music or calendar widgets, App Store release |
 
@@ -38,8 +38,8 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-2 | The expanded panel shows stored items as a grid with thumbnail or icon, name and type | P0 |
 | FR-3 | Dragging an item out of the panel drops the real file or URL into the target app | P0 |
 | FR-4 | A drag from any app opens the panel as a drop target once it has lasted half a second, or as soon as it reaches the notch. A shorter drag elsewhere never opens it | P0 |
-| FR-5 | Dropping files or folders stores them as items | P0 |
-| FR-6 | Dropping a URL stores it as a link item titled with the site's name and the page's address (for example GitHub/apple/swift) and shown with the site's icon | P0 |
+| FR-5 | Dropping files or folders stores them as items. They can also be chosen in the standard Open dialog from the panel's + menu | P0 |
+| FR-6 | Dropping a URL stores it as a link item titled with the site's name and the page's address (for example GitHub/apple/swift) and shown with the site's icon. A link can also be typed into a field the shelf turns into, from the panel's + menu | P0 |
 | FR-7 | Each item is marked temporary (with expiry) or permanent, with a default and a toggle in the item's right-click menu | P0 |
 | FR-8 | Items can be deleted with a tile's delete button, or from its right-click menu, which also deletes a whole selection; deleting never removes the original file | P0 |
 | FR-9 | Double-clicking an item opens the file in its default app or the link in the default browser | P1 |
@@ -50,12 +50,15 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-14 | The panel behaves correctly on non-notch displays by showing a top-center pill | P2 |
 | FR-15 | Broken references (moved or deleted originals) are shown as unavailable, not silently dropped | P1 |
 | FR-16 | A file's right-click menu offers Quick Look and Get Info, which work as they do in Finder | P2 |
+| FR-17 | Any tile can be renamed from its right-click menu, in place as in Finder, to give it a shorter or clearer name. Only the tile's label changes, never the file's name, its path or the link's address, and clearing the name brings back the automatic one | P2 |
 
 ## Interaction flow
 
 &#91;embedded content: notch states · 4 states, 6 transitions\]
 
 Hovering the notch expands the panel. A drag from any app opens it as a drop target once the drag has lasted half a second, or right away if it reaches the notch, so quick drags elsewhere don't flash the panel open. If a drag ends somewhere else, the panel returns to collapsed.
+
+The expanded panel's + menu adds things without dragging. "Link" turns the shelf into a field for typing a link, and back into the shelf once it's added. The field takes the keyboard while it's open, without making Polka the active app. "File" opens the standard Open dialog.
 
 ## Technical approach
 
@@ -66,7 +69,7 @@ Polka is a native Swift and SwiftUI app with AppKit underneath for window and dr
 | Window | Borderless, non-activating panel pinned to the notch, visible on all Spaces | `NSPanel`, `collectionBehavior`, `NSScreen.safeAreaInsets`, `auxiliaryTopLeftArea` |
 | Input | Hover detection and global drag detection | `NSTrackingArea`, global `NSEvent` monitor for dragged events, `NSPasteboard(name: .drag).changeCount` |
 | Drag and drop | Panel as drop target and as drag source | `NSDraggingDestination`, `NSDraggingSource`, `NSItemProvider` |
-| UI | Collapsed and expanded states, item grid, animation | SwiftUI, spring animations |
+| UI | Collapsed and expanded states, item grid, animation | SwiftUI, spring animations, Metal for the dust a removed tile turns into |
 | Storage | Item model, persistence, expiry sweep | JSON file, `FileManager`, security-scoped bookmarks if needed |
 | App shell | Menu bar item, Dock icon, settings, launch at login | `MenuBarExtra`, `SMAppService` |
 
@@ -86,7 +89,8 @@ Every shelf entry is one item, stored locally in the app's support folder. Nothi
 | --- | --- |
 | `id` | Unique identifier |
 | `kind` | file, folder or link |
-| `title` | Display name (file name or page title) |
+| `title` | Automatic name (file name, or the site's name and the page's address) |
+| `customName` | Empty unless the tile was renamed, otherwise the name shown instead of `title` |
 | `source` | Bookmark or path for references, or URL for links |
 | `storageMode` | reference (points at the original) or copy (a duplicate kept by Polka) |
 | `original` | For a kept copy, the file it was made from, so the item can go back to it |

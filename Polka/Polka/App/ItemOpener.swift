@@ -7,7 +7,14 @@ enum ItemOpener {
     /// browser, as a double-click in Finder does. The app that opens it comes to the
     /// front, which is what you asked for, so this doesn't break Polka's rule of
     /// never taking focus: the focus goes to that app, not to Polka.
+    ///
+    /// Only files and web links. New links can't be anything else, but this also
+    /// covers one saved before that rule, or written into shelf.json by hand.
     static func open(_ url: URL) -> Bool {
+        guard url.isFileURL || LinkInput.isWebAddress(url) else {
+            Log.app.error("Didn't open a link that isn't a web address (\(url.scheme ?? "no scheme", privacy: .public))")
+            return false
+        }
         let opened = NSWorkspace.shared.open(url)
         if opened {
             Log.app.debug("Opened \(url.absoluteString, privacy: .public)")

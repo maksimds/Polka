@@ -125,6 +125,20 @@ final class ShelfStore: ObservableObject {
         update(id) { $0.expiresAt = nil }
     }
 
+    /// "Rename": gives the tile a name of its own. The file and the link stay as they
+    /// are. An empty name, or the automatic one, goes back to the automatic name, which
+    /// then follows the file or the site again. Line breaks pasted in become spaces,
+    /// since a tile's name is one line. Saves only if the name really changed.
+    func rename(id: ShelfItem.ID, to name: String) {
+        guard let item = items.first(where: { $0.id == id }) else { return }
+        let cleaned = name.components(separatedBy: .newlines)
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+        let customName = cleaned.isEmpty || cleaned == item.title ? nil : cleaned
+        guard customName != item.customName else { return }
+        update(id) { $0.customName = customName }
+    }
+
     /// Removes temporary items whose time is up and returns them.
     @discardableResult
     func removeExpired() -> [ShelfItem] {

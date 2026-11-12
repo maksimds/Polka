@@ -31,7 +31,8 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     /// What a link's preview fetch found (FR-6): the name the site gives itself and its icon.
     struct LinkPreview: Codable, Equatable {
         /// Raised whenever what a preview holds changes, so older ones are fetched again.
-        static let currentVersion = 2
+        /// 3: icons are also looked for in the page's own icon tags.
+        static let currentVersion = 3
 
         /// When the fetch finished, whether or not it found anything.
         var fetchedAt: Date
@@ -63,9 +64,20 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     /// For a kept copy: the original it was made from. Nil for references, and for
     /// files an app handed over as a promise, which never had an original on disk.
     var original: Original? = nil
+    /// A name given with "Rename", shown on the tile instead of `title`. It's only the
+    /// tile's label: the file keeps its own name and the link its address. Nil for the
+    /// automatic name, which also means shelves saved before renaming existed still load.
+    var customName: String? = nil
 }
 
 extension ShelfItem {
+    /// What the tile is called: the name given with "Rename", or else the automatic
+    /// one, the file's name or the link's site and address. `title` keeps following
+    /// the file and the site underneath, so clearing the name brings it straight back.
+    var displayName: String {
+        customName ?? title
+    }
+
     /// The file or web address the item points at.
     var url: URL {
         switch source {

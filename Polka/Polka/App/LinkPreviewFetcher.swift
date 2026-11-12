@@ -1,12 +1,19 @@
 import AppKit
 import Combine
+import ImageIO
 import LinkPresentation
+import UniformTypeIdentifiers
 
 /// Looks up each link's site name and icon in the background (FR-6), and saves the
 /// icon in Polka's Previews folder so nothing is fetched again after a restart.
 ///
 /// Requests go out as Polka, never disguised as a browser. A site that refuses them
 /// (LinkedIn does) keeps the name taken from its address.
+///
+/// Whatever a site sends is untrusted, and Polka isn't sandboxed, so everything here
+/// is capped (`Limits`): how long a download takes, how many bytes it brings, and
+/// which image formats and sizes get decoded at all. A site that goes past a limit
+/// gets the same fallbacks as one that refuses.
 @MainActor
 final class LinkPreviewFetcher {
     struct Preview {
@@ -47,6 +54,7 @@ final class LinkPreviewFetcher {
     private func fetchMissingPreviews(in items: [ShelfItem]) {
         for item in items {
             guard case .link(let url) = item.source,
+                  LinkInput.isWebAddress(url),
                   item.linkPreview?.isCurrent != true,
                   !inFlight.contains(item.id),
                   !failed.contains(item.id) else { continue }
@@ -99,65 +107,241 @@ final class LinkPreviewFetcher {
         name.hasSuffix(".png") && UUID(uuidString: String(name.prefix(36))) != nil
     }
 
+    // MARK: - Limits
+
+    /// How much a site can make Polka download and decode.
+    enum Limits {
+        /// The top of a page, where the site name is. Reading stops here even if
+        /// `</head>` never comes.
+        static let pageHeadBytes = 600_000
+        /// One icon file. Real ones are a few kilobytes.
+        static let iconBytes = 1_000_000
+        /// An icon's longest side, in pixels. Checked before decoding, since a tiny
+        /// file can describe an enormous picture.
+        static let iconPixels = 2048
+        /// The longest wait for the next bytes...
+        static let idleSeconds: TimeInterval = 15
+        /// ...and the longest a whole download may take, so a site sending a byte
+        /// every few seconds can't keep it open for good.
+        static let totalSeconds: TimeInterval = 20
+        /// Icon files tried per link when LinkPresentation finds none, so a page
+        /// listing dozens of icons can't send Polka after all of them.
+        static let iconCandidates = 3
+    }
+
+    /// Formats a site icon is decoded from, told by what its bytes are, not by what
+    /// the site claims. ImageIO reads many more, almost none of them used for icons,
+    /// and each one left out is decoder code a site can't reach. SVG isn't here:
+    /// ImageIO doesn't read it, and AppKit's own reader is a whole XML parser.
+    static let iconTypes: Set<String> = Set([UTType.ico, .png, .jpeg, .gif, .bmp, .webP].map(\.identifier))
+
+    /// A session of its own rather than the shared one: every download gets a total
+    /// time limit, not just one on waiting, and nothing it fetches is cached on disk
+    /// or kept after Polka quits.
+    nonisolated private static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = Limits.idleSeconds
+        configuration.timeoutIntervalForResource = Limits.totalSeconds
+        return URLSession(configuration: configuration)
+    }()
+
     // MARK: - Fetching and saving
 
     /// The site's declared name, read from the top of the page, and its icon. Throws only
-    /// when the site can't be reached at all, so the link is tried again at the next launch.
+    /// when the site can't be reached at all (or runs out of time), so the link is
+    /// tried again at the next launch.
     static func fetchFromWeb(_ url: URL) async throws -> Preview {
         async let pageHead = fetchPageHead(url)
-        let icon = await fetchIcon(for: url)
+        let suggested = await fetchLinkPresentationIcon(for: url)
         let head = try await pageHead
-        return Preview(siteName: head.flatMap(LinkNaming.declaredSiteName(inHTML:)), icon: icon)
+        var icon = suggested
+        if icon == nil {
+            icon = await fetchFirstIcon(from: iconCandidates(inHTML: head?.html ?? "", pageURL: head?.url ?? url))
+        }
+        return Preview(siteName: head.flatMap { LinkNaming.declaredSiteName(inHTML: $0.html) }, icon: icon)
     }
 
-    /// The page up to the end of its `<head>`, where the site name lives. Nil when the
-    /// site answers but won't serve the page.
-    private static func fetchPageHead(_ url: URL) async throws -> String? {
-        var request = URLRequest(url: url, timeoutInterval: 15)
+    /// The top of a page, and the address it came from after any redirects, which is
+    /// where the addresses in it start from.
+    struct PageHead {
+        let html: String
+        let url: URL
+    }
+
+    /// The page up to the end of its `<head>`, where the site name and icon tags are.
+    /// Nil when the site answers but won't serve the page.
+    nonisolated private static func fetchPageHead(_ url: URL) async throws -> PageHead? {
+        var request = URLRequest(url: url, timeoutInterval: Limits.idleSeconds)
         request.setValue("text/html", forHTTPHeaderField: "Accept")
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
+        // Whatever the page has after its head isn't needed, so the download stops.
+        defer { bytes.task.cancel() }
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        var head = ""
-        var length = 0
-        for try await line in bytes.lines {
-            head += line + "\n"
-            length += line.utf8.count
-            if length > 600_000 || line.range(of: "</head>", options: .caseInsensitive) != nil { break }
+        let html = String(decoding: try await readPageHead(bytes), as: UTF8.self)
+        return PageHead(html: html, url: response.url ?? url)
+    }
+
+    /// The bytes of a page up to and including `</head>` (in any case), or its first
+    /// `limit` bytes, whichever comes first. Counted in bytes rather than lines, so a
+    /// page that never starts a new line can't grow without end.
+    nonisolated static func readPageHead<Bytes: AsyncSequence>(_ bytes: Bytes,
+                                                               limit: Int = Limits.pageHeadBytes) async throws -> Data
+    where Bytes.Element == UInt8 {
+        var head = Data()
+        for try await byte in bytes {
+            head.append(byte)
+            if head.count >= limit || (byte == UInt8(ascii: ">") && endsWithHeadClose(head)) { break }
         }
         return head
     }
 
-    /// The icon Apple's LinkPresentation framework finds for the page, or else the
-    /// site's own /favicon.ico.
-    private static func fetchIcon(for url: URL) async -> NSImage? {
-        let provider = LPMetadataProvider()
-        provider.timeout = 15
-        if let metadata = try? await provider.startFetchingMetadata(for: url),
-           let icon = await loadImage(from: metadata.iconProvider) {
-            return icon
+    nonisolated private static let headClose = Array("</head>".utf8)
+
+    nonisolated private static func endsWithHeadClose(_ data: Data) -> Bool {
+        guard data.count >= headClose.count else { return false }
+        return zip(data.suffix(headClose.count), headClose).allSatisfy { byte, expected in
+            // Letters are compared as lowercase, so "</HEAD>" counts too.
+            (byte >= UInt8(ascii: "A") && byte <= UInt8(ascii: "Z") ? byte + 32 : byte) == expected
         }
-        return await fetchFavicon(for: url)
     }
 
-    private static func fetchFavicon(for url: URL) async -> NSImage? {
-        var components = URLComponents()
-        components.scheme = url.scheme
-        components.host = url.host
-        components.port = url.port
-        components.path = "/favicon.ico"
-        guard let faviconURL = components.url,
-              let result = try? await URLSession.shared.data(from: faviconURL),
-              (result.1 as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return NSImage(data: result.0)
+    /// The icon Apple's LinkPresentation framework picks for the page. It arrives as
+    /// plain bytes and goes through `decodeIcon`. Nil when it finds none, or can't
+    /// load the page at all, as with Notion's pages.
+    private static func fetchLinkPresentationIcon(for url: URL) async -> NSImage? {
+        let provider = LPMetadataProvider()
+        // LinkPresentation's timeout is for the whole lookup.
+        provider.timeout = Limits.totalSeconds
+        guard let metadata = try? await provider.startFetchingMetadata(for: url),
+              let data = await loadIconData(from: metadata.iconProvider) else { return nil }
+        return decodeIcon(data)
     }
 
-    private static func loadImage(from provider: NSItemProvider?) async -> NSImage? {
-        guard let provider, provider.canLoadObject(ofClass: NSImage.self) else { return nil }
-        return await withCheckedContinuation { continuation in
-            provider.loadObject(ofClass: NSImage.self) { object, _ in
-                continuation.resume(returning: object as? NSImage)
+    /// Where else to look for an icon, best first: the page's Apple touch icons (usually
+    /// a large PNG), then its other icons, in the order the page lists them, then the
+    /// site's /favicon.ico. Only web addresses, each once, and at most `iconCandidates`.
+    /// A Safari pinned-tab `mask-icon` isn't an icon, and a `data:` icon is skipped.
+    static func iconCandidates(inHTML html: String, pageURL: URL) -> [URL] {
+        var touchIcons: [URL] = []
+        var icons: [URL] = []
+        let fullRange = NSRange(html.startIndex..., in: html)
+        let tags = (try? NSRegularExpression(pattern: #"<link\b[^>]*>"#, options: .caseInsensitive))?
+            .matches(in: html, range: fullRange) ?? []
+        for match in tags {
+            guard let range = Range(match.range, in: html) else { continue }
+            let tag = String(html[range])
+            guard let rel = attribute("rel", in: tag), let href = attribute("href", in: tag),
+                  let address = URL(string: LinkNaming.decodingEntities(href), relativeTo: pageURL)?.absoluteURL
+            else { continue }
+            let kinds = Set(rel.lowercased().split(whereSeparator: \.isWhitespace))
+            if kinds.contains("apple-touch-icon") || kinds.contains("apple-touch-icon-precomposed") {
+                touchIcons.append(address)
+            } else if kinds.contains("icon") {
+                icons.append(address)
             }
         }
+
+        var siteFavicon = URLComponents()
+        siteFavicon.scheme = pageURL.scheme
+        siteFavicon.host = pageURL.host
+        siteFavicon.port = pageURL.port
+        siteFavicon.path = "/favicon.ico"
+
+        var candidates: [URL] = []
+        for address in touchIcons + icons + [siteFavicon.url].compactMap({ $0 })
+        where LinkInput.isWebAddress(address) && !candidates.contains(address) {
+            candidates.append(address)
+        }
+        return Array(candidates.prefix(Limits.iconCandidates))
+    }
+
+    /// An attribute's value in one HTML tag, quoted either way or not at all.
+    private static func attribute(_ name: String, in tag: String) -> String? {
+        let pattern = #"(?<=[\s"'])"# + name + #"\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+              let match = regex.firstMatch(in: tag, range: NSRange(tag.startIndex..., in: tag)) else { return nil }
+        for group in 1...3 {
+            if let range = Range(match.range(at: group), in: tag) {
+                return String(tag[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return nil
+    }
+
+    /// Tries each address in turn and returns the first icon that passes `decodeIcon`.
+    private static func fetchFirstIcon(from candidates: [URL]) async -> NSImage? {
+        for address in candidates {
+            if let data = await fetchIconFile(address), let icon = decodeIcon(data) {
+                return icon
+            }
+        }
+        return nil
+    }
+
+    nonisolated private static func fetchIconFile(_ address: URL) async -> Data? {
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await session.bytes(for: URLRequest(url: address,
+                                                                        timeoutInterval: Limits.idleSeconds))
+        } catch {
+            return nil
+        }
+        defer { bytes.task.cancel() }
+        // A site that says up front the file is too big isn't downloaded at all.
+        guard (response as? HTTPURLResponse)?.statusCode == 200,
+              response.expectedContentLength <= Int64(Limits.iconBytes) else { return nil }
+        return try? await readIcon(bytes)
+    }
+
+    /// A whole icon file, or nil once it goes past `limit` bytes.
+    nonisolated static func readIcon<Bytes: AsyncSequence>(_ bytes: Bytes,
+                                                           limit: Int = Limits.iconBytes) async throws -> Data?
+    where Bytes.Element == UInt8 {
+        var data = Data()
+        for try await byte in bytes {
+            guard data.count < limit else { return nil }
+            data.append(byte)
+        }
+        return data
+    }
+
+    /// The icon file LinkPresentation found, as bytes, so it gets the same checks as a
+    /// favicon instead of being decoded by whatever reads it first.
+    private static func loadIconData(from provider: NSItemProvider?) async -> Data? {
+        guard let provider,
+              let type = provider.registeredTypeIdentifiers.first(where: {
+                  UTType($0)?.conforms(to: .image) == true
+              }) else { return nil }
+        return await withCheckedContinuation { continuation in
+            provider.loadDataRepresentation(forTypeIdentifier: type) { data, _ in
+                continuation.resume(returning: data)
+            }
+        }
+    }
+
+    /// Decodes an icon file once it passes every check: at most `iconBytes`, one of
+    /// `iconTypes`, and no side over `iconPixels`. Nil otherwise, and the tile keeps
+    /// its generic icon. An .ico holds several sizes; the largest allowed one is used.
+    static func decodeIcon(_ data: Data) -> NSImage? {
+        guard data.count <= Limits.iconBytes,
+              let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let type = CGImageSourceGetType(source) as String?,
+              iconTypes.contains(type) else { return nil }
+        // Reading an image's size only reads its header. An animated GIF counts each
+        // frame as an image, so only the first few are looked at.
+        var best: (index: Int, width: Int, height: Int)?
+        for index in 0..<min(CGImageSourceGetCount(source), 16) {
+            guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                  let height = properties[kCGImagePropertyPixelHeight] as? Int,
+                  width > 0, height > 0, max(width, height) <= Limits.iconPixels else { continue }
+            if best.map({ width * height > $0.width * $0.height }) ?? true {
+                best = (index, width, height)
+            }
+        }
+        guard let best, let image = CGImageSourceCreateImageAtIndex(source, best.index, nil) else { return nil }
+        return NSImage(cgImage: image, size: NSSize(width: best.width, height: best.height))
     }
 
     /// Writes the image as a PNG no larger than `maxIconSide`. A .ico file holds several

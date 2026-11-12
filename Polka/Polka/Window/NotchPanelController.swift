@@ -10,6 +10,7 @@ final class NotchPanelController {
     private let images: ShelfItemImages
     private let openSettings: @MainActor () -> Void
     private let quickLook: QuickLookController
+    private let fileChooser: FileChooser
     private let model: NotchViewModel
     private let dragMonitor = GlobalDragMonitor()
     private let dragSource: ShelfDragSource
@@ -20,10 +21,13 @@ final class NotchPanelController {
 
     private var mouseMonitors: [Any] = []
     private var screenObserver: NSObjectProtocol?
+    private var keyObserver: NSObjectProtocol?
     private var cancellables = Set<AnyCancellable>()
     private var hoverTask: Task<Void, Never>?
     private var delayedCollapseTask: Task<Void, Never>?
     private var dragOpenTask: Task<Void, Never>?
+    /// Waits for a click that ended a rename to be over before the keys go back.
+    private var keyboardReturnTask: Task<Void, Never>?
     private var collapsedAt = ContinuousClock.now
 
     /// How long the pointer can be away before the panel collapses while a message is showing.
@@ -46,10 +50,12 @@ final class NotchPanelController {
          images: ShelfItemImages,
          copies: CopyKeeper?,
          quickLook: QuickLookController,
+         fileChooser: FileChooser,
          openSettings: @escaping @MainActor () -> Void) {
         self.store = store
         self.images = images
         self.quickLook = quickLook
+        self.fileChooser = fileChooser
         self.openSettings = openSettings
         dragSource = ShelfDragSource(images: images)
         model = NotchViewModel(store: store, copies: copies)
@@ -66,6 +72,12 @@ final class NotchPanelController {
                                                             dragSource: dragSource,
                                                             openSettings: { [weak self] in
                                                                 self?.openSettingsFromPanel()
+                                                            },
+                                                            addLink: { [weak self] in
+                                                                self?.addLinkFromPanel()
+                                                            },
+                                                            addFiles: { [weak self] in
+                                                                self?.addFilesFromPanel()
                                                             },
                                                             commands: itemCommands,
                                                             pointer: { [weak self] in
@@ -108,11 +120,31 @@ final class NotchPanelController {
             .removeDuplicates()
             .sink { [weak self] state in self?.apply(state) }
             .store(in: &cancellables)
+        // The two times the panel takes the keys: the link field, and a tile's name
+        // being edited. `@Published` reports a change before it's made, so this works
+        // from the values it's handed rather than reading the model.
+        model.$state.combineLatest(model.$renamingItemID)
+            .map { state, renaming in state == .addingLink || renaming != nil }
+            .removeDuplicates()
+            .sink { [weak self] needsKeyboard in
+                if needsKeyboard {
+                    self?.takeKeyboard()
+                } else {
+                    self?.giveKeyboardBack()
+                }
+            }
+            .store(in: &cancellables)
+        model.$renamingItemID
+            .map { $0 != nil }
+            .removeDuplicates()
+            .sink { [weak panel] renaming in panel?.endsEditingOnClickElsewhere = renaming }
+            .store(in: &cancellables)
 
         startMouseMonitors()
         startDragMonitor()
         startDragSource()
         observeScreenChanges()
+        observeKeyboardLoss(of: panel)
     }
 
     // MARK: - Layout
@@ -213,6 +245,100 @@ final class NotchPanelController {
         openSettings()
     }
 
+    // MARK: - Adding from the + menu
+
+    /// "Link": the shelf turns into the link field. A tick later, since this runs
+    /// as the menu closes, and the panel shouldn't take the keys while it tracks.
+    private func addLinkFromPanel() {
+        DispatchQueue.main.async { [weak self] in
+            self?.model.beginAddingLink()
+        }
+    }
+
+    /// "File": the shelf gets out of the way, then the Open dialog opens.
+    private func addFilesFromPanel() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.model.state = .collapsed
+            self.fileChooser.choose { [weak self] urls in
+                self?.model.addFiles(urls)
+            }
+        }
+    }
+
+    /// The link field or a name being edited needs the keys. The panel becomes the key
+    /// window, the one that gets typing, but Polka doesn't become the active app (see
+    /// `NotchPanel`).
+    private func takeKeyboard() {
+        guard let panel else { return }
+        keyboardReturnTask?.cancel()
+        keyboardReturnTask = nil
+        panel.acceptsKeyboard = true
+        panel.makeKey()
+    }
+
+    /// Back to never taking the keys. If the panel still has them, they go back to
+    /// the app you were in: taking the key window off screen is what hands them
+    /// over, and it comes straight back in the same moment.
+    ///
+    /// A click elsewhere on the shelf that ended a rename is still going on at this
+    /// point, and may yet become a drag or open a menu. Taking the panel off screen
+    /// in the middle of it would cut it short, so then the keys go back once it's
+    /// over. Until then the panel keeps swallowing Command shortcuts.
+    private func giveKeyboardBack() {
+        guard let panel, panel.acceptsKeyboard else { return }
+        keyboardReturnTask?.cancel()
+        keyboardReturnTask = nil
+        guard isPressOver else {
+            keyboardReturnTask = Task { [weak self] in
+                while !Task.isCancelled, self?.isPressOver == false {
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                guard !Task.isCancelled else { return }
+                self?.keyboardReturnTask = nil
+                self?.giveKeyboardBack()
+            }
+            return
+        }
+        panel.acceptsKeyboard = false
+        guard panel.isKeyWindow else { return }
+        panel.orderOut(nil)
+        panel.orderFrontRegardless()
+    }
+
+    /// No mouse button is held, no tile is being dragged, and no menu is open. While a
+    /// menu is up, the app runs in the run loop's tracking mode.
+    private var isPressOver: Bool {
+        NSEvent.pressedMouseButtons == 0
+            && dragSource.current == nil
+            && RunLoop.main.currentMode != .eventTracking
+    }
+
+    /// A click in another app (or Cmd-Tab) while the link field is up or a tile is
+    /// being renamed takes the keys from the panel. You've moved on, so the panel
+    /// closes. The link field adds nothing; a new name is kept, as in Finder.
+    private func observeKeyboardLoss(of panel: NotchPanel) {
+        keyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.panelLostKeyboard() }
+        }
+    }
+
+    private func panelLostKeyboard() {
+        // Not when the panel is giving the keys back itself.
+        guard let panel, panel.acceptsKeyboard else { return }
+        if model.state == .addingLink {
+            model.state = .collapsed
+        } else if model.renamingItemID != nil {
+            // Ending the edit is what hands the typed name to the tile.
+            panel.makeFirstResponder(nil)
+            model.state = .collapsed
+        }
+    }
+
     // MARK: - Opening and inspecting items
 
     /// Each one collapses the panel first, so it isn't covering what opens. The files
@@ -279,7 +405,11 @@ final class NotchPanelController {
                 cancelHover()
             }
         case .expanded:
-            if isPointerNearPanel(geometry) {
+            if model.renamingItemID != nil {
+                // The shelf stays open while you type a name, wherever the pointer
+                // goes, as the link field does. Return, Esc or a click ends it.
+                cancelDelayedCollapse()
+            } else if isPointerNearPanel(geometry) {
                 cancelDelayedCollapse()
             } else if model.notice != nil {
                 scheduleDelayedCollapse()
@@ -291,6 +421,10 @@ final class NotchPanelController {
             dragMonitor.endDrag()
         case .draggingOut:
             // The panel can't reopen until the drag ends.
+            break
+        case .addingLink:
+            // The field stays while you type, wherever the pointer goes. A click
+            // elsewhere closes it (`panelLostKeyboard`).
             break
         }
     }
@@ -363,7 +497,8 @@ final class NotchPanelController {
 
     private func collapseIfStillAway() {
         delayedCollapseTask = nil
-        guard let geometry, model.state == .expanded, !isPointerNearPanel(geometry) else { return }
+        guard let geometry, model.state == .expanded, model.renamingItemID == nil,
+              !isPointerNearPanel(geometry) else { return }
         model.state = .collapsed
     }
 
@@ -418,7 +553,7 @@ final class NotchPanelController {
             if let geometry, geometry.hoverRect(area: settings.hoverArea).contains(NSEvent.mouseLocation) {
                 openDropZone()
             }
-        case .draggingOut:
+        case .draggingOut, .addingLink:
             break
         }
     }

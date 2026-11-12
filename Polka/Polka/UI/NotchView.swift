@@ -8,6 +8,9 @@ struct NotchView: View {
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
     let openSettings: @MainActor () -> Void
+    /// The + menu's choices.
+    let addLink: @MainActor () -> Void
+    let addFiles: @MainActor () -> Void
     let commands: ShelfItemCommands
     /// The pointer in the panel's SwiftUI space, for the drop zone's eyes.
     let pointer: @MainActor () -> CGPoint?
@@ -18,8 +21,12 @@ struct NotchView: View {
 
     /// How much the closed notch swells just before it opens.
     private static let hoverGrowth = CGSize(width: 14, height: 4)
-    /// Space between the panel's sides and the tiles, also used by the header.
-    private static let sideInset: CGFloat = 16
+    /// Space between the panel's sides and the tiles, also used by the header and
+    /// the link field.
+    static let sideInset: CGFloat = 16
+    /// How far below the notch's middle the header strip's title and symbols sit,
+    /// also used by the link field's header, which takes their place.
+    static let headerDrop: CGFloat = 2
     /// Space between the notch and the drop zone's eyes.
     private static let eyesTopGap: CGFloat = 9.9
     /// Space between the eyes and the dashed box below them.
@@ -68,6 +75,14 @@ struct NotchView: View {
         VStack(spacing: 0) {
             content
                 .frame(width: shapeSize.width, height: shapeSize.height, alignment: .top)
+                // Removed tiles turn to dust over everything in the panel, and only
+                // inside its outline.
+                .overlay(alignment: .top) {
+                    DustOverlay(field: model.dust,
+                                outline: NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
+                                    .path(in: CGRect(origin: .zero, size: model.expandedSize)))
+                        .frame(width: model.expandedSize.width, height: model.expandedSize.height)
+                }
                 .clipped()
                 .background(
                     NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
@@ -118,11 +133,19 @@ struct NotchView: View {
                     .frame(width: model.expandedSize.width, height: model.expandedSize.height)
                     .transition(dropZoneTransition)
             }
+            if model.state == .addingLink {
+                LinkEntryView(headerHeight: model.notchSize.height,
+                              width: model.linkEntrySize.width,
+                              onSubmit: { model.addLink(from: $0) },
+                              onCancel: { model.cancelAddingLink() })
+                    .frame(width: model.linkEntrySize.width, height: model.linkEntrySize.height)
+                    .transition(dropZoneTransition)
+            }
         }
     }
 
-    /// The drop zone is light enough to build when a drag starts. It arrives as the
-    /// shape opens and leaves quickly.
+    /// The drop zone and the link field are light enough to build when they're
+    /// needed. Each arrives as the shape changes and leaves quickly.
     private var dropZoneTransition: AnyTransition {
         let arrival: AnyTransition = reduceMotion
             ? .opacity
@@ -135,6 +158,16 @@ struct NotchView: View {
     private var keepCopyAction: (@MainActor (ShelfItem.ID) -> Void)? {
         guard model.canKeepCopies else { return nil }
         return { [model] id in model.toggleKeepCopy(id) }
+    }
+
+    /// "Rename" starts a tick later, since it's chosen as the menu closes, and the
+    /// panel shouldn't take the keys while the menu still tracks the pointer.
+    private var renameActions: ShelfRenameActions {
+        ShelfRenameActions(begin: { [model] id in
+                               DispatchQueue.main.async { model.beginRenaming(id) }
+                           },
+                           finish: { [model] id, name in model.finishRenaming(id, as: name) },
+                           cancel: { [model] id in model.cancelRenaming(id) })
     }
 
     private var expandedContent: some View {
@@ -160,11 +193,17 @@ struct NotchView: View {
                               onClick: { model.click($0, $1) },
                               onClearSelection: { model.clearSelection() },
                               dragContents: { model.dragContents(from: $0) },
-                              onDelete: { store.remove(id: $0) },
+                              onDelete: { model.remove([$0]) },
                               onRemoveFromMenu: { model.remove(from: $0) },
+                              dissolvingItemIDs: model.dissolvingItemIDs,
+                              isClosingDustGap: model.isClosingDustGap,
+                              dust: model.dust,
+                              onDissolved: { model.tileDissolved($0) },
                               onToggleTemporary: { model.toggleTemporary($0) },
                               onToggleKeepCopy: keepCopyAction,
                               commands: commands,
+                              renamingItemID: model.renamingItemID,
+                              rename: renameActions,
                               onMarqueeBegan: { model.beginMarquee($0) },
                               onMarqueeChanged: { model.updateMarquee(touching: $0) })
             }
@@ -184,8 +223,9 @@ struct NotchView: View {
     /// The strip beside the notch, laid out on the tiles' own grid: same columns, same
     /// side inset, and each end held to a picture's width. So "Polka" starts exactly
     /// where the first column's pictures start, and the gear ends exactly where the
-    /// last column's pictures end. The sort button sits left of the gear, inside the
-    /// same picture's width, well clear of the notch. The middle columns sit under it.
+    /// last column's pictures end. The sort and + buttons sit left of the gear, running
+    /// a little into the fourth column but well clear of the notch, which the middle
+    /// columns sit under.
     private var header: some View {
         LazyVGrid(columns: ShelfGridView.columns, spacing: 0) {
             nameLabel
@@ -193,8 +233,9 @@ struct NotchView: View {
             ForEach(0..<3, id: \.self) { _ in
                 Color.clear
             }
-            // 16 pt apart, so the two 8 pt click areas meet without overlapping.
-            HStack(spacing: 16) {
+            // Glass symbols, 16 pt apart, so their 8 pt click margins meet without overlapping.
+            HStack(spacing: Glass.headerSymbolSpacing) {
+                AddMenuButton(height: model.notchSize.height, onAddLink: addLink, onAddFiles: addFiles)
                 SortMenuButton(sort: store.sort, height: model.notchSize.height) { model.chooseSort($0) }
                 settingsButton
             }
@@ -202,15 +243,14 @@ struct NotchView: View {
             .frame(width: ShelfItemTile.imageSide, alignment: .trailing)
         }
         .frame(height: model.notchSize.height)
+        // A touch below the notch's middle, which sat a little high next to the tiles.
+        .offset(y: Self.headerDrop)
         .padding(.horizontal, Self.sideInset)
     }
 
     private var nameLabel: some View {
-        Text("Polka")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.55))
-            // Never squeezed by its column: a longer name would run on to the right.
-            .fixedSize()
+        // Never squeezed by its column: a longer name would run on to the right.
+        GlassTitle(text: "Polka")
             .frame(height: model.notchSize.height)
             .allowsHitTesting(false)
     }
@@ -219,11 +259,8 @@ struct NotchView: View {
     /// lines up with the tiles; the area you can click reaches 8 pt further around it.
     private var settingsButton: some View {
         Button(action: openSettings) {
-            Image(systemName: "gearshape.fill")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
-                .frame(height: model.notchSize.height)
-                .contentShape(Rectangle().inset(by: -8))
+            GlassHeaderSymbol(systemName: "gearshape.fill", height: model.notchSize.height)
+                .contentShape(Rectangle().inset(by: -Glass.headerClickMargin))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Settings")
@@ -256,9 +293,12 @@ struct NotchView: View {
             )
             .overlay(
                 VStack(spacing: 8) {
-                    Image(systemName: "tray.and.arrow.down.fill")
-                        .font(.system(size: 22, weight: .medium))
-                        .symbolEffect(.bounce, value: dropArrivals)
+                    // Glass, and brighter while a drag is over the panel.
+                    GlassGlyph(isLit: isTargeted) {
+                        Image(systemName: "tray.and.arrow.down.fill")
+                            .font(.system(size: 26, weight: .medium))
+                            .symbolEffect(.bounce, value: dropArrivals)
+                    }
                     Text(isTargeted ? "Release to add" : "Drop here")
                         .font(.system(size: 14, weight: .semibold))
                         .contentTransition(.opacity)

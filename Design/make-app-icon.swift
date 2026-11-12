@@ -1,4 +1,4 @@
-// Draws Polka's app icon: the menu bar's tray.full symbol as black glass on a white macOS tile,
+// Draws Polka's app icon: the menu bar's tray.full symbol as white glass on a dark macOS tile,
 // and writes every size into the app's AppIcon set.
 //
 // Run from the repo root (it's a script, not part of the app target):
@@ -26,6 +26,11 @@ let bevelSoftness: Float = 13            // how far in from the edge the glass r
 let bevelTilt: Float = 3.2               // how steeply the edge turns away
 let keyLight = simd_normalize(SIMD3<Float>(-0.35, 0.8, 0.55))
 let gloss: Float = 0.5                   // 1 is polished, 0 is matte
+let glassBody: Float = 0.92              // the glass's own color: milky white
+let tileTop: CGFloat = 0.16              // the dark tile's grey at the top and bottom
+let tileBottom: CGFloat = 0.07
+let tileReflection: Float = 0.10         // how bright the tile looks reflected in the glass's lower edges
+let shadowStrength: Float = 1.6          // the symbol's shadow, stronger than on white so it shows on the dark tile
 
 let outDir = CommandLine.arguments.count > 1
     ? CommandLine.arguments[1]
@@ -128,10 +133,11 @@ func symbolCoverage() -> [Float] {
     return moved
 }
 
-// MARK: - Black glass
+// MARK: - White glass
 
-/// Shades the symbol as rounded black glass: a dark body, edges that reflect a bright
-/// studio light above and the white tile below, and a sharp highlight from the key light.
+/// Shades the symbol as rounded white glass: a milky body, edges that reflect a bright
+/// studio light above, the dark room around it and the dark tile below, and a sharp
+/// highlight from the key light.
 func glassShade(_ cov: [Float]) -> [Float] {
     let w = canvas
     let sigma = bevelSoftness * Float(k)
@@ -155,23 +161,20 @@ func glassShade(_ cov: [Float]) -> [Float] {
             let r = SIMD3<Float>(2 * n.z * n.x, 2 * n.z * n.y, 2 * n.z * n.z - 1)   // reflected view ray
 
             // What the glass reflects: a bright light strip above, a dimmer one on the left,
-            // the white tile below, and a dark room straight ahead. Hard edges on the lights
+            // the dark tile below, and a dark room straight ahead. Hard edges on the lights
             // are what make it read as glass rather than plastic.
             // Less gloss dims the lights and softens their edges.
             let edge = 0.06 + 0.12 * (1 - gloss)
             let above = smoothstep(0.78, 0.78 + edge, r.y) * (1 - smoothstep(0.96, 0.99, r.y)) * 14 * gloss
             let left = smoothstep(-0.78, -0.78 - edge, r.x) * smoothstep(-0.2, 0.3, r.y) * 6 * gloss
-            let tile = smoothstep(-0.40, -0.40 - edge, r.y) * 1.2 * (0.5 + 0.5 * gloss)
+            let tile = smoothstep(-0.40, -0.40 - edge, r.y) * tileReflection * (0.5 + 0.5 * gloss)
             let env = 0.03 + above + left + tile
             let fresnel = 0.04 + 0.96 * powf(1 - n.z, 5)             // glass: little head-on, a lot at grazing angles
 
-            let body: Float = 0.018
+            let body: Float = glassBody
             var c = body * (1 - fresnel) + fresnel * env
             let nh = max(simd_dot(n, half), 0)
             c += (powf(nh, 500) * 1.6 + powf(nh, 40) * 0.05) * gloss
-
-            // Light from above passing through the glass gathers faintly along its lower edges.
-            c += 0.09 * smoothstep(0.05, 0.55, -n.y) * smoothstep(0.15, 0.6, n.z)
 
             // A faint sheen over the upper part, like light across a polished face.
             let t = Float(y - top) / Float(max(bottom - top, 1))
@@ -190,28 +193,28 @@ func drawMaster() -> CGImage {
     let tileRect = CGRect(x: 100 * k, y: 100 * k, width: 824 * k, height: 824 * k)
     let tile = RoundedRectangle(cornerRadius: 185.4 * k, style: .continuous).path(in: tileRect).cgPath
 
-    // The white tile with the standard macOS icon shadow.
+    // The dark tile with the standard macOS icon shadow.
     ctx.saveGState()
     ctx.setShadow(offset: CGSize(width: 0, height: -10 * k), blur: 20 * k,
                   color: CGColor(gray: 0, alpha: 0.28))
-    ctx.addPath(tile); ctx.setFillColor(CGColor(gray: 1, alpha: 1)); ctx.fillPath()
+    ctx.addPath(tile); ctx.setFillColor(CGColor(gray: tileBottom, alpha: 1)); ctx.fillPath()
     ctx.restoreGState()
 
     ctx.saveGState()
     ctx.addPath(tile); ctx.clip()
-    let white = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
-                           colors: [CGColor(gray: 1, alpha: 1), CGColor(gray: 0.955, alpha: 1)] as CFArray,
+    let shade = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
+                           colors: [CGColor(gray: tileTop, alpha: 1), CGColor(gray: tileBottom, alpha: 1)] as CFArray,
                            locations: [0, 1])!
-    ctx.drawLinearGradient(white, start: CGPoint(x: 0, y: tileRect.maxY), end: CGPoint(x: 0, y: tileRect.minY), options: [])
+    ctx.drawLinearGradient(shade, start: CGPoint(x: 0, y: tileRect.maxY), end: CGPoint(x: 0, y: tileRect.minY), options: [])
 
     let cov = symbolCoverage()
     let zero = [Float](repeating: 0, count: cov.count)
 
     // Shadows on the tile: a wide soft one and a tight one where the glass meets it.
-    let soft = blur(cov, canvas, Int(22 * k)).map { $0 * 0.30 }
+    let soft = blur(cov, canvas, Int(22 * k)).map { $0 * 0.30 * shadowStrength }
     ctx.draw(image(grey: zero, alpha: soft, w: canvas),
              in: CGRect(x: 0, y: -20 * k, width: CGFloat(canvas), height: CGFloat(canvas)))
-    let tight = blur(cov, canvas, Int(4 * k)).map { $0 * 0.35 }
+    let tight = blur(cov, canvas, Int(4 * k)).map { $0 * 0.35 * shadowStrength }
     ctx.draw(image(grey: zero, alpha: tight, w: canvas),
              in: CGRect(x: 0, y: -5 * k, width: CGFloat(canvas), height: CGFloat(canvas)))
 

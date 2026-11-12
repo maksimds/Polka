@@ -1,13 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// The four states from the PRD's interaction flow.
+/// The four states from the PRD's interaction flow, plus the link field.
 enum NotchState: Equatable {
     case collapsed
     case expanded
     case dropReady
     /// An item is being dragged out and the pointer has left the panel.
     case draggingOut
+    /// The shelf has turned into a field for typing a link ("Add New", "Link").
+    case addingLink
 
     /// True when the shape is notch-sized and the pointer passes through to what's beneath.
     var isAtNotchSize: Bool {
@@ -28,11 +30,24 @@ enum SelectionClick: Equatable {
 @MainActor
 final class NotchViewModel: ObservableObject {
     /// Closing the panel clears the selection, so it always opens with nothing selected.
+    /// So does the link field, which shows no tiles to keep it on.
     @Published var state: NotchState = .collapsed {
         didSet {
+            // A name being edited only shows on the open shelf. The controller ends the
+            // edit itself before closing the panel, so this only catches the unexpected.
+            if state != .expanded, renamingItemID != nil {
+                renamingItemID = nil
+            }
+            // Dust only rises over the open shelf.
+            if state != .expanded {
+                finishDissolving(dissolvingItemIDs)
+                dust.clear()
+            }
             if state == .collapsed {
                 clearSelection()
                 itemToReveal = nil
+            } else if state == .addingLink {
+                clearSelection()
             }
         }
     }
@@ -41,6 +56,9 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var itemToReveal: ShelfItem.ID?
     /// Selected tiles. A drag that starts on one of them carries them all (FR-10).
     @Published private(set) var selection: Set<ShelfItem.ID> = []
+    /// The tile whose name is being edited ("Rename"). The panel takes the keys while
+    /// it's set, as it does for the link field.
+    @Published private(set) var renamingItemID: ShelfItem.ID?
     /// Where a Shift-click range starts: the last item clicked without Shift.
     private var selectionAnchor: ShelfItem.ID?
     @Published var notchSize = CGSize(width: 200, height: 32)
@@ -71,6 +89,20 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var tileMove: TileMove?
     /// Tiles just dropped, hidden while their pictures glide into place.
     @Published private(set) var landingItemIDs: Set<ShelfItem.ID> = []
+    /// Removed tiles taking their pictures for the dust, just before they leave the shelf.
+    @Published private(set) var dissolvingItemIDs: Set<ShelfItem.ID> = []
+    /// True while the tiles close the gap that dust left, which they do slowly.
+    @Published private(set) var isClosingDustGap = false
+    /// Where removed tiles turn to dust, drawn over the whole panel.
+    let dust = DustField()
+    /// Tiles that have taken their pictures, waiting to leave the shelf together.
+    private var dissolvedItemIDs: Set<ShelfItem.ID> = []
+    private var isFinishingDissolve = false
+    private var gapTask: Task<Void, Never>?
+    /// How long a removed tile may take to hand over its picture before it leaves anyway.
+    private static let dissolveTimeout: Duration = .milliseconds(250)
+    /// How long the grid's tiles take to close the gap, so the slow reflow covers it.
+    private static let dustGapDuration: Duration = .seconds(ShelfGridView.dustGapDuration)
     /// The edge the grid scrolls toward, one row at a time, while a tile is held near it.
     @Published private(set) var scrollEdge: VerticalEdge?
     /// Kept up to date by the grid, and read to find the spot under the pointer.
@@ -110,21 +142,77 @@ final class NotchViewModel: ObservableObject {
         copies != nil
     }
 
+    /// The shelf turned into the link field: as wide as the shelf, and only as tall
+    /// as the field and the line under it.
+    var linkEntrySize: CGSize {
+        CGSize(width: expandedSize.width, height: notchSize.height + LinkEntryView.contentHeight)
+    }
+
     var currentSize: CGSize {
-        state.isAtNotchSize ? notchSize : expandedSize
+        switch state {
+        case .collapsed, .draggingOut: return notchSize
+        case .expanded, .dropReady: return expandedSize
+        case .addingLink: return linkEntrySize
+        }
     }
 
     /// Promised files aren't in `items` as drafts: they're added by
     /// `receivePromisedFiles` once the app that promised them has written them.
     func handleDrop(_ items: [DroppedItem]) {
-        let result = store.add(items.compactMap(ShelfItem.Draft.init))
+        add(items.compactMap(ShelfItem.Draft.init))
+        if let message = Self.notAWebLinkMessage(refused: items.filter(\.isRefusedLink).count) {
+            notice = message
+        }
+        state = .expanded
+    }
+
+    // MARK: - Adding from the header's "Add New" menu
+
+    /// "Link": the shelf turns into a field for typing a link.
+    func beginAddingLink() {
+        guard state == .expanded else { return }
+        state = .addingLink
+    }
+
+    /// Esc, the field's ×, or a click outside the panel: back to the shelf, adding nothing.
+    func cancelAddingLink() {
+        guard state == .addingLink else { return }
+        state = .expanded
+    }
+
+    /// Return or Add in the link field. The link is stored like a dropped one, and the
+    /// field turns back into the shelf, scrolled to show it. When there's nothing to
+    /// add, the field stays and this returns what to say under it instead.
+    func addLink(from text: String) -> String? {
+        guard state == .addingLink else { return nil }
+        guard let url = LinkInput.url(from: text) else {
+            return "That doesn't look like a web address"
+        }
+        let result = store.add([ShelfItem.Draft(linkURL: url)])
+        guard let added = result.added.first else {
+            return "That link is already on the shelf"
+        }
+        itemToReveal = added.id
+        state = .expanded
+        return nil
+    }
+
+    /// "File": what was picked in the Open dialog, stored like dropped files. The
+    /// panel closed before the dialog opened, so it opens scrolled to them next time,
+    /// and anything already on the shelf gets the usual message there.
+    func addFiles(_ urls: [URL]) {
+        add(urls.map { ShelfItem.Draft(fileURL: $0) })
+    }
+
+    /// Stores new items, says if any were already on the shelf, and remembers the new
+    /// item nearest the top, so the panel opens with it in view.
+    private func add(_ drafts: [ShelfItem.Draft]) {
+        let result = store.add(drafts)
         if let message = Self.alreadyOnShelfMessage(for: result.duplicates) {
             notice = message
         }
-        // The new item nearest the top, so the panel opens with it in view.
         let addedIDs = Set(result.added.map(\.id))
         itemToReveal = store.items.first { addedIDs.contains($0.id) }?.id
-        state = .expanded
     }
 
     /// A choice from the header's "Sort By" menu. The shelf sorts itself now, stays
@@ -170,14 +258,38 @@ final class NotchViewModel: ObservableObject {
         case .reference:
             Task {
                 if await !copies.keepCopy(of: id) {
-                    notice = "Couldn't keep a copy of \(item.title)"
+                    notice = "Couldn't keep a copy of \(item.displayName)"
                 }
             }
         case .copy:
             if !store.useOriginal(id: id) {
-                notice = "Can't find the original of \(item.title), so the copy stays"
+                notice = "Can't find the original of \(item.displayName), so the copy stays"
             }
         }
+    }
+
+    // MARK: - Renaming
+
+    /// The tile's "Rename" menu item: its name turns into a field, with the name
+    /// selected. As in Finder, the tile being renamed is the only one selected.
+    func beginRenaming(_ id: ShelfItem.ID) {
+        guard state == .expanded, tileMove == nil, store.items.contains(where: { $0.id == id }) else { return }
+        click(id, .only)
+        renamingItemID = id
+    }
+
+    /// Return, Tab, or a click anywhere else: the tile keeps the name typed. An empty
+    /// name brings back the automatic one. An edit that has already ended is ignored.
+    func finishRenaming(_ id: ShelfItem.ID, as name: String) {
+        guard renamingItemID == id else { return }
+        renamingItemID = nil
+        store.rename(id: id, to: name)
+    }
+
+    /// Esc: the tile keeps the name it had.
+    func cancelRenaming(_ id: ShelfItem.ID) {
+        guard renamingItemID == id else { return }
+        renamingItemID = nil
     }
 
     // MARK: - Selection
@@ -287,9 +399,66 @@ final class NotchViewModel: ObservableObject {
     /// just `id`, like Quick Look and Get Info. Only the shelf entries go; original
     /// files are never touched.
     func remove(from id: ShelfItem.ID) {
-        let ids = selection.contains(id) ? selection : [id]
-        store.remove(ids: ids)
-        selection.subtract(ids)
+        remove(selection.contains(id) ? selection : [id])
+    }
+
+    /// Takes items off the shelf (the × button, and the menu's "Remove"). On the open
+    /// shelf they turn to dust, after Telegram's delete animation: each tile hands a
+    /// picture of itself to `dust` and hides, then the items leave the shelf together
+    /// and the other tiles close the gap while the dust rises. With Reduce Motion, or
+    /// without the dust's view, they leave at once and shrink away.
+    func remove(_ ids: Set<ShelfItem.ID>) {
+        let leaving = ids.filter { id in store.items.contains { $0.id == id } }
+        guard state == .expanded, dust.canScatter,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              !leaving.isEmpty else {
+            store.remove(ids: ids)
+            selection.subtract(ids)
+            return
+        }
+        dissolvingItemIDs.formUnion(leaving)
+        // In case a tile never gets to take its picture, it leaves anyway.
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.dissolveTimeout)
+            self?.finishDissolving(leaving)
+        }
+    }
+
+    /// A tile has handed its picture to the dust. The others removed with it do so
+    /// while the same change is drawn, so they're all taken off the shelf together a
+    /// moment later, with one save.
+    func tileDissolved(_ id: ShelfItem.ID) {
+        dissolvedItemIDs.insert(id)
+        guard !isFinishingDissolve else { return }
+        isFinishingDissolve = true
+        // After the update that took the pictures, not during it.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isFinishingDissolve = false
+            let ids = self.dissolvedItemIDs
+            self.dissolvedItemIDs = []
+            self.finishDissolving(ids)
+        }
+    }
+
+    /// The items leave the shelf, and the other tiles close the gap slowly, as the dust
+    /// rises. Items that already left are skipped.
+    private func finishDissolving(_ ids: Set<ShelfItem.ID>) {
+        let leaving = dissolvingItemIDs.intersection(ids)
+        guard !leaving.isEmpty else { return }
+        isClosingDustGap = true
+        dissolvingItemIDs.subtract(leaving)
+        // Selected tiles stay selected until now, so their highlight turns to dust too.
+        selection.subtract(leaving)
+        store.remove(ids: leaving)
+        // Long enough for the grid to animate this change; another tile removed in the
+        // meantime closes its gap the same way.
+        gapTask?.cancel()
+        gapTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.dustGapDuration)
+            guard !Task.isCancelled else { return }
+            self?.isClosingDustGap = false
+        }
     }
 
     /// For something that went wrong outside the panel, such as a file that wouldn't open.
@@ -470,6 +639,15 @@ final class NotchViewModel: ObservableObject {
         default: return "\(duplicates.count) items are already on the shelf"
         }
     }
+
+    /// For dropped addresses that aren't web links, which are never stored.
+    private static func notAWebLinkMessage(refused count: Int) -> String? {
+        switch count {
+        case 0: return nil
+        case 1: return "That link isn't a web address, so it wasn't added"
+        default: return "\(count) links aren't web addresses, so they weren't added"
+        }
+    }
 }
 
 private extension ShelfItem.Draft {
@@ -477,7 +655,7 @@ private extension ShelfItem.Draft {
         switch dropped {
         case .file(let url): self.init(fileURL: url)
         case .link(let url): self.init(linkURL: url)
-        case .promise: return nil
+        case .promise, .refusedLink: return nil
         }
     }
 }
