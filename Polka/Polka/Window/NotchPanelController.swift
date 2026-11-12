@@ -231,7 +231,7 @@ final class NotchPanelController {
 
     // MARK: - Adding from the + menu
 
-    /// "Link…": the shelf turns into the link field. A tick later, since this runs
+    /// "Link": the shelf turns into the link field. A tick later, since this runs
     /// as the menu closes, and the panel shouldn't take the keys while it tracks.
     private func addLinkFromPanel() {
         DispatchQueue.main.async { [weak self] in
@@ -239,7 +239,7 @@ final class NotchPanelController {
         }
     }
 
-    /// "File…": the shelf gets out of the way, then the Open dialog opens.
+    /// "File": the shelf gets out of the way, then the Open dialog opens.
     private func addFilesFromPanel() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }

@@ -11,19 +11,17 @@ struct AddMenuButton: View {
 
     var body: some View {
         HeaderMenuButton(systemName: "plus",
-                         color: .white.opacity(0.55),
                          height: height,
                          label: "Add New",
                          makeMenu: makeMenu)
     }
 
-    /// Each choice ends in "…" because it asks for more before anything is added.
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
         menu.addItem(.sectionHeader(title: "Add New"))
-        menu.addItem(NSMenuItem(title: "Link…", action: onAddLink))
-        menu.addItem(NSMenuItem(title: "File…", action: onAddFiles))
+        menu.addItem(NSMenuItem(title: "Link", action: onAddLink))
+        menu.addItem(NSMenuItem(title: "File", action: onAddFiles))
         return menu
     }
 }

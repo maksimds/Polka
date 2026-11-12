@@ -1,6 +1,6 @@
 import AppKit
 
-/// The standard Open dialog, for "Add New", "File…": the same one apps and websites
+/// The standard Open dialog, for "Add New", "File": the same one apps and websites
 /// show when you choose a file.
 ///
 /// Polka makes itself the active app for it, as for Settings and Quick Look, because
@@ -9,7 +9,7 @@ import AppKit
 @MainActor
 final class FileChooser {
     private let focus: FocusReturner
-    /// The dialog while it's open, so choosing "File…" again brings it forward.
+    /// The dialog while it's open, so choosing "File" again brings it forward.
     private var openPanel: NSOpenPanel?
 
     init(focus: FocusReturner) {

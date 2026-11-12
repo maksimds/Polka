@@ -8,7 +8,7 @@ enum NotchState: Equatable {
     case dropReady
     /// An item is being dragged out and the pointer has left the panel.
     case draggingOut
-    /// The shelf has turned into a field for typing a link ("Add New", "Link…").
+    /// The shelf has turned into a field for typing a link ("Add New", "Link").
     case addingLink
 
     /// True when the shape is notch-sized and the pointer passes through to what's beneath.
@@ -138,7 +138,7 @@ final class NotchViewModel: ObservableObject {
 
     // MARK: - Adding from the header's "Add New" menu
 
-    /// "Link…": the shelf turns into a field for typing a link.
+    /// "Link": the shelf turns into a field for typing a link.
     func beginAddingLink() {
         guard state == .expanded else { return }
         state = .addingLink
@@ -167,7 +167,7 @@ final class NotchViewModel: ObservableObject {
         return nil
     }
 
-    /// "File…": what was picked in the Open dialog, stored like dropped files. The
+    /// "File": what was picked in the Open dialog, stored like dropped files. The
     /// panel closed before the dialog opened, so it opens scrolled to them next time,
     /// and anything already on the shelf gets the usual message there.
     func addFiles(_ urls: [URL]) {

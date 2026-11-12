@@ -10,6 +10,8 @@ final class ShelfItemImages {
     private let icons = NSCache<NSUUID, NSImage>()
     private let thumbnails = NSCache<NSUUID, NSImage>()
     private let siteIcons = NSCache<NSString, NSImage>()
+    /// By icon file name. An icon file never changes, so neither does its style.
+    private var siteIconStyles: [String: SiteIconStyle] = [:]
 
     init(previewsFolder: URL? = nil) {
         self.previewsFolder = previewsFolder
@@ -99,6 +101,68 @@ final class ShelfItemImages {
             && brightness / coverage <= darkLuminance
     }
 
+    // MARK: - Site icons
+
+    /// How a link's tile shows its site's icon, or nil when the link has no icon of
+    /// its own. Worked out once per icon.
+    func siteIconStyle(for item: ShelfItem) -> SiteIconStyle? {
+        guard let name = item.linkPreview?.iconFileName, let icon = siteIcon(for: item) else { return nil }
+        if let known = siteIconStyles[name] { return known }
+        let isLarge = Self.isLargeSiteIcon(icon)
+        let style = icon.cgImage(forProposedRect: nil, context: nil, hints: nil)
+            .map { Self.style(of: $0, isLarge: isLarge) } ?? (isLarge ? .tile : .logo)
+        siteIconStyles[name] = style
+        return style
+    }
+
+    /// Icons at least this wide are made for phone home screens; smaller ones are
+    /// favicons.
+    static let largeSiteIconWidth: CGFloat = 96
+
+    static func isLargeSiteIcon(_ icon: NSImage) -> Bool {
+        icon.size.width >= largeSiteIconWidth
+    }
+
+    /// More than this share of a large icon's outer edge is see-through: it's a bare
+    /// logo, not a tile. A tile is solid to its edges (a few corner pixels at most, if
+    /// it comes rounded); a logo stands on nothing.
+    nonisolated private static let logoEdgeShare = 0.5
+
+    /// A large icon is a tile when it's solid to its edges. Anything else, and every
+    /// favicon, is a logo: dark ones go on the light card. A favicon never fills the
+    /// square, even a solid one, since it's drawn for 16 to 64 pixels and would blur.
+    nonisolated static func style(of image: CGImage, isLarge: Bool) -> SiteIconStyle {
+        if isLarge, !hasSeeThroughEdge(image) {
+            return .tile
+        }
+        return needsLightBackground(image) ? .darkLogo : .logo
+    }
+
+    /// True when more than `logoEdgeShare` of the image's outermost ring of pixels is
+    /// see-through, measured on a 32 × 32 copy like `needsLightBackground`.
+    nonisolated private static func hasSeeThroughEdge(_ image: CGImage) -> Bool {
+        let side = 32
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8,
+                                      bytesPerRow: side * 4, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return false
+        }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: side, height: side))
+        guard let data = context.data else { return false }
+        let pixels = data.bindMemory(to: UInt8.self, capacity: side * side * 4)
+
+        var edge = 0
+        var seeThrough = 0
+        for y in 0..<side {
+            for x in 0..<side where x == 0 || y == 0 || x == side - 1 || y == side - 1 {
+                edge += 1
+                if pixels[(y * side + x) * 4 + 3] < 26 { seeThrough += 1 }
+            }
+        }
+        return Double(seeThrough) / Double(edge) > logoEdgeShare
+    }
+
     private func siteIcon(for item: ShelfItem) -> NSImage? {
         guard let name = item.linkPreview?.iconFileName, let previewsFolder else { return nil }
         if let cached = siteIcons.object(forKey: name as NSString) { return cached }
@@ -113,4 +177,18 @@ final class ShelfItemImages {
         case .link: return NSWorkspace.shared.icon(for: .internetLocation)
         }
     }
+}
+
+/// How a link's tile shows its site's icon. How big it's drawn comes from the icon:
+/// a favicon stays small, a large logo gets more room.
+enum SiteIconStyle: Equatable {
+    /// A large icon made as a tile, with its own background to the edges, like
+    /// GitHub's: it fills the rounded square.
+    case tile
+    /// A logo on a see-through background, like Shopify's bag, or a favicon, like
+    /// LinkedIn's: on dark glass, with room around it.
+    case logo
+    /// A logo or favicon that's dark: on the light card instead, since dark glass
+    /// would hide it.
+    case darkLogo
 }

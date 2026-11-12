@@ -3,7 +3,7 @@ import AppKit
 /// Borderless, transparent, non-activating panel that sits over the notch.
 ///
 /// It never becomes key, so it never steals focus from the app you're using. The
-/// one exception is the link field ("Add New", "Link…"), which needs the keys while
+/// one exception is the link field ("Add New", "Link"), which needs the keys while
 /// you type. A non-activating panel can be the key window without making Polka the
 /// active app, so the app you were in keeps its menu bar and its windows stay put.
 final class NotchPanel: NSPanel {

@@ -57,7 +57,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 
 Hovering the notch expands the panel. A drag from any app opens it as a drop target once the drag has lasted half a second, or right away if it reaches the notch, so quick drags elsewhere don't flash the panel open. If a drag ends somewhere else, the panel returns to collapsed.
 
-The expanded panel's + menu adds things without dragging. "Link…" turns the shelf into a field for typing a link, and back into the shelf once it's added. The field takes the keyboard while it's open, without making Polka the active app. "File…" opens the standard Open dialog.
+The expanded panel's + menu adds things without dragging. "Link" turns the shelf into a field for typing a link, and back into the shelf once it's added. The field takes the keyboard while it's open, without making Polka the active app. "File" opens the standard Open dialog.
 
 ## Technical approach
 

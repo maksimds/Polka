@@ -111,9 +111,14 @@ final class TileDragView: NSView {
         }
     }
 
+    /// Inside the tile, and in the part of the grid that's on screen. Both checks are
+    /// needed: inside SwiftUI's scroll view, a tile's `visibleRect` isn't trimmed to
+    /// the tile. It's the whole visible grid, for every tile, so on its own it put
+    /// the pointer inside all of them and every × showed when a scroll stopped.
     private var isPointerInside: Bool {
         guard let window else { return false }
-        return visibleRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+        let pointer = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        return bounds.contains(pointer) && visibleRect.contains(pointer)
     }
 
     /// AppKit asks this to find which view gets a press, a right-click or a scroll.

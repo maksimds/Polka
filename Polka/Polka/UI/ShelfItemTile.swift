@@ -151,15 +151,19 @@ struct ShelfItemTile: View {
                                 onDoubleClick: onOpen,
                                 dragContents: dragContents)
         }
-        // Always built, and only shown while hovered. Making and throwing away a Button
-        // each time the pointer crosses a tile also makes SwiftUI redo the panel's focus
-        // order, which is slow enough to drop frames while tiles scroll past the pointer.
-        .overlay(alignment: .topTrailing) {
-            deleteButton
-                .padding(.trailing, 6)
-                .opacity(isHovering ? 1 : 0)
-                .allowsHitTesting(isHovering)
-                .accessibilityHidden(!isHovering)
+        // Over the drag layer, so it gets its own clicks, and placed once the picture
+        // has been measured. Always built, and only shown while hovered. Making and
+        // throwing away a Button each time the pointer crosses a tile also makes SwiftUI
+        // redo the panel's focus order, which is slow enough to drop frames while tiles
+        // scroll past the pointer.
+        .overlay(alignment: .topLeading) {
+            if let removeBadgeCenter {
+                deleteButton
+                    .position(removeBadgeCenter)
+                    .opacity(isHovering ? 1 : 0)
+                    .allowsHitTesting(isHovering)
+                    .accessibilityHidden(!isHovering)
+            }
         }
         // Lifting out is instant, since the picture is already under the pointer.
         // Coming back is a quick fade, so it doesn't pop in.
@@ -181,45 +185,96 @@ struct ShelfItemTile: View {
         }
     }
 
-    /// A link shows its site's icon. A large icon (the kind made for phone home screens)
-    /// fills a rounded square; a small favicon sits on a light card, as browsers show it.
-    /// File icons and thumbnails keep their own shape.
+    /// A link shows its site's icon in a rounded square, with glass built in like an
+    /// iOS 27 app icon (`SiteIconStyle`). A tile made for phone home screens fills
+    /// the square. A bare logo or a favicon sits on dark glass with room around it,
+    /// or on the light card if it's dark. File icons and thumbnails keep their own
+    /// shape and look.
     @ViewBuilder
     private var artwork: some View {
-        if item.linkPreview?.iconFileName != nil {
-            if image.size.width >= 96 {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(width: Self.imageSide, height: Self.imageSide)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            } else {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(Color.white)
-                    .overlay(
-                        Image(nsImage: image)
-                            .resizable()
-                            .interpolation(.high)
-                            .scaledToFit()
-                            .frame(width: 28, height: 28)
-                    )
-            }
-        } else {
+        switch images.siteIconStyle(for: item) {
+        case .tile:
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: Self.imageSide, height: Self.imageSide)
+                .clipShape(Self.linkIconShape)
+                .overlay(GlassPictureFinish(shape: Self.linkIconShape))
+        case .logo:
+            GlassSurface(Self.linkIconShape)
+                .overlay(siteIcon)
+                .overlay(GlassPictureFinish(shape: Self.linkIconShape))
+        case .darkLogo:
+            LightGlassCard(shape: Self.linkIconShape)
+                .overlay(siteIcon)
+        case nil:
             Image(nsImage: image)
                 .resizable()
                 .scaledToFit()
         }
     }
 
-    /// Removes the item from the shelf. The original file is never touched. A small
-    /// round button with a larger invisible hit area.
+    /// The site's icon fitted in the middle of its glass or card: small for a
+    /// favicon, which is drawn for 16 to 64 pixels, larger for a big logo.
+    private var siteIcon: some View {
+        let side = ShelfItemImages.isLargeSiteIcon(image) ? Self.logoSide : Self.faviconSide
+        return Image(nsImage: image)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: side, height: side)
+    }
+
+    /// A link's icon or card.
+    private static let linkIconShape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+    /// A bare logo in its 52 pt square, leaving room around it like an app icon's art.
+    private static let logoSide: CGFloat = 34
+    /// A small favicon, kept small, since it's drawn for 16 to 64 pixels.
+    private static let faviconSide: CGFloat = 28
+
+    /// How far inside the picture's top-right corner the remove badge's middle sits,
+    /// so the badge hangs over the corner, as on an iPhone app being deleted (which
+    /// has it on the left).
+    private static let removeBadgeInset: CGFloat = 4
+
+    /// How much lower a folder's remove badge sits, as a part of the picture's height.
+    /// The folder icon leaves the top of its square empty above the tab, so at the
+    /// square's corner the badge would float above the folder.
+    private static let folderBadgeDrop: CGFloat = 0.15
+
+    /// The part of the picture square the picture covers. A link's icon or card fills
+    /// it; a file's thumbnail or icon is fitted, so a page is narrower than it's tall.
+    private var visiblePicture: CGRect {
+        let square = CGRect(x: 0, y: 0, width: Self.imageSide, height: Self.imageSide)
+        let size = image.size
+        guard item.linkPreview?.iconFileName == nil, size.width > 0, size.height > 0 else {
+            return square
+        }
+        let scale = min(Self.imageSide / size.width, Self.imageSide / size.height)
+        let fitted = CGSize(width: size.width * scale, height: size.height * scale)
+        return CGRect(x: (Self.imageSide - fitted.width) / 2,
+                      y: (Self.imageSide - fitted.height) / 2,
+                      width: fitted.width,
+                      height: fitted.height)
+    }
+
+    /// Where the remove badge's middle goes in the tile: over the top-right corner of
+    /// the picture you can see, a little lower on a folder. The picture is the top of
+    /// the measured area, centered across it. Nil until the tile has been measured.
+    private var removeBadgeCenter: CGPoint? {
+        guard let pressArea else { return nil }
+        let picture = visiblePicture
+        let drop = item.kind == .folder ? picture.height * Self.folderBadgeDrop : 0
+        return CGPoint(x: pressArea.midX - Self.imageSide / 2 + picture.maxX - Self.removeBadgeInset,
+                       y: pressArea.minY + picture.minY + Self.removeBadgeInset + drop)
+    }
+
+    /// Removes the item from the shelf. The original file is never touched. The badge
+    /// iPhone puts on an app being deleted, with a × for its minus, and a larger
+    /// invisible hit area.
     private var deleteButton: some View {
         Button(action: onDelete) {
-            Image(systemName: "xmark")
-                .font(.system(size: 8, weight: .bold))
-                .foregroundStyle(.white)
-                .frame(width: 18, height: 18)
-                .background(Color(white: 0.3), in: Circle())
+            GlassRemoveBadge()
                 .frame(width: 26, height: 26)
                 .contentShape(Rectangle())
         }

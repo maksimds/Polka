@@ -206,8 +206,8 @@ struct NotchView: View {
             ForEach(0..<3, id: \.self) { _ in
                 Color.clear
             }
-            // 16 pt apart, so the 8 pt click areas meet without overlapping.
-            HStack(spacing: 16) {
+            // Glass symbols, 16 pt apart, so their 8 pt click margins meet without overlapping.
+            HStack(spacing: Glass.headerSymbolSpacing) {
                 AddMenuButton(height: model.notchSize.height, onAddLink: addLink, onAddFiles: addFiles)
                 SortMenuButton(sort: store.sort, height: model.notchSize.height) { model.chooseSort($0) }
                 settingsButton
@@ -220,11 +220,8 @@ struct NotchView: View {
     }
 
     private var nameLabel: some View {
-        Text("Polka")
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.white.opacity(0.55))
-            // Never squeezed by its column: a longer name would run on to the right.
-            .fixedSize()
+        // Never squeezed by its column: a longer name would run on to the right.
+        GlassTitle(text: "Polka")
             .frame(height: model.notchSize.height)
             .allowsHitTesting(false)
     }
@@ -233,11 +230,8 @@ struct NotchView: View {
     /// lines up with the tiles; the area you can click reaches 8 pt further around it.
     private var settingsButton: some View {
         Button(action: openSettings) {
-            Image(systemName: "gearshape.fill")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(.white.opacity(0.55))
-                .frame(height: model.notchSize.height)
-                .contentShape(Rectangle().inset(by: -8))
+            GlassHeaderSymbol(systemName: "gearshape.fill", height: model.notchSize.height)
+                .contentShape(Rectangle().inset(by: -Glass.headerClickMargin))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Settings")
@@ -270,9 +264,12 @@ struct NotchView: View {
             )
             .overlay(
                 VStack(spacing: 8) {
-                    Image(systemName: "tray.and.arrow.down.fill")
-                        .font(.system(size: 22, weight: .medium))
-                        .symbolEffect(.bounce, value: dropArrivals)
+                    // Glass, and brighter while a drag is over the panel.
+                    GlassGlyph(isLit: isTargeted) {
+                        Image(systemName: "tray.and.arrow.down.fill")
+                            .font(.system(size: 26, weight: .medium))
+                            .symbolEffect(.bounce, value: dropArrivals)
+                    }
                     Text(isTargeted ? "Release to add" : "Drop here")
                         .font(.system(size: 14, weight: .semibold))
                         .contentTransition(.opacity)

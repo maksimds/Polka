@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// What the shelf turns into for "Add New", "Link…": a field for typing a link, under
+/// What the shelf turns into for "Add New", "Link": a field for typing a link, under
 /// a header strip that names it and has a × to go back to the shelf.
 ///
 /// The panel takes the keys only while this is showing (see `NotchPanel`).
@@ -67,18 +67,13 @@ struct LinkEntryView: View {
 
     private var header: some View {
         HStack {
-            Text("Add Link")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.55))
-                .fixedSize()
+            // Glass lettering, like "Polka" on the shelf.
+            GlassTitle(text: "Add Link")
             Spacer(minLength: 0)
-            // Where the gear is on the shelf. Esc presses it.
+            // A glass × where the gear is on the shelf. Esc presses it.
             Button(action: onCancel) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .frame(height: headerHeight)
-                    .contentShape(Rectangle().inset(by: -8))
+                GlassHeaderSymbol(systemName: "xmark", height: headerHeight)
+                    .contentShape(Rectangle().inset(by: -Glass.headerClickMargin))
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)
@@ -122,7 +117,8 @@ struct LinkEntryView: View {
         .animation(.easeOut(duration: 0.15), value: problem)
     }
 
-    /// Blue like an active sort once there's a link to add, dim until then.
+    /// Glass: blue glass like an active sort once there's a link to add, clear glass
+    /// with a dim label until then.
     private var addButton: some View {
         Button(action: submit) {
             Text("Add")
@@ -131,8 +127,8 @@ struct LinkEntryView: View {
                 .padding(.horizontal, 10)
                 .frame(height: 24)
                 .background(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .fill(canAdd ? SortMenuButton.activeColor : Color.white.opacity(0.1))
+                    GlassSurface(RoundedRectangle(cornerRadius: 6, style: .continuous),
+                                 tint: canAdd ? SortMenuButton.activeColor : nil)
                 )
                 .contentShape(Rectangle())
         }

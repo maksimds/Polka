@@ -15,9 +15,7 @@ struct NoticeBanner: View {
                 .foregroundStyle(.white)
             Spacer(minLength: 0)
             Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.7))
+                GlassCloseMark()
                     .frame(width: 24, height: 24)
                     .contentShape(Rectangle())
             }

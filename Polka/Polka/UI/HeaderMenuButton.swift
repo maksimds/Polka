@@ -11,7 +11,8 @@ import SwiftUI
 /// works in the never-key panel, like the tiles' right-click menu.
 struct HeaderMenuButton: View {
     let systemName: String
-    let color: Color
+    /// Colors the glass symbol instead of white.
+    var tint: Color?
     /// The header's height, so the symbol is centered on it like the gear.
     let height: CGFloat
     /// What VoiceOver calls the button.
@@ -21,13 +22,10 @@ struct HeaderMenuButton: View {
 
     /// Like the gear: the frame is just the symbol, and the area you can click
     /// reaches this much further around it.
-    static let clickMargin: CGFloat = 8
+    static let clickMargin = Glass.headerClickMargin
 
     var body: some View {
-        Image(systemName: systemName)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(color)
-            .frame(height: height)
+        GlassHeaderSymbol(systemName: systemName, tint: tint, height: height)
             .accessibilityHidden(true)
             .overlay {
                 HeaderMenuArea(label: label, makeMenu: makeMenu)
