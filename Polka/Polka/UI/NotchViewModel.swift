@@ -29,8 +29,16 @@ enum SelectionClick: Equatable {
 final class NotchViewModel: ObservableObject {
     /// Closing the panel clears the selection, so it always opens with nothing selected.
     @Published var state: NotchState = .collapsed {
-        didSet { if state == .collapsed { clearSelection() } }
+        didSet {
+            if state == .collapsed {
+                clearSelection()
+                itemToReveal = nil
+            }
+        }
     }
+    /// A just-dropped item for the grid to scroll to as the panel opens, since on a
+    /// sorted shelf it may land out of view. Nil means the first items.
+    @Published private(set) var itemToReveal: ShelfItem.ID?
     /// Selected tiles. A drag that starts on one of them carries them all (FR-10).
     @Published private(set) var selection: Set<ShelfItem.ID> = []
     /// Where a Shift-click range starts: the last item clicked without Shift.
@@ -75,6 +83,8 @@ final class NotchViewModel: ObservableObject {
     /// Nil when Polka has no folder of its own to keep copies in.
     private let copies: CopyKeeper?
     private let temporaryLifetime: () -> TimeInterval
+    /// Remembers a "Sort By" choice for the next launch.
+    private let saveSort: (ShelfSort) -> Void
     /// How long the pointer rests on a spot before the other tiles make room.
     private let moveSettleDelay: Duration
     /// About how long AppKit takes to glide a dropped picture into place.
@@ -87,10 +97,12 @@ final class NotchViewModel: ObservableObject {
     init(store: ShelfStore,
          copies: CopyKeeper? = nil,
          temporaryLifetime: @escaping () -> TimeInterval = { ShelfSettings().temporaryLifetime },
+         saveSort: @escaping (ShelfSort) -> Void = { ShelfSettings().shelfSort = $0 },
          moveSettleDelay: Duration = .milliseconds(150)) {
         self.store = store
         self.copies = copies
         self.temporaryLifetime = temporaryLifetime
+        self.saveSort = saveSort
         self.moveSettleDelay = moveSettleDelay
     }
 
@@ -109,7 +121,17 @@ final class NotchViewModel: ObservableObject {
         if let message = Self.alreadyOnShelfMessage(for: result.duplicates) {
             notice = message
         }
+        // The new item nearest the top, so the panel opens with it in view.
+        let addedIDs = Set(result.added.map(\.id))
+        itemToReveal = store.items.first { addedIDs.contains($0.id) }?.id
         state = .expanded
+    }
+
+    /// A choice from the header's "Sort By" menu. The shelf sorts itself now, stays
+    /// sorted from then on, and keeps the choice for the next launch.
+    func chooseSort(_ sort: ShelfSort) {
+        store.setSort(sort)
+        saveSort(sort)
     }
 
     func dismissNotice() {
@@ -303,6 +325,12 @@ final class NotchViewModel: ObservableObject {
         return store.items.moving(Set(tileMove.ids), to: target)
     }
 
+    /// The titled groups the tiles show in, for the orders that group them (Kind,
+    /// File Type). Empty for a plain grid.
+    var displayedGroups: [ShelfGroup] {
+        store.sort.groups(of: displayedItems)
+    }
+
     /// Tiles drawn as empty gaps: the ones being moved, whose pictures are under the
     /// pointer, and the ones just dropped, whose pictures are still gliding into place.
     var hiddenItemIDs: Set<ShelfItem.ID> {
@@ -323,8 +351,11 @@ final class NotchViewModel: ObservableObject {
     /// The other tiles make room only once the pointer has rested on a spot for
     /// `moveSettleDelay`, as on iPhone, so sweeping across the grid on the way
     /// somewhere doesn't shuffle every tile it passes.
+    ///
+    /// A sorted shelf keeps its order, so there the other tiles never make room and
+    /// the grid doesn't scroll: the moved tiles can only go back where they were.
     func tileMoved(to point: CGPoint) {
-        guard let tileMove else { return }
+        guard let tileMove, store.sort == .none else { return }
         let edge = gridGeometry.scrollEdge(at: point)
         if edge != scrollEdge {
             scrollEdge = edge
@@ -360,22 +391,31 @@ final class NotchViewModel: ObservableObject {
     /// Where tiles dropped at `point` would go, and where each picture would end up,
     /// in the drag's order. AppKit asks during the drop, so this changes nothing. The
     /// spot is the one under the pointer, even if the tiles haven't made room yet.
+    /// On a sorted shelf there's no new spot: the pictures glide back to their own,
+    /// like an icon dropped in a sorted Finder window.
     func tileDrop(at point: CGPoint) -> TileDrop? {
         guard let tileMove else { return nil }
-        let target = target(at: point, moving: tileMove.ids.count)
-        let landed = store.items.moving(Set(tileMove.ids), to: target).map(\.id)
+        let target = store.sort == .none ? target(at: point, moving: tileMove.ids.count) : nil
+        let landedItems = target.map { store.items.moving(Set(tileMove.ids), to: $0) } ?? store.items
+        let landed = landedItems.map(\.id)
+        // Laid out with the groups' titles, if the order has them.
+        let placement = gridGeometry.layout.placement(tileCount: landed.count,
+                                                      groups: store.sort.groups(of: landedItems).map(\.count))
         let frames = tileMove.ids.compactMap { id in
-            landed.firstIndex(of: id).map(gridGeometry.pictureFrame(ofSlot:))
+            landed.firstIndex(of: id).flatMap { gridGeometry.pictureFrame(ofTile: $0, in: placement) }
         }
         return TileDrop(target: target, landingFrames: frames.count == tileMove.ids.count ? frames : [])
     }
 
-    /// The drop: the tiles take their new places and the order is saved. While their
-    /// pictures glide into place (`gliding`), the tiles stay hidden, then appear.
-    func finishTileMove(at target: Int, gliding: Bool) {
+    /// The drop: the tiles take their new places and the order is saved, or, with no
+    /// `target` (a sorted shelf), they stay where they were. While their pictures
+    /// glide into place (`gliding`), the tiles stay hidden, then appear.
+    func finishTileMove(at target: Int?, gliding: Bool) {
         guard let tileMove else { return }
         let ids = Set(tileMove.ids)
-        store.move(ids, to: target)
+        if let target {
+            store.move(ids, to: target)
+        }
         endTileMove()
         guard gliding else { return }
         landingItemIDs = ids

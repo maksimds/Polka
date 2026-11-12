@@ -145,6 +145,7 @@ struct NotchView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ShelfGridView(items: model.displayedItems,
+                              groups: model.displayedGroups,
                               isActive: isOpen,
                               missingItemIDs: store.missingItemIDs,
                               copyingItemIDs: store.copyingItemIDs,
@@ -152,6 +153,7 @@ struct NotchView: View {
                               hiddenItemIDs: model.hiddenItemIDs,
                               isMovingTiles: model.tileMove != nil,
                               scrollEdge: model.scrollEdge,
+                              revealItemID: model.itemToReveal,
                               geometry: model.gridGeometry,
                               images: images,
                               dragSource: dragSource,
@@ -182,7 +184,8 @@ struct NotchView: View {
     /// The strip beside the notch, laid out on the tiles' own grid: same columns, same
     /// side inset, and each end held to a picture's width. So "Polka" starts exactly
     /// where the first column's pictures start, and the gear ends exactly where the
-    /// last column's pictures end. The middle columns sit under the notch.
+    /// last column's pictures end. The sort button sits left of the gear, inside the
+    /// same picture's width, well clear of the notch. The middle columns sit under it.
     private var header: some View {
         LazyVGrid(columns: ShelfGridView.columns, spacing: 0) {
             nameLabel
@@ -190,8 +193,13 @@ struct NotchView: View {
             ForEach(0..<3, id: \.self) { _ in
                 Color.clear
             }
-            settingsButton
-                .frame(width: ShelfItemTile.imageSide, alignment: .trailing)
+            // 16 pt apart, so the two 8 pt click areas meet without overlapping.
+            HStack(spacing: 16) {
+                SortMenuButton(sort: store.sort, height: model.notchSize.height) { model.chooseSort($0) }
+                settingsButton
+            }
+            .fixedSize()
+            .frame(width: ShelfItemTile.imageSide, alignment: .trailing)
         }
         .frame(height: model.notchSize.height)
         .padding(.horizontal, Self.sideInset)

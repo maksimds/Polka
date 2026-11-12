@@ -1,8 +1,9 @@
 import Combine
 import Foundation
 
-/// The shelf's contents, in the order they're shown. New items arrive at the front,
-/// and the user can move items anywhere.
+/// The shelf's contents, in the order they're shown. Unsorted, new items arrive at
+/// the front and the user can move items anywhere. Sorted (`sort`), the shelf stays
+/// in that order through every change, like a Finder window with "Sort By" set.
 /// No window or AppKit code lives here, so the logic can be tested on its own.
 @MainActor
 final class ShelfStore: ObservableObject {
@@ -19,6 +20,8 @@ final class ShelfStore: ObservableObject {
     @Published private(set) var missingItemIDs: Set<ShelfItem.ID> = []
     /// File items whose copy is being made right now. Not saved.
     @Published private(set) var copyingItemIDs: Set<ShelfItem.ID> = []
+    /// The order the shelf keeps. Saved by whoever changes it (in UserDefaults), not here.
+    @Published private(set) var sort: ShelfSort
     /// True when a saved shelf existed but couldn't be read, so `items` may be
     /// missing things that are still on disk, such as their copies.
     private(set) var loadFailed = false
@@ -27,11 +30,16 @@ final class ShelfStore: ObservableObject {
     private let now: () -> Date
 
     init(persistence: ShelfPersistence = InMemoryShelfPersistence(),
+         sort: ShelfSort = .none,
          now: @escaping () -> Date = { Date() }) {
         self.persistence = persistence
+        self.sort = sort
         self.now = now
         do {
-            items = try persistence.load().sorted { $0.sortOrder < $1.sortOrder }
+            // Sorted again in case the choice changed while Polka wasn't running. The
+            // new order is saved with the next change.
+            let saved = try persistence.load().sorted { $0.sortOrder < $1.sortOrder }
+            items = Self.numbered(sort.arranged(saved))
         } catch {
             Log.storage.error("Could not load the shelf: \(error.localizedDescription, privacy: .public)")
             items = []
@@ -39,8 +47,9 @@ final class ShelfStore: ObservableObject {
         }
     }
 
-    /// Adds new items to the front, in the order given. Anything already on the shelf
-    /// is left where it is and reported in the result, so the UI can say so.
+    /// Adds new items to the front, in the order given, or to their sorted spots if
+    /// the shelf is sorted. Anything already on the shelf is left where it is and
+    /// reported in the result, so the UI can say so.
     @discardableResult
     func add(_ drafts: [ShelfItem.Draft]) -> AddResult {
         var seen = Set(items.flatMap(\.dedupeKeys))
@@ -63,10 +72,11 @@ final class ShelfStore: ObservableObject {
                                       sortOrder: 0))
         }
 
-        if !newItems.isEmpty {
-            commit(newItems + items)
-        }
-        return AddResult(added: Array(items.prefix(newItems.count)), duplicates: duplicates)
+        guard !newItems.isEmpty else { return AddResult(added: [], duplicates: duplicates) }
+        commit(newItems + items)
+        // Looked up again for their final places: sorted, they may not be at the front.
+        let added = newItems.compactMap { new in items.first { $0.id == new.id } }
+        return AddResult(added: added, duplicates: duplicates)
     }
 
     /// Removes the shelf entry only. The original file is never touched.
@@ -86,11 +96,23 @@ final class ShelfStore: ObservableObject {
 
     /// Moves items to a new place on the shelf, side by side and in the order they
     /// were in, with the first of them at `index` (see `moving(_:to:)`). Saves only
-    /// if the order really changed.
+    /// if the order really changed. A sorted shelf keeps its order, so nothing moves.
     func move(_ ids: Set<ShelfItem.ID>, to index: Int) {
+        guard sort == .none else { return }
         let newItems = items.moving(ids, to: index)
         guard newItems.map(\.id) != items.map(\.id) else { return }
         commit(newItems)
+    }
+
+    /// Changes the order the shelf keeps, and sorts it now. Back on `none`, the tiles
+    /// stay where the last sort put them, as in Finder, and can be moved from there.
+    /// Saves only if the order really changed.
+    func setSort(_ newSort: ShelfSort) {
+        guard newSort != sort else { return }
+        sort = newSort
+        let arranged = newSort.arranged(items)
+        guard arranged.map(\.id) != items.map(\.id) else { return }
+        commit(arranged)
     }
 
     /// Makes an item temporary: it is removed `lifetime` seconds from now.
@@ -223,17 +245,24 @@ final class ShelfStore: ObservableObject {
         commit(newItems)
     }
 
-    /// Publishes a new list, keeping each item's `sortOrder` equal to its position.
+    /// Publishes a new list, sorted if the shelf is, and keeping each item's
+    /// `sortOrder` equal to its position. Every change comes through here, so a
+    /// sorted shelf stays sorted whatever changed: a new item, a renamed file, or a
+    /// link whose site name just arrived.
     private func commit(_ newItems: [ShelfItem]) {
-        items = newItems.enumerated().map { index, item in
-            var item = item
-            item.sortOrder = index
-            return item
-        }
+        items = Self.numbered(sort.arranged(newItems))
         do {
             try persistence.save(items)
         } catch {
             Log.storage.error("Could not save the shelf: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    private static func numbered(_ items: [ShelfItem]) -> [ShelfItem] {
+        items.enumerated().map { index, item in
+            var item = item
+            item.sortOrder = index
+            return item
         }
     }
 }

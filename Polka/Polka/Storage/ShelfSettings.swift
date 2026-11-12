@@ -78,6 +78,17 @@ struct ShelfSettings {
         get { defaults.string(forKey: Self.hoverAreaKey).flatMap(HoverArea.init(rawValue:)) ?? Self.defaultHoverArea }
         nonmutating set { defaults.set(newValue.rawValue, forKey: Self.hoverAreaKey) }
     }
+
+    // MARK: - Sorting
+
+    static let shelfSortKey = "shelfSort"
+
+    /// The "Sort By" choice from the header's sort menu. Nothing stored, or a value
+    /// Polka doesn't know, means `none`.
+    var shelfSort: ShelfSort {
+        get { defaults.string(forKey: Self.shelfSortKey).flatMap(ShelfSort.init(rawValue:)) ?? .none }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: Self.shelfSortKey) }
+    }
 }
 
 /// The hover area setting. The sizes in points are in `NotchGeometry`.

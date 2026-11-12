@@ -96,7 +96,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func makeStore(locations: ShelfLocations?) -> ShelfStore {
-        guard let locations else { return ShelfStore() }
-        return ShelfStore(persistence: JSONFileShelfPersistence(fileURL: locations.shelfFile))
+        let sort = ShelfSettings().shelfSort
+        guard let locations else { return ShelfStore(sort: sort) }
+        return ShelfStore(persistence: JSONFileShelfPersistence(fileURL: locations.shelfFile), sort: sort)
     }
 }

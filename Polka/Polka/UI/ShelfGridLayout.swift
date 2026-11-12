@@ -46,6 +46,145 @@ struct ShelfGridLayout: Equatable {
         let row = Int(((point.y + Self.spacing / 2) / rowPitch).rounded(.down))
         return max(row, 0) * Self.columnCount + min(max(column, 0), Self.columnCount - 1)
     }
+
+    // MARK: - Groups
+
+    /// A group's title row, in the orders that group tiles (Kind, File Type).
+    static let headerHeight: CGFloat = 20
+    /// From a title to its group's first row. Small, since a tile already has room
+    /// above its picture.
+    static let headerSpacing: CGFloat = 2
+    /// From a group's last row to the next group's title.
+    static let groupSpacing: CGFloat = 10
+
+    /// What a row of the grid starts with: a group's title, or a tile (by index).
+    enum RowStart: Equatable {
+        case header(Int)
+        case tile(Int)
+    }
+
+    struct Row: Equatable {
+        let start: RowStart
+        let minY: CGFloat
+    }
+
+    /// Where everything goes, from the grid's top left.
+    struct Placement: Equatable {
+        var headers: [CGRect] = []
+        var tiles: [CGRect] = []
+        /// Every row from the top, for scrolling one to the top of the visible area.
+        var rows: [Row] = []
+        var height: CGFloat = 0
+    }
+
+    /// A title starts where the first column's pictures start, and its line ends
+    /// where the last column's pictures end, like the panel's header strip.
+    private var headerInset: CGFloat {
+        max((columnWidth - ShelfItemTile.imageSide) / 2, 0)
+    }
+
+    /// Lays out `tileCount` tiles. `groups` is how many tiles each titled group has,
+    /// in order: each group starts a new row, under its title. Empty means one plain
+    /// grid with no titles, in the same spots as `frame(ofSlot:)`.
+    func placement(tileCount: Int, groups: [Int]) -> Placement {
+        let titled = !groups.isEmpty && groups.reduce(0, +) == tileCount
+        var placement = Placement()
+        var y: CGFloat = 0
+        var firstTile = 0
+        for (group, count) in (titled ? groups : [tileCount]).enumerated() {
+            if titled {
+                if group > 0 { y += Self.groupSpacing }
+                placement.rows.append(Row(start: .header(group), minY: y))
+                placement.headers.append(CGRect(x: headerInset, y: y,
+                                                width: max(width - 2 * headerInset, 0),
+                                                height: Self.headerHeight))
+                y += Self.headerHeight + Self.headerSpacing
+            }
+            let rowCount = (count + Self.columnCount - 1) / Self.columnCount
+            for row in 0..<rowCount {
+                if row > 0 { y += Self.spacing }
+                let rowStart = firstTile + row * Self.columnCount
+                placement.rows.append(Row(start: .tile(rowStart), minY: y))
+                for column in 0..<min(Self.columnCount, firstTile + count - rowStart) {
+                    placement.tiles.append(CGRect(x: CGFloat(column) * columnPitch, y: y,
+                                                  width: columnWidth, height: Self.rowHeight))
+                }
+                y += Self.rowHeight
+            }
+            firstTile += count
+        }
+        placement.height = y
+        return placement
+    }
+}
+
+// MARK: - The grid's layout
+
+/// What one view in the grid is: a group's title or a tile. The layout reads it to
+/// know where each view goes.
+enum ShelfGridEntry: Hashable {
+    case header(String)
+    case tile(ShelfItem.ID)
+}
+
+struct ShelfGridEntryKey: LayoutValueKey {
+    static let defaultValue: ShelfGridEntry? = nil
+}
+
+/// Places the shelf's titles and tiles where `ShelfGridLayout.placement` says, so
+/// what's drawn always matches the numbers that moving tiles and landing pictures
+/// are worked out from. Each view says what it is with `ShelfGridEntryKey`.
+///
+/// One layout for every order, with and without groups, so a tile stays the same
+/// view when the sort changes and slides to its new spot instead of being rebuilt.
+/// Unlike `LazyVGrid`, it makes every tile up front; the shelf is built once and
+/// stays built anyway.
+struct ShelfGridArrangement: Layout {
+    let groups: [ShelfGroup]
+    let tileIDs: [ShelfItem.ID]
+
+    /// Where each view went last time. A view on its way out (a removed tile or a
+    /// title that's no longer needed) has no new spot, so it fades out where it was.
+    struct Cache {
+        var lastFrames: [ShelfGridEntry: CGRect] = [:]
+    }
+
+    func makeCache(subviews: Subviews) -> Cache {
+        Cache()
+    }
+
+    /// Kept as it is when views come and go, which is exactly when the old spots matter.
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {}
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
+        let width = proposal.replacingUnspecifiedDimensions().width
+        return CGSize(width: width, height: placement(width: width).height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        let placement = placement(width: bounds.width)
+        var frames: [ShelfGridEntry: CGRect] = [:]
+        for (index, group) in groups.enumerated() where placement.headers.indices.contains(index) {
+            frames[.header(group.title)] = placement.headers[index]
+        }
+        for (index, id) in tileIDs.enumerated() where placement.tiles.indices.contains(index) {
+            frames[.tile(id)] = placement.tiles[index]
+        }
+        var placed: [ShelfGridEntry: CGRect] = [:]
+        for subview in subviews {
+            guard let entry = subview[ShelfGridEntryKey.self],
+                  let frame = frames[entry] ?? cache.lastFrames[entry] else { continue }
+            placed[entry] = frame
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                          anchor: .topLeading,
+                          proposal: ProposedViewSize(frame.size))
+        }
+        cache.lastFrames = placed
+    }
+
+    private func placement(width: CGFloat) -> ShelfGridLayout.Placement {
+        ShelfGridLayout(width: width).placement(tileCount: tileIDs.count, groups: groups.map(\.count))
+    }
 }
 
 /// Where the grid is in the panel, kept up to date by the grid as it lays out and
@@ -79,10 +218,21 @@ final class ShelfGridGeometry {
         return layout.slot(at: CGPoint(x: inside.x - content.minX, y: inside.y - content.minY))
     }
 
-    /// Where the picture of the tile in spot `index` is, in the panel.
+    /// Where the picture of the tile in spot `index` is, in the panel, on a grid
+    /// without groups.
     func pictureFrame(ofSlot index: Int) -> CGRect {
-        let slot = layout.frame(ofSlot: index)
-        return pictureInSlot.offsetBy(dx: content.minX + slot.minX, dy: content.minY + slot.minY)
+        picture(in: layout.frame(ofSlot: index))
+    }
+
+    /// Where the picture of tile `index` is, in the panel, laid out as `placement`
+    /// says, groups and all. Nil if there's no such tile.
+    func pictureFrame(ofTile index: Int, in placement: ShelfGridLayout.Placement) -> CGRect? {
+        guard placement.tiles.indices.contains(index) else { return nil }
+        return picture(in: placement.tiles[index])
+    }
+
+    private func picture(in slot: CGRect) -> CGRect {
+        pictureInSlot.offsetBy(dx: content.minX + slot.minX, dy: content.minY + slot.minY)
     }
 
     /// Which way the grid should scroll with the pointer at `point`: toward the edge
