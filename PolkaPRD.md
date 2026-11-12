@@ -14,7 +14,7 @@ Moving files and links between apps means digging through Finder windows, browse
 | G2 | Drag in from anywhere | Works from Finder, browsers and other apps with no setup |
 | G3 | Drag out anywhere | Items drop into any app that accepts files or links |
 | G4 | Keep or expire | Each item is permanent or temporary, my choice |
-| G5 | Stay out of the way | No Dock icon, no focus stealing, no accidental opens |
+| G5 | Stay out of the way | No focus stealing, no accidental opens |
 
 This is a personal tool for one user (me) on one MacBook with a notch, kept in a private GitHub repo.
 
@@ -45,7 +45,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-9 | Double-clicking an item opens the file in its default app or the link in the default browser | P1 |
 | FR-10 | Multi-select, by clicking or by dragging a selection rectangle over free space as on the desktop, and drag several items out at once | P1 |
 | FR-11 | The panel collapses when the pointer leaves, and never while a drag is active over it | P0 |
-| FR-12 | The app runs as a menu bar agent with no Dock icon, a settings window and launch at login | P1 |
+| FR-12 | The app has a menu bar item, a Dock icon, a settings window and launch at login | P1 |
 | FR-13 | Items persist across app restarts and reboots | P0 |
 | FR-14 | The panel behaves correctly on non-notch displays by showing a top-center pill | P2 |
 | FR-15 | Broken references (moved or deleted originals) are shown as unavailable, not silently dropped | P1 |
@@ -68,7 +68,7 @@ Polka is a native Swift and SwiftUI app with AppKit underneath for window and dr
 | Drag and drop | Panel as drop target and as drag source | `NSDraggingDestination`, `NSDraggingSource`, `NSItemProvider` |
 | UI | Collapsed and expanded states, item grid, animation | SwiftUI, spring animations |
 | Storage | Item model, persistence, expiry sweep | JSON file, `FileManager`, security-scoped bookmarks if needed |
-| App shell | Menu bar item, settings, launch at login | `MenuBarExtra`, `SMAppService`, `LSUIElement` |
+| App shell | Menu bar item, Dock icon, settings, launch at login | `MenuBarExtra`, `SMAppService` |
 
 Key decisions:
 

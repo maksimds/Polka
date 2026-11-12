@@ -4,9 +4,9 @@ import SwiftUI
 /// The Settings window, opened from the menu bar menu or the gear in the panel.
 ///
 /// It's a plain AppKit window rather than a SwiftUI `Settings` scene so that Polka
-/// controls how it comes forward and goes away. Polka has no Dock icon and is almost
-/// never the active app, and a window from an inactive app opens behind the app
-/// you're in, where it can't take keystrokes.
+/// controls how it comes forward and goes away. Polka is almost never the active app
+/// (its panel never takes focus), and a window from an inactive app opens behind the
+/// app you're in, where it can't take keystrokes.
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let loginItem: LoginItem
@@ -78,8 +78,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 }
 
-/// An agent app's menu bar never shows and may not have a Close item, so the window
-/// handles Cmd-W itself.
+/// Polka's menu bar has no File menu, so no Close item, and the window handles
+/// Cmd-W itself.
 private final class SettingsWindow: NSWindow {
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
