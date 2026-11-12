@@ -47,14 +47,20 @@ final class TileDragView: NSView {
     /// How far the pointer has to move before a press counts as a drag.
     private let dragThreshold: CGFloat = 4
 
+    /// True while the grid this tile is in scrolls, from the swipe until it comes to
+    /// rest, momentum included.
+    private var isScrolling = false
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         addHoverTracking()
+        observeScrolling()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         addHoverTracking()
+        observeScrolling()
     }
 
     private func addHoverTracking() {
@@ -64,11 +70,50 @@ final class TileDragView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        // While the grid scrolls, tiles slide under a pointer that isn't moving. That
+        // isn't hovering, so they don't light up as they pass, as in Finder.
+        guard !isScrolling else { return }
         onHoverChanged?(true)
     }
 
     override func mouseExited(with event: NSEvent) {
         onHoverChanged?(false)
+    }
+
+    // MARK: - Scrolling
+
+    /// A trackpad scroll is a "live scroll": the scroll view says when it starts and
+    /// when it has come to rest. (A mouse wheel's clicks aren't, so tiles still light
+    /// up under one.) Selector-based observers go away with the view on their own.
+    private func observeScrolling() {
+        let center = NotificationCenter.default
+        center.addObserver(self, selector: #selector(liveScrollStarted(_:)),
+                           name: NSScrollView.willStartLiveScrollNotification, object: nil)
+        center.addObserver(self, selector: #selector(liveScrollEnded(_:)),
+                           name: NSScrollView.didEndLiveScrollNotification, object: nil)
+    }
+
+    @objc private func liveScrollStarted(_ notification: Notification) {
+        // Every scroll view in Polka posts these, Settings' form too. Only the grid's count.
+        guard let scrollView = notification.object as? NSScrollView, isDescendant(of: scrollView) else { return }
+        isScrolling = true
+    }
+
+    /// Any scroll ending clears it, since only one can run at a time, so a tile can't
+    /// be left thinking the grid still scrolls.
+    @objc private func liveScrollEnded(_ notification: Notification) {
+        guard isScrolling else { return }
+        isScrolling = false
+        // A tile that came to rest under the pointer had its arrival ignored, and
+        // AppKit won't report it again, so check for it now.
+        if isPointerInside {
+            onHoverChanged?(true)
+        }
+    }
+
+    private var isPointerInside: Bool {
+        guard let window else { return false }
+        return visibleRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
     }
 
     /// AppKit asks this to find which view gets a press, a right-click or a scroll.

@@ -151,12 +151,15 @@ struct ShelfItemTile: View {
                                 onDoubleClick: onOpen,
                                 dragContents: dragContents)
         }
+        // Always built, and only shown while hovered. Making and throwing away a Button
+        // each time the pointer crosses a tile also makes SwiftUI redo the panel's focus
+        // order, which is slow enough to drop frames while tiles scroll past the pointer.
         .overlay(alignment: .topTrailing) {
-            if isHovering {
-                deleteButton
-                    .padding(.trailing, 6)
-                    .transition(.opacity)
-            }
+            deleteButton
+                .padding(.trailing, 6)
+                .opacity(isHovering ? 1 : 0)
+                .allowsHitTesting(isHovering)
+                .accessibilityHidden(!isHovering)
         }
         // Lifting out is instant, since the picture is already under the pointer.
         // Coming back is a quick fade, so it doesn't pop in.
