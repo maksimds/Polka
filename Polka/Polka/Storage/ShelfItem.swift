@@ -31,7 +31,8 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     /// What a link's preview fetch found (FR-6): the name the site gives itself and its icon.
     struct LinkPreview: Codable, Equatable {
         /// Raised whenever what a preview holds changes, so older ones are fetched again.
-        static let currentVersion = 2
+        /// 3: icons are also looked for in the page's own icon tags.
+        static let currentVersion = 3
 
         /// When the fetch finished, whether or not it found anything.
         var fetchedAt: Date

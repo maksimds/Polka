@@ -56,7 +56,7 @@ enum LinkNaming {
 
     /// The handful of HTML entities that show up in site names. `&amp;` goes last so
     /// "&amp;lt;" becomes "&lt;" rather than "<".
-    private static func decodingEntities(_ text: String) -> String {
+    static func decodingEntities(_ text: String) -> String {
         let entities = [("&quot;", "\""), ("&#39;", "'"), ("&#x27;", "'"), ("&apos;", "'"),
                         ("&lt;", "<"), ("&gt;", ">"), ("&nbsp;", " "), ("&amp;", "&")]
         return entities.reduce(text) { result, entity in

@@ -160,6 +160,9 @@ final class NotchViewModel: ObservableObject {
     /// `receivePromisedFiles` once the app that promised them has written them.
     func handleDrop(_ items: [DroppedItem]) {
         add(items.compactMap(ShelfItem.Draft.init))
+        if let message = Self.notAWebLinkMessage(refused: items.filter(\.isRefusedLink).count) {
+            notice = message
+        }
         state = .expanded
     }
 
@@ -636,6 +639,15 @@ final class NotchViewModel: ObservableObject {
         default: return "\(duplicates.count) items are already on the shelf"
         }
     }
+
+    /// For dropped addresses that aren't web links, which are never stored.
+    private static func notAWebLinkMessage(refused count: Int) -> String? {
+        switch count {
+        case 0: return nil
+        case 1: return "That link isn't a web address, so it wasn't added"
+        default: return "\(count) links aren't web addresses, so they weren't added"
+        }
+    }
 }
 
 private extension ShelfItem.Draft {
@@ -643,7 +655,7 @@ private extension ShelfItem.Draft {
         switch dropped {
         case .file(let url): self.init(fileURL: url)
         case .link(let url): self.init(linkURL: url)
-        case .promise: return nil
+        case .promise, .refusedLink: return nil
         }
     }
 }

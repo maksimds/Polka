@@ -34,4 +34,15 @@ enum LinkInput {
         }
         return components.url
     }
+
+    /// True for an http or https address with a host: the only links Polka stores,
+    /// opens or looks up, typed or dropped. Any other address (`smb:`, `vnc:`, an
+    /// app's own scheme) would be handed to whatever app handles it, without the
+    /// "Allow this page to open…?" question a browser asks first.
+    static func isWebAddress(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              let host = url.host, !host.isEmpty else { return false }
+        return true
+    }
 }
