@@ -24,6 +24,9 @@ struct NotchView: View {
     /// Space between the panel's sides and the tiles, also used by the header and
     /// the link field.
     static let sideInset: CGFloat = 16
+    /// How far below the notch's middle the header strip's title and symbols sit,
+    /// also used by the link field's header, which takes their place.
+    static let headerDrop: CGFloat = 2
     /// Space between the notch and the drop zone's eyes.
     private static let eyesTopGap: CGFloat = 9.9
     /// Space between the eyes and the dashed box below them.
@@ -216,6 +219,8 @@ struct NotchView: View {
             .frame(width: ShelfItemTile.imageSide, alignment: .trailing)
         }
         .frame(height: model.notchSize.height)
+        // A touch below the notch's middle, which sat a little high next to the tiles.
+        .offset(y: Self.headerDrop)
         .padding(.horizontal, Self.sideInset)
     }
 

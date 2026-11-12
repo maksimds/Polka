@@ -68,6 +68,14 @@ struct ShelfGridView: View {
     /// in it, and the selection rectangle is drawn in it.
     static let viewportSpace = "ShelfGridViewport"
 
+    /// Room above the first row. A tall picture's remove badge rises a little above
+    /// its tile, and with nothing above the first row (no group title), the scroll
+    /// view's top edge cut it off. Two rows still fit without scrolling.
+    static let topInset: CGFloat = 6
+
+    /// The grid's content, room above the first row included, for scrolling to the top.
+    private static let topID = "ShelfGridTop"
+
     /// A tile grows in when added and shrinks away when removed, while the others
     /// slide into place. Reduce Motion gets a fade.
     private var tileTransition: AnyTransition {
@@ -128,6 +136,8 @@ struct ShelfGridView: View {
                     .animation(reflowAnimation, value: items.map(\.id))
                     // A change of groups alone, such as Kind to File Type, slides too.
                     .animation(reflowAnimation, value: groups)
+                    // Outside the measured grid, so the spot math is unchanged.
+                    .padding(.top, Self.topInset)
                     // At least as tall as the visible area, so a click or drag anywhere
                     // around the tiles reaches the gestures below. Presses on a tile's
                     // picture or name never get here: its AppKit layer takes them first.
@@ -135,6 +145,8 @@ struct ShelfGridView: View {
                     .contentShape(Rectangle())
                     .onTapGesture(perform: onClearSelection)
                     .simultaneousGesture(marqueeGesture(within: CGRect(origin: .zero, size: proxy.size)))
+                    // To scroll all the way up, room above the first row included.
+                    .id(Self.topID)
                 }
                 .coordinateSpace(.named(Self.viewportSpace))
                 .onGeometryChange(for: CGRect.self) { proxy in
@@ -182,6 +194,11 @@ struct ShelfGridView: View {
             let lowestTop = placement.tiles[index].maxY - geometry.viewport.height
             row = placement.rows.first { $0.minY >= lowestTop - 0.5 } ?? firstRow
         }
+        // The first row goes back to the very top, keeping the room above it.
+        if row == firstRow {
+            scroller.scrollTo(Self.topID, anchor: .top)
+            return
+        }
         switch row.start {
         case .header(let group):
             scroller.scrollTo(groups[group].title, anchor: .top)
@@ -200,7 +217,12 @@ struct ShelfGridView: View {
         let lastRow = (items.count - 1) / ShelfGridLayout.columnCount
         let row = min(max(edge == .top ? topRow - 1 : topRow + 1, 0), lastRow)
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
-            scroller.scrollTo(items[row * ShelfGridLayout.columnCount].id, anchor: .top)
+            // The first row goes back to the very top, keeping the room above it.
+            if row == 0 {
+                scroller.scrollTo(Self.topID, anchor: .top)
+            } else {
+                scroller.scrollTo(items[row * ShelfGridLayout.columnCount].id, anchor: .top)
+            }
         }
     }
 

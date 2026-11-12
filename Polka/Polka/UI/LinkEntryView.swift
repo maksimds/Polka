@@ -47,6 +47,8 @@ struct LinkEntryView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
                 .frame(height: headerHeight)
+                // Where the shelf's title and gear sit, so nothing jumps between the two.
+                .offset(y: NotchView.headerDrop)
             field
                 .padding(.top, Self.topGap)
             messageLine
