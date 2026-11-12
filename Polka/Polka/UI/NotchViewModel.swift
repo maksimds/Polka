@@ -47,6 +47,27 @@ final class NotchViewModel: ObservableObject {
     /// even if the panel collapses and reopens in between.
     @Published private(set) var notice: String?
 
+    /// A drag of the shelf's own tiles that's under way.
+    struct TileMove: Equatable {
+        /// What's being moved, in the drag's order: the pressed tile first.
+        let ids: [ShelfItem.ID]
+        /// Where they'd land if dropped now: the spot of the first of them, counted
+        /// among the tiles that stay. Nil until the pointer has settled on a spot, and
+        /// after it leaves the panel; the tiles' old places then show as gaps.
+        var target: Int?
+        /// False for a missing file, which can only be moved around the shelf.
+        let canLeaveShelf: Bool
+    }
+
+    /// Set from the moment a tile drag starts until it ends.
+    @Published private(set) var tileMove: TileMove?
+    /// Tiles just dropped, hidden while their pictures glide into place.
+    @Published private(set) var landingItemIDs: Set<ShelfItem.ID> = []
+    /// The edge the grid scrolls toward, one row at a time, while a tile is held near it.
+    @Published private(set) var scrollEdge: VerticalEdge?
+    /// Kept up to date by the grid, and read to find the spot under the pointer.
+    let gridGeometry = ShelfGridGeometry()
+
     /// Fits two rows of tiles; more than that scrolls.
     let expandedSize = CGSize(width: 520, height: 270)
 
@@ -54,13 +75,23 @@ final class NotchViewModel: ObservableObject {
     /// Nil when Polka has no folder of its own to keep copies in.
     private let copies: CopyKeeper?
     private let temporaryLifetime: () -> TimeInterval
+    /// How long the pointer rests on a spot before the other tiles make room.
+    private let moveSettleDelay: Duration
+    /// About how long AppKit takes to glide a dropped picture into place.
+    private let landingTime: Duration = .milliseconds(220)
+    /// The spot under the pointer, waiting out `moveSettleDelay`.
+    private var pendingTarget: Int?
+    private var settleTask: Task<Void, Never>?
+    private var landingTask: Task<Void, Never>?
 
     init(store: ShelfStore,
          copies: CopyKeeper? = nil,
-         temporaryLifetime: @escaping () -> TimeInterval = { ShelfSettings().temporaryLifetime }) {
+         temporaryLifetime: @escaping () -> TimeInterval = { ShelfSettings().temporaryLifetime },
+         moveSettleDelay: Duration = .milliseconds(150)) {
         self.store = store
         self.copies = copies
         self.temporaryLifetime = temporaryLifetime
+        self.moveSettleDelay = moveSettleDelay
     }
 
     var canKeepCopies: Bool {
@@ -193,14 +224,21 @@ final class NotchViewModel: ObservableObject {
     /// What a drag that starts on `id` carries: that item first, then every other
     /// selected item, in shelf order. Items whose file is missing stay behind.
     /// Like in Finder, dragging an item that isn't selected selects it alone.
-    func itemsToDrag(from id: ShelfItem.ID) -> [ShelfItem] {
+    ///
+    /// A drag that starts on a missing file carries just that one, and only around
+    /// the shelf, since there's no file to hand to another app.
+    func dragContents(from id: ShelfItem.ID) -> ShelfDragContents {
         if !selection.contains(id) {
             click(id, .only)
+        }
+        if store.missingItemIDs.contains(id) {
+            return ShelfDragContents(items: store.items.filter { $0.id == id }, staysOnShelf: true)
         }
         let draggable = store.items.filter {
             selection.contains($0.id) && !store.missingItemIDs.contains($0.id)
         }
-        return draggable.filter { $0.id == id } + draggable.filter { $0.id != id }
+        return ShelfDragContents(items: draggable.filter { $0.id == id } + draggable.filter { $0.id != id },
+                                 staysOnShelf: false)
     }
 
     // MARK: - Opening and inspecting
@@ -240,9 +278,12 @@ final class NotchViewModel: ObservableObject {
     // MARK: - Drag out
 
     /// Shrinks the panel once a drag leaves it, so it doesn't cover what's underneath.
-    /// It stays shrunk if the pointer comes back, until the drag is over.
+    /// It stays shrunk if the pointer comes back, until the drag is over. A missing
+    /// file can't go anywhere else, so for it the panel stays open to come back to.
     func dragOutMoved(isInsidePanel: Bool) {
+        guard tileMove?.canLeaveShelf != false else { return }
         if state == .expanded, !isInsidePanel {
+            tileMoveLeft()
             state = .draggingOut
         }
     }
@@ -250,6 +291,135 @@ final class NotchViewModel: ObservableObject {
     func dragOutEnded() {
         if state == .draggingOut {
             state = .collapsed
+        }
+    }
+
+    // MARK: - Moving tiles
+
+    /// The tiles in the order to show them: the shelf's own order, or, while tiles are
+    /// being moved, the order they'd have if dropped now.
+    var displayedItems: [ShelfItem] {
+        guard let tileMove, let target = tileMove.target else { return store.items }
+        return store.items.moving(Set(tileMove.ids), to: target)
+    }
+
+    /// Tiles drawn as empty gaps: the ones being moved, whose pictures are under the
+    /// pointer, and the ones just dropped, whose pictures are still gliding into place.
+    var hiddenItemIDs: Set<ShelfItem.ID> {
+        landingItemIDs.union(tileMove?.ids ?? [])
+    }
+
+    /// A drag of tiles has started. Whether it ends in another app or back on the
+    /// shelf isn't known yet, so the tiles lift out of the grid either way.
+    func beginTileMove(_ contents: ShelfDragContents) {
+        endTileMove()
+        finishLanding()
+        tileMove = TileMove(ids: contents.items.map(\.id), target: nil, canLeaveShelf: !contents.staysOnShelf)
+    }
+
+    /// The pointer is over the panel with the tiles, at `point` in the panel's
+    /// coordinates. AppKit keeps calling this while the pointer holds still too.
+    ///
+    /// The other tiles make room only once the pointer has rested on a spot for
+    /// `moveSettleDelay`, as on iPhone, so sweeping across the grid on the way
+    /// somewhere doesn't shuffle every tile it passes.
+    func tileMoved(to point: CGPoint) {
+        guard let tileMove else { return }
+        let edge = gridGeometry.scrollEdge(at: point)
+        if edge != scrollEdge {
+            scrollEdge = edge
+        }
+        let target = target(at: point, moving: tileMove.ids.count)
+        guard target != pendingTarget else { return }
+        pendingTarget = target
+        settleTask?.cancel()
+        settleTask = nil
+        guard target != tileMove.target else { return }
+        if moveSettleDelay == .zero {
+            applyTarget(target)
+            return
+        }
+        settleTask = Task { [weak self, moveSettleDelay] in
+            try? await Task.sleep(for: moveSettleDelay)
+            guard !Task.isCancelled else { return }
+            self?.applyTarget(target)
+        }
+    }
+
+    /// The pointer left the panel, so the tiles go back to their old places.
+    func tileMoveLeft() {
+        cancelSettle()
+        if tileMove?.target != nil {
+            tileMove?.target = nil
+        }
+        if scrollEdge != nil {
+            scrollEdge = nil
+        }
+    }
+
+    /// Where tiles dropped at `point` would go, and where each picture would end up,
+    /// in the drag's order. AppKit asks during the drop, so this changes nothing. The
+    /// spot is the one under the pointer, even if the tiles haven't made room yet.
+    func tileDrop(at point: CGPoint) -> TileDrop? {
+        guard let tileMove else { return nil }
+        let target = target(at: point, moving: tileMove.ids.count)
+        let landed = store.items.moving(Set(tileMove.ids), to: target).map(\.id)
+        let frames = tileMove.ids.compactMap { id in
+            landed.firstIndex(of: id).map(gridGeometry.pictureFrame(ofSlot:))
+        }
+        return TileDrop(target: target, landingFrames: frames.count == tileMove.ids.count ? frames : [])
+    }
+
+    /// The drop: the tiles take their new places and the order is saved. While their
+    /// pictures glide into place (`gliding`), the tiles stay hidden, then appear.
+    func finishTileMove(at target: Int, gliding: Bool) {
+        guard let tileMove else { return }
+        let ids = Set(tileMove.ids)
+        store.move(ids, to: target)
+        endTileMove()
+        guard gliding else { return }
+        landingItemIDs = ids
+        landingTask = Task { [weak self, landingTime] in
+            try? await Task.sleep(for: landingTime)
+            guard !Task.isCancelled else { return }
+            self?.finishLanding()
+        }
+    }
+
+    /// The drag is over, however it ended. Tiles that didn't land on the shelf show
+    /// again in their old places.
+    func endTileMove() {
+        cancelSettle()
+        if tileMove != nil {
+            tileMove = nil
+        }
+        if scrollEdge != nil {
+            scrollEdge = nil
+        }
+    }
+
+    /// Where the first moved tile would land with the pointer at `point`. Past the
+    /// last tile counts as the end.
+    private func target(at point: CGPoint, moving count: Int) -> Int {
+        min(gridGeometry.slot(at: point), max(store.items.count - count, 0))
+    }
+
+    private func applyTarget(_ target: Int) {
+        settleTask = nil
+        tileMove?.target = target
+    }
+
+    private func cancelSettle() {
+        settleTask?.cancel()
+        settleTask = nil
+        pendingTarget = nil
+    }
+
+    private func finishLanding() {
+        landingTask?.cancel()
+        landingTask = nil
+        if !landingItemIDs.isEmpty {
+            landingItemIDs = []
         }
     }
 

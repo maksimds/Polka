@@ -81,6 +81,19 @@ final class NotchPanelController {
             self?.model.handleDrop(items)
             self?.dragMonitor.endDrag()
         }
+        // The shelf's own tiles, dragged to a new place on it.
+        dropView.onTileMoved = { [weak self] point in
+            self?.model.tileMoved(to: point)
+        }
+        dropView.onTileExited = { [weak self] in
+            self?.model.tileMoveLeft()
+        }
+        dropView.tileDrop = { [weak self] point in
+            self?.model.tileDrop(at: point)
+        }
+        dropView.onTileDropped = { [weak self] drop, gliding in
+            self?.model.finishTileMove(at: drop.target, gliding: gliding)
+        }
         dropView.embed(hostingView)
         panel.contentView = dropView
         self.panel = panel
@@ -413,8 +426,11 @@ final class NotchPanelController {
     }
 
     private func startDragSource() {
-        dragSource.onWillStart = { [weak self] in
+        // Every tile drag lifts the tiles out of the grid. A drop back on the shelf
+        // moves them; a drop anywhere else leaves them where they were.
+        dragSource.onWillStart = { [weak self] contents in
             self?.dragMonitor.beginOwnDrag()
+            self?.model.beginTileMove(contents)
         }
         dragSource.onMoved = { [weak self] point in
             guard let self, let geometry = self.geometry else { return }
@@ -423,6 +439,8 @@ final class NotchPanelController {
         }
         dragSource.onEnded = { [weak self] in
             self?.dragMonitor.endOwnDrag()
+            // A drop on the shelf has already moved the tiles by now.
+            self?.model.endTileMove()
             self?.model.dragOutEnded()
             // No mouse-moved events arrive during a drag, so check where the pointer ended up.
             self?.pointerMoved()

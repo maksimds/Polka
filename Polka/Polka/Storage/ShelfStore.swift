@@ -1,7 +1,8 @@
 import Combine
 import Foundation
 
-/// The shelf's contents, newest first.
+/// The shelf's contents, in the order they're shown. New items arrive at the front,
+/// and the user can move items anywhere.
 /// No window or AppKit code lives here, so the logic can be tested on its own.
 @MainActor
 final class ShelfStore: ObservableObject {
@@ -81,6 +82,15 @@ final class ShelfStore: ObservableObject {
     func remove(ids: Set<ShelfItem.ID>) {
         guard items.contains(where: { ids.contains($0.id) }) else { return }
         commit(items.filter { !ids.contains($0.id) })
+    }
+
+    /// Moves items to a new place on the shelf, side by side and in the order they
+    /// were in, with the first of them at `index` (see `moving(_:to:)`). Saves only
+    /// if the order really changed.
+    func move(_ ids: Set<ShelfItem.ID>, to index: Int) {
+        let newItems = items.moving(ids, to: index)
+        guard newItems.map(\.id) != items.map(\.id) else { return }
+        commit(newItems)
     }
 
     /// Makes an item temporary: it is removed `lifetime` seconds from now.

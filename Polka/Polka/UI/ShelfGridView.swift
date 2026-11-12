@@ -11,7 +11,9 @@ struct ShelfItemCommands {
     let showInfo: @MainActor (ShelfItem.ID) -> Void
 }
 
-/// The shelf's items as a scrolling grid, newest first.
+/// The shelf's items as a scrolling grid, in the shelf's order. New items arrive at
+/// the top left. While tiles are being moved, `items` is the order they'd have if
+/// dropped now, so the others slide aside to make room.
 struct ShelfGridView: View {
     let items: [ShelfItem]
     /// False while the panel is closed or a drag out is running; the grid stays built.
@@ -19,11 +21,19 @@ struct ShelfGridView: View {
     let missingItemIDs: Set<ShelfItem.ID>
     let copyingItemIDs: Set<ShelfItem.ID>
     let selection: Set<ShelfItem.ID>
+    /// Tiles shown as empty gaps: being moved, or just dropped and still landing.
+    let hiddenItemIDs: Set<ShelfItem.ID>
+    /// True while tiles are being moved around the shelf.
+    let isMovingTiles: Bool
+    /// The edge to scroll toward, a row at a time, while a tile is held near it.
+    let scrollEdge: VerticalEdge?
+    /// Where the grid is, kept up to date here for finding the spot under the pointer.
+    let geometry: ShelfGridGeometry
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
     let onClick: @MainActor (ShelfItem.ID, SelectionClick) -> Void
     let onClearSelection: @MainActor () -> Void
-    let itemsToDrag: @MainActor (ShelfItem.ID) -> [ShelfItem]
+    let dragContents: @MainActor (ShelfItem.ID) -> ShelfDragContents
     let onDelete: @MainActor (ShelfItem.ID) -> Void
     let onRemoveFromMenu: @MainActor (ShelfItem.ID) -> Void
     let onToggleTemporary: @MainActor (ShelfItem.ID) -> Void
@@ -43,9 +53,10 @@ struct ShelfGridView: View {
     /// Where the current rectangle started, to tell a new rectangle from one that moved.
     @State private var marqueeStart: CGPoint?
 
-    /// Five equal columns. Shared with the panel's header, which lines its name and
-    /// gear up with the tiles.
-    static let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 5)
+    /// Five equal columns (see `ShelfGridLayout`). Shared with the panel's header,
+    /// which lines its name and gear up with the tiles.
+    static let columns = Array(repeating: GridItem(.flexible(), spacing: ShelfGridLayout.spacing),
+                               count: ShelfGridLayout.columnCount)
 
     /// The grid's visible area, the same while it scrolls. Tiles report where they are
     /// in it, and the selection rectangle is drawn in it.
@@ -57,25 +68,31 @@ struct ShelfGridView: View {
         reduceMotion ? .opacity : .scale(scale: 0.8).combined(with: .opacity)
     }
 
-    private var reflowAnimation: Animation {
-        reduceMotion ? .easeInOut(duration: 0.2) : .snappy(duration: 0.28)
+    /// With Reduce Motion, tiles making room for a moved one jump to their places
+    /// instead of sliding there.
+    private var reflowAnimation: Animation? {
+        if reduceMotion {
+            return isMovingTiles ? nil : .easeInOut(duration: 0.2)
+        }
+        return .snappy(duration: 0.28)
     }
 
     var body: some View {
         GeometryReader { proxy in
             ScrollViewReader { scroller in
                 ScrollView {
-                    LazyVGrid(columns: Self.columns, spacing: 8) {
+                    LazyVGrid(columns: Self.columns, spacing: ShelfGridLayout.spacing) {
                         ForEach(items) { item in
                             ShelfItemTile(item: item,
                                           isAvailable: !missingItemIDs.contains(item.id),
                                           isCopying: copyingItemIDs.contains(item.id),
                                           isSelected: selection.contains(item.id),
+                                          isLifted: hiddenItemIDs.contains(item.id),
                                           isActive: isActive,
                                           images: images,
                                           dragSource: dragSource,
                                           onClick: { onClick(item.id, $0) },
-                                          itemsToDrag: { itemsToDrag(item.id) },
+                                          dragContents: { dragContents(item.id) },
                                           onDelete: { onDelete(item.id) },
                                           onRemoveFromMenu: { onRemoveFromMenu(item.id) },
                                           selectionCount: selection.count,
@@ -84,9 +101,17 @@ struct ShelfGridView: View {
                                           onOpen: { commands.open(item.id) },
                                           onQuickLook: { commands.quickLook(item.id) },
                                           onShowInfo: { commands.showInfo(item.id) },
-                                          onPressAreaMoved: { pressAreas.frames[item.id] = $0 })
+                                          onPressAreaMoved: { pressAreas.frames[item.id] = $0 },
+                                          onPictureInSlotMeasured: { geometry.pictureInSlot = $0 })
                                 .transition(tileTransition)
                         }
+                    }
+                    // The whole grid, rows scrolled out of sight included, before it's
+                    // stretched to fill the visible area below.
+                    .onGeometryChange(for: CGRect.self) { proxy in
+                        proxy.frame(in: .global)
+                    } action: { frame in
+                        geometry.content = frame
                     }
                     .animation(reflowAnimation, value: items.map(\.id))
                     // At least as tall as the visible area, so a click or drag anywhere
@@ -98,10 +123,25 @@ struct ShelfGridView: View {
                     .simultaneousGesture(marqueeGesture(within: CGRect(origin: .zero, size: proxy.size)))
                 }
                 .coordinateSpace(.named(Self.viewportSpace))
+                .onGeometryChange(for: CGRect.self) { proxy in
+                    proxy.frame(in: .global)
+                } action: { frame in
+                    geometry.viewport = frame
+                }
                 .overlay(alignment: .topLeading) {
                     marqueeRectangle
                 }
-                // The grid isn't rebuilt each time anymore, so bring the newest items back
+                // Held near an edge, the grid waits a moment, then steps one row at a
+                // time until the pointer moves away or there's nothing more to show.
+                .task(id: scrollEdge) {
+                    guard let edge = scrollEdge else { return }
+                    try? await Task.sleep(for: .milliseconds(300))
+                    while !Task.isCancelled {
+                        scrollOneRow(toward: edge, with: scroller)
+                        try? await Task.sleep(for: .milliseconds(450))
+                    }
+                }
+                // The grid isn't rebuilt each time anymore, so bring the first items back
                 // into view on opening, while the shelf is still fading in.
                 .onChange(of: isActive) { _, active in
                     if active, let newest = items.first {
@@ -109,6 +149,20 @@ struct ShelfGridView: View {
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Scrolling while moving a tile
+
+    /// Brings the next row past `edge` into view, lining a row up with the top.
+    private func scrollOneRow(toward edge: VerticalEdge, with scroller: ScrollViewProxy) {
+        let pitch = geometry.layout.rowPitch
+        guard !items.isEmpty, pitch > 0 else { return }
+        let topRow = Int(((geometry.viewport.minY - geometry.content.minY) / pitch).rounded())
+        let lastRow = (items.count - 1) / ShelfGridLayout.columnCount
+        let row = min(max(edge == .top ? topRow - 1 : topRow + 1, 0), lastRow)
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+            scroller.scrollTo(items[row * ShelfGridLayout.columnCount].id, anchor: .top)
         }
     }
 

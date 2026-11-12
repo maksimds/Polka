@@ -138,16 +138,20 @@ struct NotchView: View {
                     .foregroundStyle(.white.opacity(0.6))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ShelfGridView(items: store.items,
+                ShelfGridView(items: model.displayedItems,
                               isActive: isOpen,
                               missingItemIDs: store.missingItemIDs,
                               copyingItemIDs: store.copyingItemIDs,
                               selection: model.selection,
+                              hiddenItemIDs: model.hiddenItemIDs,
+                              isMovingTiles: model.tileMove != nil,
+                              scrollEdge: model.scrollEdge,
+                              geometry: model.gridGeometry,
                               images: images,
                               dragSource: dragSource,
                               onClick: { model.click($0, $1) },
                               onClearSelection: { model.clearSelection() },
-                              itemsToDrag: { model.itemsToDrag(from: $0) },
+                              dragContents: { model.dragContents(from: $0) },
                               onDelete: { store.remove(id: $0) },
                               onRemoveFromMenu: { model.remove(from: $0) },
                               onToggleTemporary: { model.toggleTemporary($0) },

@@ -58,7 +58,7 @@ struct SelectionTests {
         model.click(ids[2], .toggle)
         model.click(ids[4], .toggle)
 
-        let dragged = model.itemsToDrag(from: ids[2])
+        let dragged = model.dragContents(from: ids[2]).items
 
         #expect(dragged.map(\.id) == [ids[2], ids[0], ids[4]])
         #expect(model.selection == [ids[0], ids[2], ids[4]])
@@ -69,7 +69,7 @@ struct SelectionTests {
         model.click(ids[0], .only)
         model.click(ids[1], .toggle)
 
-        let dragged = model.itemsToDrag(from: ids[3])
+        let dragged = model.dragContents(from: ids[3]).items
 
         #expect(dragged.map(\.id) == [ids[3]])
         #expect(model.selection == [ids[3]])
@@ -90,9 +90,15 @@ struct SelectionTests {
         model.click(ids[0], .only)
         model.click(ids[1], .toggle)
 
-        let dragged = model.itemsToDrag(from: ids[0])
+        let dragged = model.dragContents(from: ids[0])
 
-        #expect(dragged.map(\.title) == ["present.txt"])
+        #expect(dragged.items.map(\.title) == ["present.txt"])
+        #expect(!dragged.staysOnShelf)
+
+        // A drag that starts on the missing file takes only it, and only around the shelf.
+        let missing = model.dragContents(from: ids[1])
+        #expect(missing.items.map(\.title) == ["gone.txt"])
+        #expect(missing.staysOnShelf)
     }
 
     @Test func closingThePanelClearsTheSelection() {

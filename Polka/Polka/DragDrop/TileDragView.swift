@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// A transparent AppKit layer over a shelf tile that starts drags out of the panel.
+/// A transparent AppKit layer over a shelf tile that starts its drags, out of the
+/// panel or to another place on the shelf.
 ///
 /// This is AppKit for the same reason drops are: SwiftUI's drag support expects a
 /// window that can become key, and the notch panel never does. Because this layer
@@ -27,9 +28,7 @@ final class TileDragView: NSView {
     /// The second click of a double-click. The first one has already selected the tile.
     var onDoubleClick: (() -> Void)?
     /// Asked when a drag begins: this tile's item, or the whole selection.
-    var itemsToDrag: (() -> [ShelfItem])?
-    /// Off for items whose file is missing, so there is nothing broken to drag.
-    var isDragEnabled = true
+    var dragContents: (() -> ShelfDragContents)?
     /// Empty means no menu.
     var menuEntries: [MenuEntry] = []
     /// Where a press counts, measured from the top left as SwiftUI does: the picture
@@ -96,14 +95,14 @@ final class TileDragView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard isDragEnabled, let pressPoint, let source, let itemsToDrag else { return }
+        guard let pressPoint, let source, let dragContents else { return }
         let point = convert(event.locationInWindow, from: nil)
         guard hypot(point.x - pressPoint.x, point.y - pressPoint.y) >= dragThreshold else { return }
 
         self.pressPoint = nil
         // Hover events pause during a drag, so clear it now rather than leave it stuck on.
         onHoverChanged?(false)
-        source.startDrag(of: itemsToDrag(), at: point, from: self, event: event)
+        source.startDrag(of: dragContents(), at: point, from: self, event: event)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -165,13 +164,12 @@ extension SelectionClick {
 /// Puts a `TileDragView` into the SwiftUI tile.
 struct ShelfItemDragHandle: NSViewRepresentable {
     let source: ShelfDragSource
-    let isDragEnabled: Bool
     let menuEntries: [TileDragView.MenuEntry]
     let pressArea: CGRect?
     let onHoverChanged: (Bool) -> Void
     let onClick: (SelectionClick) -> Void
     let onDoubleClick: () -> Void
-    let itemsToDrag: () -> [ShelfItem]
+    let dragContents: () -> ShelfDragContents
 
     func makeNSView(context: Context) -> TileDragView {
         TileDragView()
@@ -179,12 +177,11 @@ struct ShelfItemDragHandle: NSViewRepresentable {
 
     func updateNSView(_ view: TileDragView, context: Context) {
         view.source = source
-        view.isDragEnabled = isDragEnabled
         view.menuEntries = menuEntries
         view.pressArea = pressArea
         view.onHoverChanged = onHoverChanged
         view.onClick = onClick
         view.onDoubleClick = onDoubleClick
-        view.itemsToDrag = itemsToDrag
+        view.dragContents = dragContents
     }
 }

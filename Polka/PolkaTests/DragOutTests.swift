@@ -51,13 +51,36 @@ struct DragOutTests {
         #expect(view.draggingUpdated(drag) == .copy)
     }
 
-    @Test func aDragOutOfThePanelIsRejected() {
+    /// A tile dragged over its own panel is moving to a new place, not being stored again.
+    @Test func aTileDraggedOverThePanelIsAMove() {
         let view = DropTargetView(frame: .zero)
         let drag = FakeDrag(pasteboard: pasteboard(holding: ShelfDragSource.pasteboardWriter(for: fileItem)),
-                            source: ShelfDragSource(images: ShelfItemImages(previewsFolder: nil)))
+                            source: ShelfDragSource(images: ShelfItemImages(previewsFolder: nil)),
+                            operations: [.move, .generic, .copy])
 
-        #expect(view.draggingEntered(drag) == [])
-        #expect(view.draggingUpdated(drag) == [])
+        #expect(view.draggingEntered(drag) == .move)
+        #expect(view.draggingUpdated(drag) == .move)
+    }
+
+    /// Holding Option leaves only copy on offer. The tile still moves.
+    @Test func aTileStillMovesWithOptionHeld() {
+        let view = DropTargetView(frame: .zero)
+        let drag = FakeDrag(pasteboard: pasteboard(holding: ShelfDragSource.pasteboardWriter(for: fileItem)),
+                            source: ShelfDragSource(images: ShelfItemImages(previewsFolder: nil)),
+                            operations: .copy)
+
+        #expect(view.draggingEntered(drag) == .copy)
+    }
+
+    /// A missing file's drag carries only Polka's own marker, which no app reads as
+    /// a file or a link.
+    @Test func aMissingFileCarriesNothingAnotherAppCanUse() {
+        let item = fileItem
+        let board = pasteboard(holding: ShelfDragSource.shelfOnlyWriter(for: item))
+
+        #expect(DropReceiver.items(from: board).isEmpty)
+        #expect(!DropReceiver.canAccept(board))
+        #expect(board.string(forType: ShelfDragSource.shelfOnlyType) == item.id.uuidString)
     }
 }
 
@@ -65,14 +88,15 @@ struct DragOutTests {
 final class FakeDrag: NSObject, NSDraggingInfo {
     let draggingPasteboard: NSPasteboard
     let draggingSource: Any?
+    let draggingSourceOperationMask: NSDragOperation
 
-    init(pasteboard: NSPasteboard, source: Any?) {
+    init(pasteboard: NSPasteboard, source: Any?, operations: NSDragOperation = .copy) {
         draggingPasteboard = pasteboard
         draggingSource = source
+        draggingSourceOperationMask = operations
     }
 
     var draggingDestinationWindow: NSWindow? { nil }
-    var draggingSourceOperationMask: NSDragOperation { .copy }
     var draggingLocation: NSPoint { .zero }
     var draggedImageLocation: NSPoint { .zero }
     var draggedImage: NSImage? { nil }
