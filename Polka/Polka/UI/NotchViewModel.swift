@@ -1,13 +1,15 @@
 import AppKit
 import SwiftUI
 
-/// The four states from the PRD's interaction flow.
+/// The four states from the PRD's interaction flow, plus the link field.
 enum NotchState: Equatable {
     case collapsed
     case expanded
     case dropReady
     /// An item is being dragged out and the pointer has left the panel.
     case draggingOut
+    /// The shelf has turned into a field for typing a link ("Add New", "Link…").
+    case addingLink
 
     /// True when the shape is notch-sized and the pointer passes through to what's beneath.
     var isAtNotchSize: Bool {
@@ -28,11 +30,14 @@ enum SelectionClick: Equatable {
 @MainActor
 final class NotchViewModel: ObservableObject {
     /// Closing the panel clears the selection, so it always opens with nothing selected.
+    /// So does the link field, which shows no tiles to keep it on.
     @Published var state: NotchState = .collapsed {
         didSet {
             if state == .collapsed {
                 clearSelection()
                 itemToReveal = nil
+            } else if state == .addingLink {
+                clearSelection()
             }
         }
     }
@@ -110,21 +115,74 @@ final class NotchViewModel: ObservableObject {
         copies != nil
     }
 
+    /// The shelf turned into the link field: as wide as the shelf, and only as tall
+    /// as the field and the line under it.
+    var linkEntrySize: CGSize {
+        CGSize(width: expandedSize.width, height: notchSize.height + LinkEntryView.contentHeight)
+    }
+
     var currentSize: CGSize {
-        state.isAtNotchSize ? notchSize : expandedSize
+        switch state {
+        case .collapsed, .draggingOut: return notchSize
+        case .expanded, .dropReady: return expandedSize
+        case .addingLink: return linkEntrySize
+        }
     }
 
     /// Promised files aren't in `items` as drafts: they're added by
     /// `receivePromisedFiles` once the app that promised them has written them.
     func handleDrop(_ items: [DroppedItem]) {
-        let result = store.add(items.compactMap(ShelfItem.Draft.init))
+        add(items.compactMap(ShelfItem.Draft.init))
+        state = .expanded
+    }
+
+    // MARK: - Adding from the header's "Add New" menu
+
+    /// "Link…": the shelf turns into a field for typing a link.
+    func beginAddingLink() {
+        guard state == .expanded else { return }
+        state = .addingLink
+    }
+
+    /// Esc, the field's ×, or a click outside the panel: back to the shelf, adding nothing.
+    func cancelAddingLink() {
+        guard state == .addingLink else { return }
+        state = .expanded
+    }
+
+    /// Return or Add in the link field. The link is stored like a dropped one, and the
+    /// field turns back into the shelf, scrolled to show it. When there's nothing to
+    /// add, the field stays and this returns what to say under it instead.
+    func addLink(from text: String) -> String? {
+        guard state == .addingLink else { return nil }
+        guard let url = LinkInput.url(from: text) else {
+            return "That doesn't look like a web address"
+        }
+        let result = store.add([ShelfItem.Draft(linkURL: url)])
+        guard let added = result.added.first else {
+            return "That link is already on the shelf"
+        }
+        itemToReveal = added.id
+        state = .expanded
+        return nil
+    }
+
+    /// "File…": what was picked in the Open dialog, stored like dropped files. The
+    /// panel closed before the dialog opened, so it opens scrolled to them next time,
+    /// and anything already on the shelf gets the usual message there.
+    func addFiles(_ urls: [URL]) {
+        add(urls.map { ShelfItem.Draft(fileURL: $0) })
+    }
+
+    /// Stores new items, says if any were already on the shelf, and remembers the new
+    /// item nearest the top, so the panel opens with it in view.
+    private func add(_ drafts: [ShelfItem.Draft]) {
+        let result = store.add(drafts)
         if let message = Self.alreadyOnShelfMessage(for: result.duplicates) {
             notice = message
         }
-        // The new item nearest the top, so the panel opens with it in view.
         let addedIDs = Set(result.added.map(\.id))
         itemToReveal = store.items.first { addedIDs.contains($0.id) }?.id
-        state = .expanded
     }
 
     /// A choice from the header's "Sort By" menu. The shelf sorts itself now, stays

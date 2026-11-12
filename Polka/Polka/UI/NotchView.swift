@@ -8,6 +8,9 @@ struct NotchView: View {
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
     let openSettings: @MainActor () -> Void
+    /// The + menu's choices.
+    let addLink: @MainActor () -> Void
+    let addFiles: @MainActor () -> Void
     let commands: ShelfItemCommands
     /// The pointer in the panel's SwiftUI space, for the drop zone's eyes.
     let pointer: @MainActor () -> CGPoint?
@@ -18,8 +21,9 @@ struct NotchView: View {
 
     /// How much the closed notch swells just before it opens.
     private static let hoverGrowth = CGSize(width: 14, height: 4)
-    /// Space between the panel's sides and the tiles, also used by the header.
-    private static let sideInset: CGFloat = 16
+    /// Space between the panel's sides and the tiles, also used by the header and
+    /// the link field.
+    static let sideInset: CGFloat = 16
     /// Space between the notch and the drop zone's eyes.
     private static let eyesTopGap: CGFloat = 9.9
     /// Space between the eyes and the dashed box below them.
@@ -118,11 +122,19 @@ struct NotchView: View {
                     .frame(width: model.expandedSize.width, height: model.expandedSize.height)
                     .transition(dropZoneTransition)
             }
+            if model.state == .addingLink {
+                LinkEntryView(headerHeight: model.notchSize.height,
+                              width: model.linkEntrySize.width,
+                              onSubmit: { model.addLink(from: $0) },
+                              onCancel: { model.cancelAddingLink() })
+                    .frame(width: model.linkEntrySize.width, height: model.linkEntrySize.height)
+                    .transition(dropZoneTransition)
+            }
         }
     }
 
-    /// The drop zone is light enough to build when a drag starts. It arrives as the
-    /// shape opens and leaves quickly.
+    /// The drop zone and the link field are light enough to build when they're
+    /// needed. Each arrives as the shape changes and leaves quickly.
     private var dropZoneTransition: AnyTransition {
         let arrival: AnyTransition = reduceMotion
             ? .opacity
@@ -184,8 +196,9 @@ struct NotchView: View {
     /// The strip beside the notch, laid out on the tiles' own grid: same columns, same
     /// side inset, and each end held to a picture's width. So "Polka" starts exactly
     /// where the first column's pictures start, and the gear ends exactly where the
-    /// last column's pictures end. The sort button sits left of the gear, inside the
-    /// same picture's width, well clear of the notch. The middle columns sit under it.
+    /// last column's pictures end. The sort and + buttons sit left of the gear, running
+    /// a little into the fourth column but well clear of the notch, which the middle
+    /// columns sit under.
     private var header: some View {
         LazyVGrid(columns: ShelfGridView.columns, spacing: 0) {
             nameLabel
@@ -193,8 +206,9 @@ struct NotchView: View {
             ForEach(0..<3, id: \.self) { _ in
                 Color.clear
             }
-            // 16 pt apart, so the two 8 pt click areas meet without overlapping.
+            // 16 pt apart, so the 8 pt click areas meet without overlapping.
             HStack(spacing: 16) {
+                AddMenuButton(height: model.notchSize.height, onAddLink: addLink, onAddFiles: addFiles)
                 SortMenuButton(sort: store.sort, height: model.notchSize.height) { model.chooseSort($0) }
                 settingsButton
             }

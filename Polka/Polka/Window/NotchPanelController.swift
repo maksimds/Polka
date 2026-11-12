@@ -10,6 +10,7 @@ final class NotchPanelController {
     private let images: ShelfItemImages
     private let openSettings: @MainActor () -> Void
     private let quickLook: QuickLookController
+    private let fileChooser: FileChooser
     private let model: NotchViewModel
     private let dragMonitor = GlobalDragMonitor()
     private let dragSource: ShelfDragSource
@@ -20,6 +21,7 @@ final class NotchPanelController {
 
     private var mouseMonitors: [Any] = []
     private var screenObserver: NSObjectProtocol?
+    private var keyObserver: NSObjectProtocol?
     private var cancellables = Set<AnyCancellable>()
     private var hoverTask: Task<Void, Never>?
     private var delayedCollapseTask: Task<Void, Never>?
@@ -46,10 +48,12 @@ final class NotchPanelController {
          images: ShelfItemImages,
          copies: CopyKeeper?,
          quickLook: QuickLookController,
+         fileChooser: FileChooser,
          openSettings: @escaping @MainActor () -> Void) {
         self.store = store
         self.images = images
         self.quickLook = quickLook
+        self.fileChooser = fileChooser
         self.openSettings = openSettings
         dragSource = ShelfDragSource(images: images)
         model = NotchViewModel(store: store, copies: copies)
@@ -66,6 +70,12 @@ final class NotchPanelController {
                                                             dragSource: dragSource,
                                                             openSettings: { [weak self] in
                                                                 self?.openSettingsFromPanel()
+                                                            },
+                                                            addLink: { [weak self] in
+                                                                self?.addLinkFromPanel()
+                                                            },
+                                                            addFiles: { [weak self] in
+                                                                self?.addFilesFromPanel()
                                                             },
                                                             commands: itemCommands,
                                                             pointer: { [weak self] in
@@ -113,6 +123,7 @@ final class NotchPanelController {
         startDragMonitor()
         startDragSource()
         observeScreenChanges()
+        observeKeyboardLoss(of: panel)
     }
 
     // MARK: - Layout
@@ -195,6 +206,11 @@ final class NotchPanelController {
         if state == .collapsed { collapsedAt = .now }
         if state != .collapsed { cancelHover() }
         if state != .expanded { cancelDelayedCollapse() }
+        if state == .addingLink {
+            takeKeyboard()
+        } else {
+            giveKeyboardBack()
+        }
         Log.window.debug("State: \(String(describing: state), privacy: .public)")
     }
 
@@ -211,6 +227,64 @@ final class NotchPanelController {
     private func openSettingsFromPanel() {
         model.state = .collapsed
         openSettings()
+    }
+
+    // MARK: - Adding from the + menu
+
+    /// "Link…": the shelf turns into the link field. A tick later, since this runs
+    /// as the menu closes, and the panel shouldn't take the keys while it tracks.
+    private func addLinkFromPanel() {
+        DispatchQueue.main.async { [weak self] in
+            self?.model.beginAddingLink()
+        }
+    }
+
+    /// "File…": the shelf gets out of the way, then the Open dialog opens.
+    private func addFilesFromPanel() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.model.state = .collapsed
+            self.fileChooser.choose { [weak self] urls in
+                self?.model.addFiles(urls)
+            }
+        }
+    }
+
+    /// The link field needs the keys. The panel becomes the key window, the one that
+    /// gets typing, but Polka doesn't become the active app (see `NotchPanel`).
+    private func takeKeyboard() {
+        guard let panel else { return }
+        panel.acceptsKeyboard = true
+        panel.makeKey()
+    }
+
+    /// Back to never taking the keys. If the panel still has them, they go back to
+    /// the app you were in: taking the key window off screen is what hands them
+    /// over, and it comes straight back in the same moment.
+    private func giveKeyboardBack() {
+        guard let panel, panel.acceptsKeyboard else { return }
+        panel.acceptsKeyboard = false
+        guard panel.isKeyWindow else { return }
+        panel.orderOut(nil)
+        panel.orderFrontRegardless()
+    }
+
+    /// A click in another app (or Cmd-Tab) while the field is up takes the keys from
+    /// the panel. You've moved on, so the field closes without adding anything.
+    private func observeKeyboardLoss(of panel: NotchPanel) {
+        keyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification,
+            object: panel,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.panelLostKeyboard() }
+        }
+    }
+
+    private func panelLostKeyboard() {
+        // Not when the panel is giving the keys back itself.
+        guard panel?.acceptsKeyboard == true, model.state == .addingLink else { return }
+        model.state = .collapsed
     }
 
     // MARK: - Opening and inspecting items
@@ -291,6 +365,10 @@ final class NotchPanelController {
             dragMonitor.endDrag()
         case .draggingOut:
             // The panel can't reopen until the drag ends.
+            break
+        case .addingLink:
+            // The field stays while you type, wherever the pointer goes. A click
+            // elsewhere closes it (`panelLostKeyboard`).
             break
         }
     }
@@ -418,7 +496,7 @@ final class NotchPanelController {
             if let geometry, geometry.hoverRect(area: settings.hoverArea).contains(NSEvent.mouseLocation) {
                 openDropZone()
             }
-        case .draggingOut:
+        case .draggingOut, .addingLink:
             break
         }
     }

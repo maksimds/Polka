@@ -77,9 +77,10 @@ struct ShelfGridLayout: Equatable {
         var height: CGFloat = 0
     }
 
-    /// A title starts where the first column's pictures start, and its line ends
-    /// where the last column's pictures end, like the panel's header strip.
-    private var headerInset: CGFloat {
+    /// From a column's edge to its tiles' pictures. A group's title starts where the
+    /// first column's pictures start, and its line ends where the last column's
+    /// pictures end, like the panel's header strip and the link field.
+    var pictureInset: CGFloat {
         max((columnWidth - ShelfItemTile.imageSide) / 2, 0)
     }
 
@@ -95,8 +96,8 @@ struct ShelfGridLayout: Equatable {
             if titled {
                 if group > 0 { y += Self.groupSpacing }
                 placement.rows.append(Row(start: .header(group), minY: y))
-                placement.headers.append(CGRect(x: headerInset, y: y,
-                                                width: max(width - 2 * headerInset, 0),
+                placement.headers.append(CGRect(x: pictureInset, y: y,
+                                                width: max(width - 2 * pictureInset, 0),
                                                 height: Self.headerHeight))
                 y += Self.headerHeight + Self.headerSpacing
             }
