@@ -12,13 +12,16 @@ struct ShelfItemTile: View {
     /// True while Polka is making a copy of the file.
     let isCopying: Bool
     let isSelected: Bool
+    /// True while the tile is being moved, or has just been dropped and its picture
+    /// is still gliding into place. It shows as an empty gap.
+    let isLifted: Bool
     /// False while the panel is closed or a drag out is running.
     let isActive: Bool
     let images: ShelfItemImages
     let dragSource: ShelfDragSource
     let onClick: @MainActor (SelectionClick) -> Void
     /// This item, or the whole selection if this item is in it.
-    let itemsToDrag: @MainActor () -> [ShelfItem]
+    let dragContents: @MainActor () -> ShelfDragContents
     /// The × button: this item alone.
     let onDelete: @MainActor () -> Void
     /// The menu's "Remove": this item, or the whole selection if this item is in it.
@@ -37,6 +40,9 @@ struct ShelfItemTile: View {
     /// Where the picture and text are in the grid's visible area, for the selection
     /// rectangle. Nil once the tile is gone.
     let onPressAreaMoved: @MainActor (CGRect?) -> Void
+    /// Where the picture is within the tile's spot, so a dropped picture can glide
+    /// to the right place. Every tile lays out the same way.
+    let onPictureInSlotMeasured: @MainActor (CGRect) -> Void
 
     @State private var loadedThumbnail: NSImage?
     @State private var isHovering = false
@@ -122,6 +128,11 @@ struct ShelfItemTile: View {
             proxy.frame(in: .named(Self.coordinateSpace))
         } action: { area in
             pressArea = area
+            // The picture is the top of this area, centered across it.
+            onPictureInSlotMeasured(CGRect(x: area.midX - Self.imageSide / 2,
+                                           y: area.minY,
+                                           width: Self.imageSide,
+                                           height: Self.imageSide))
         }
         .onGeometryChange(for: CGRect.self) { proxy in
             proxy.frame(in: .named(ShelfGridView.viewportSpace))
@@ -133,13 +144,12 @@ struct ShelfItemTile: View {
         .coordinateSpace(.named(Self.coordinateSpace))
         .overlay {
             ShelfItemDragHandle(source: dragSource,
-                                isDragEnabled: isAvailable,
                                 menuEntries: menuEntries,
                                 pressArea: pressArea,
                                 onHoverChanged: { isHovering = $0 },
                                 onClick: onClick,
                                 onDoubleClick: onOpen,
-                                itemsToDrag: itemsToDrag)
+                                dragContents: dragContents)
         }
         .overlay(alignment: .topTrailing) {
             if isHovering {
@@ -148,6 +158,10 @@ struct ShelfItemTile: View {
                     .transition(.opacity)
             }
         }
+        // Lifting out is instant, since the picture is already under the pointer.
+        // Coming back is a quick fade, so it doesn't pop in.
+        .opacity(isLifted ? 0 : 1)
+        .animation(isLifted ? nil : .easeOut(duration: 0.1), value: isLifted)
         // Quick fades, so moving across the grid doesn't leave buttons flickering.
         .animation(.easeOut(duration: 0.12), value: isHovering)
         .animation(.easeOut(duration: 0.12), value: isSelected)
