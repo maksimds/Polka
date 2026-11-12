@@ -33,6 +33,11 @@ final class NotchViewModel: ObservableObject {
     /// So does the link field, which shows no tiles to keep it on.
     @Published var state: NotchState = .collapsed {
         didSet {
+            // A name being edited only shows on the open shelf. The controller ends the
+            // edit itself before closing the panel, so this only catches the unexpected.
+            if state != .expanded, renamingItemID != nil {
+                renamingItemID = nil
+            }
             if state == .collapsed {
                 clearSelection()
                 itemToReveal = nil
@@ -46,6 +51,9 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var itemToReveal: ShelfItem.ID?
     /// Selected tiles. A drag that starts on one of them carries them all (FR-10).
     @Published private(set) var selection: Set<ShelfItem.ID> = []
+    /// The tile whose name is being edited ("Rename"). The panel takes the keys while
+    /// it's set, as it does for the link field.
+    @Published private(set) var renamingItemID: ShelfItem.ID?
     /// Where a Shift-click range starts: the last item clicked without Shift.
     private var selectionAnchor: ShelfItem.ID?
     @Published var notchSize = CGSize(width: 200, height: 32)
@@ -228,14 +236,38 @@ final class NotchViewModel: ObservableObject {
         case .reference:
             Task {
                 if await !copies.keepCopy(of: id) {
-                    notice = "Couldn't keep a copy of \(item.title)"
+                    notice = "Couldn't keep a copy of \(item.displayName)"
                 }
             }
         case .copy:
             if !store.useOriginal(id: id) {
-                notice = "Can't find the original of \(item.title), so the copy stays"
+                notice = "Can't find the original of \(item.displayName), so the copy stays"
             }
         }
+    }
+
+    // MARK: - Renaming
+
+    /// The tile's "Rename" menu item: its name turns into a field, with the name
+    /// selected. As in Finder, the tile being renamed is the only one selected.
+    func beginRenaming(_ id: ShelfItem.ID) {
+        guard state == .expanded, tileMove == nil, store.items.contains(where: { $0.id == id }) else { return }
+        click(id, .only)
+        renamingItemID = id
+    }
+
+    /// Return, Tab, or a click anywhere else: the tile keeps the name typed. An empty
+    /// name brings back the automatic one. An edit that has already ended is ignored.
+    func finishRenaming(_ id: ShelfItem.ID, as name: String) {
+        guard renamingItemID == id else { return }
+        renamingItemID = nil
+        store.rename(id: id, to: name)
+    }
+
+    /// Esc: the tile keeps the name it had.
+    func cancelRenaming(_ id: ShelfItem.ID) {
+        guard renamingItemID == id else { return }
+        renamingItemID = nil
     }
 
     // MARK: - Selection

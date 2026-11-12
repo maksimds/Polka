@@ -24,7 +24,7 @@ v1 is a lean shelf for files and links. Everything else waits until the core fee
 
 | Bucket | Items |
 | --- | --- |
-| In v1 | Hover to expand, drag in, drag out, files, folders, links with their site's name and icon, temporary and permanent items, delete, open, Quick Look and Get Info, menu bar item, launch at login |
+| In v1 | Hover to expand, drag in, drag out, files, folders, links with their site's name and icon, temporary and permanent items, delete, open, Quick Look and Get Info, renaming a tile, menu bar item, launch at login |
 | Later | Plain text and image snippets, search, tags or groups, pin to top, keyboard shortcut to open |
 | Out of scope | Cloud sync, iPhone companion, sharing with others, AirDrop, music or calendar widgets, App Store release |
 
@@ -50,6 +50,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-14 | The panel behaves correctly on non-notch displays by showing a top-center pill | P2 |
 | FR-15 | Broken references (moved or deleted originals) are shown as unavailable, not silently dropped | P1 |
 | FR-16 | A file's right-click menu offers Quick Look and Get Info, which work as they do in Finder | P2 |
+| FR-17 | Any tile can be renamed from its right-click menu, in place as in Finder, to give it a shorter or clearer name. Only the tile's label changes, never the file's name, its path or the link's address, and clearing the name brings back the automatic one | P2 |
 
 ## Interaction flow
 
@@ -88,7 +89,8 @@ Every shelf entry is one item, stored locally in the app's support folder. Nothi
 | --- | --- |
 | `id` | Unique identifier |
 | `kind` | file, folder or link |
-| `title` | Display name (file name or page title) |
+| `title` | Automatic name (file name, or the site's name and the page's address) |
+| `customName` | Empty unless the tile was renamed, otherwise the name shown instead of `title` |
 | `source` | Bookmark or path for references, or URL for links |
 | `storageMode` | reference (points at the original) or copy (a duplicate kept by Polka) |
 | `original` | For a kept copy, the file it was made from, so the item can go back to it |

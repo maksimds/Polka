@@ -152,6 +152,16 @@ struct NotchView: View {
         return { [model] id in model.toggleKeepCopy(id) }
     }
 
+    /// "Rename" starts a tick later, since it's chosen as the menu closes, and the
+    /// panel shouldn't take the keys while the menu still tracks the pointer.
+    private var renameActions: ShelfRenameActions {
+        ShelfRenameActions(begin: { [model] id in
+                               DispatchQueue.main.async { model.beginRenaming(id) }
+                           },
+                           finish: { [model] id, name in model.finishRenaming(id, as: name) },
+                           cancel: { [model] id in model.cancelRenaming(id) })
+    }
+
     private var expandedContent: some View {
         VStack(spacing: 8) {
             if store.items.isEmpty {
@@ -180,6 +190,8 @@ struct NotchView: View {
                               onToggleTemporary: { model.toggleTemporary($0) },
                               onToggleKeepCopy: keepCopyAction,
                               commands: commands,
+                              renamingItemID: model.renamingItemID,
+                              rename: renameActions,
                               onMarqueeBegan: { model.beginMarquee($0) },
                               onMarqueeChanged: { model.updateMarquee(touching: $0) })
             }

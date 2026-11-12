@@ -26,6 +26,8 @@ final class NotchPanelController {
     private var hoverTask: Task<Void, Never>?
     private var delayedCollapseTask: Task<Void, Never>?
     private var dragOpenTask: Task<Void, Never>?
+    /// Waits for a click that ended a rename to be over before the keys go back.
+    private var keyboardReturnTask: Task<Void, Never>?
     private var collapsedAt = ContinuousClock.now
 
     /// How long the pointer can be away before the panel collapses while a message is showing.
@@ -118,6 +120,25 @@ final class NotchPanelController {
             .removeDuplicates()
             .sink { [weak self] state in self?.apply(state) }
             .store(in: &cancellables)
+        // The two times the panel takes the keys: the link field, and a tile's name
+        // being edited. `@Published` reports a change before it's made, so this works
+        // from the values it's handed rather than reading the model.
+        model.$state.combineLatest(model.$renamingItemID)
+            .map { state, renaming in state == .addingLink || renaming != nil }
+            .removeDuplicates()
+            .sink { [weak self] needsKeyboard in
+                if needsKeyboard {
+                    self?.takeKeyboard()
+                } else {
+                    self?.giveKeyboardBack()
+                }
+            }
+            .store(in: &cancellables)
+        model.$renamingItemID
+            .map { $0 != nil }
+            .removeDuplicates()
+            .sink { [weak panel] renaming in panel?.endsEditingOnClickElsewhere = renaming }
+            .store(in: &cancellables)
 
         startMouseMonitors()
         startDragMonitor()
@@ -206,11 +227,6 @@ final class NotchPanelController {
         if state == .collapsed { collapsedAt = .now }
         if state != .collapsed { cancelHover() }
         if state != .expanded { cancelDelayedCollapse() }
-        if state == .addingLink {
-            takeKeyboard()
-        } else {
-            giveKeyboardBack()
-        }
         Log.window.debug("State: \(String(describing: state), privacy: .public)")
     }
 
@@ -250,10 +266,13 @@ final class NotchPanelController {
         }
     }
 
-    /// The link field needs the keys. The panel becomes the key window, the one that
-    /// gets typing, but Polka doesn't become the active app (see `NotchPanel`).
+    /// The link field or a name being edited needs the keys. The panel becomes the key
+    /// window, the one that gets typing, but Polka doesn't become the active app (see
+    /// `NotchPanel`).
     private func takeKeyboard() {
         guard let panel else { return }
+        keyboardReturnTask?.cancel()
+        keyboardReturnTask = nil
         panel.acceptsKeyboard = true
         panel.makeKey()
     }
@@ -261,16 +280,43 @@ final class NotchPanelController {
     /// Back to never taking the keys. If the panel still has them, they go back to
     /// the app you were in: taking the key window off screen is what hands them
     /// over, and it comes straight back in the same moment.
+    ///
+    /// A click elsewhere on the shelf that ended a rename is still going on at this
+    /// point, and may yet become a drag or open a menu. Taking the panel off screen
+    /// in the middle of it would cut it short, so then the keys go back once it's
+    /// over. Until then the panel keeps swallowing Command shortcuts.
     private func giveKeyboardBack() {
         guard let panel, panel.acceptsKeyboard else { return }
+        keyboardReturnTask?.cancel()
+        keyboardReturnTask = nil
+        guard isPressOver else {
+            keyboardReturnTask = Task { [weak self] in
+                while !Task.isCancelled, self?.isPressOver == false {
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
+                guard !Task.isCancelled else { return }
+                self?.keyboardReturnTask = nil
+                self?.giveKeyboardBack()
+            }
+            return
+        }
         panel.acceptsKeyboard = false
         guard panel.isKeyWindow else { return }
         panel.orderOut(nil)
         panel.orderFrontRegardless()
     }
 
-    /// A click in another app (or Cmd-Tab) while the field is up takes the keys from
-    /// the panel. You've moved on, so the field closes without adding anything.
+    /// No mouse button is held, no tile is being dragged, and no menu is open. While a
+    /// menu is up, the app runs in the run loop's tracking mode.
+    private var isPressOver: Bool {
+        NSEvent.pressedMouseButtons == 0
+            && dragSource.current == nil
+            && RunLoop.main.currentMode != .eventTracking
+    }
+
+    /// A click in another app (or Cmd-Tab) while the link field is up or a tile is
+    /// being renamed takes the keys from the panel. You've moved on, so the panel
+    /// closes. The link field adds nothing; a new name is kept, as in Finder.
     private func observeKeyboardLoss(of panel: NotchPanel) {
         keyObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResignKeyNotification,
@@ -283,8 +329,14 @@ final class NotchPanelController {
 
     private func panelLostKeyboard() {
         // Not when the panel is giving the keys back itself.
-        guard panel?.acceptsKeyboard == true, model.state == .addingLink else { return }
-        model.state = .collapsed
+        guard let panel, panel.acceptsKeyboard else { return }
+        if model.state == .addingLink {
+            model.state = .collapsed
+        } else if model.renamingItemID != nil {
+            // Ending the edit is what hands the typed name to the tile.
+            panel.makeFirstResponder(nil)
+            model.state = .collapsed
+        }
     }
 
     // MARK: - Opening and inspecting items
@@ -353,7 +405,11 @@ final class NotchPanelController {
                 cancelHover()
             }
         case .expanded:
-            if isPointerNearPanel(geometry) {
+            if model.renamingItemID != nil {
+                // The shelf stays open while you type a name, wherever the pointer
+                // goes, as the link field does. Return, Esc or a click ends it.
+                cancelDelayedCollapse()
+            } else if isPointerNearPanel(geometry) {
                 cancelDelayedCollapse()
             } else if model.notice != nil {
                 scheduleDelayedCollapse()
@@ -441,7 +497,8 @@ final class NotchPanelController {
 
     private func collapseIfStillAway() {
         delayedCollapseTask = nil
-        guard let geometry, model.state == .expanded, !isPointerNearPanel(geometry) else { return }
+        guard let geometry, model.state == .expanded, model.renamingItemID == nil,
+              !isPointerNearPanel(geometry) else { return }
         model.state = .collapsed
     }
 

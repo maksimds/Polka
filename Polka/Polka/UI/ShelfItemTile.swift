@@ -37,6 +37,14 @@ struct ShelfItemTile: View {
     let onQuickLook: @MainActor () -> Void
     /// This item, or the whole selection if this item is in it.
     let onShowInfo: @MainActor () -> Void
+    /// True while the name is a field being typed in ("Rename").
+    let isRenaming: Bool
+    /// The menu's "Rename": this item alone.
+    let onRename: @MainActor () -> Void
+    /// The edit ended keeping what's typed: Return, Tab or a click elsewhere.
+    let onRenameFinished: @MainActor (String) -> Void
+    /// Esc, or the tile went away mid-edit: the name stays as it was.
+    let onRenameCancelled: @MainActor () -> Void
     /// Where the picture and text are in the grid's visible area, for the selection
     /// rectangle. Nil once the tile is gone.
     let onPressAreaMoved: @MainActor (CGRect?) -> Void
@@ -52,8 +60,17 @@ struct ShelfItemTile: View {
     /// tile. Part of the tile's shape for hover and presses.
     @State private var nameFrame: CGRect?
     @State private var typeLineFrame: CGRect?
+    /// The tile's width, the most the rename field can grow to.
+    @State private var tileWidth: CGFloat = 0
+    /// What's typed in the rename field, which the field grows to fit. Nil until
+    /// something is typed.
+    @State private var typedName: String?
 
     private static let coordinateSpace = "ShelfItemTile"
+
+    /// The name's font, as AppKit needs it for the rename field and for measuring.
+    /// The same as the `Text` under the picture.
+    private static let nameFont = NSFont.systemFont(ofSize: 11, weight: .medium)
 
     private var image: NSImage {
         loadedThumbnail ?? images.image(for: item)
@@ -67,11 +84,12 @@ struct ShelfItemTile: View {
             .joined(separator: " · ")
     }
 
-    /// Quick Look and Get Info for files and folders, then how Polka keeps the item:
-    /// "Temporary", checked while it has an expiry, and for files and folders "Keep a
-    /// Copy", checked for a copy. Links have no file to show or copy, so they skip
-    /// those. "Remove" comes last, set apart. Unchecking "Keep a Copy" goes back to the
-    /// original, so it can't be unchecked for a promised file, which has none.
+    /// Quick Look and Get Info for files and folders, and "Rename" for every tile,
+    /// right after Get Info as in Finder. Then how Polka keeps the item: "Temporary",
+    /// checked while it has an expiry, and for files and folders "Keep a Copy", checked
+    /// for a copy. Links have no file to show or copy, so they skip those. "Remove"
+    /// comes last, set apart. Unchecking "Keep a Copy" goes back to the original, so it
+    /// can't be unchecked for a promised file, which has none.
     private var menuEntries: [TileDragView.MenuEntry] {
         let isFile = item.kind != .link
         var entries: [TileDragView.MenuEntry] = []
@@ -79,6 +97,8 @@ struct ShelfItemTile: View {
             entries.append(TileDragView.MenuEntry(title: "Quick Look", isEnabled: isAvailable, action: onQuickLook))
             entries.append(TileDragView.MenuEntry(title: "Get Info", isEnabled: isAvailable, action: onShowInfo))
         }
+        // Only the tile's label changes, so a missing file can be renamed too.
+        entries.append(TileDragView.MenuEntry(title: "Rename", action: onRename))
         entries.append(TileDragView.MenuEntry(title: "Temporary",
                                               isChecked: item.isTemporary,
                                               startsGroup: true,
@@ -111,8 +131,8 @@ struct ShelfItemTile: View {
                         .padding(-5)
                 )
                 .padding(.bottom, 4)
-            Text(item.title)
-                .font(.system(size: 11, weight: .medium))
+            Text(item.displayName)
+                .font(Font(Self.nameFont))
                 .foregroundStyle(.white.opacity(isAvailable || isSelected ? 1 : 0.5))
                 .lineLimit(1)
                 // File names keep their extension; link titles keep the site name.
@@ -126,6 +146,10 @@ struct ShelfItemTile: View {
                 } action: { frame in
                     nameFrame = frame
                 }
+                // The rename field takes its place, at once, as in Finder, rather than
+                // with the selection's fade.
+                .opacity(isRenaming ? 0 : 1)
+                .animation(nil, value: isRenaming)
             Text(detailLine)
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.55))
@@ -156,6 +180,11 @@ struct ShelfItemTile: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: Self.height)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { width in
+            tileWidth = width
+        }
         .coordinateSpace(.named(Self.coordinateSpace))
         .overlay {
             ShelfItemDragHandle(source: dragSource,
@@ -181,6 +210,20 @@ struct ShelfItemTile: View {
                     .allowsHitTesting(isHovering)
                     .accessibilityHidden(!isHovering)
             }
+        }
+        // Over the drag layer as well, so clicks in the field place the caret instead
+        // of pressing the tile. Only built while renaming: unlike the × button, it's
+        // made once per rename, not on every hover.
+        .overlay(alignment: .topLeading) {
+            if isRenaming, let nameFrame {
+                renameField
+                    .position(x: nameFrame.midX, y: nameFrame.midY)
+                    // At once, like the name it replaces, not with the selection's fade.
+                    .transition(.identity)
+            }
+        }
+        .onChange(of: isRenaming) { _, renaming in
+            if !renaming { typedName = nil }
         }
         // Lifting out is instant, since the picture is already under the pointer.
         // Coming back is a quick fade, so it doesn't pop in.
@@ -335,7 +378,40 @@ struct ShelfItemTile: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Remove \(item.title) from the shelf")
+        .accessibilityLabel("Remove \(item.displayName) from the shelf")
+    }
+
+    // MARK: - Rename
+
+    /// Room around the text inside the rename field, the same as the selection
+    /// capsule's, so the text doesn't move when editing starts.
+    private static let renameInset = CGSize(width: 5, height: 2)
+
+    /// The field the name turns into, like Finder's: a dark box with a focus ring,
+    /// as wide as what's typed, and at most as wide as the tile, ring included, so
+    /// the grid's edge never cuts the ring off. A longer name scrolls inside it.
+    private var renameField: some View {
+        let text = typedName ?? item.displayName
+        let textWidth = ceil((text as NSString).size(withAttributes: [.font: Self.nameFont]).width)
+        // A little extra for the caret at the end, and never so narrow it's hard to click.
+        let width = min(max(textWidth + 4 + Self.renameInset.width * 2, 32), max(tileWidth - 8, 32))
+        let shape = RoundedRectangle(cornerRadius: 4, style: .continuous)
+        return TileNameEditor(name: item.displayName,
+                              fileExtension: item.kind == .file ? item.url.pathExtension : nil,
+                              font: Self.nameFont,
+                              onTextChange: { typedName = $0 },
+                              onFinish: onRenameFinished,
+                              onCancel: onRenameCancelled)
+            .padding(.horizontal, Self.renameInset.width)
+            .padding(.vertical, Self.renameInset.height)
+            .frame(width: width)
+            .background(shape.fill(Color(white: 0.14)))
+            // The system's focus ring color, a softened accent, just outside the box.
+            .overlay(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 3)
+                    .padding(-3)
+            )
     }
 }
 

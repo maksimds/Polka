@@ -11,6 +11,14 @@ struct ShelfItemCommands {
     let showInfo: @MainActor (ShelfItem.ID) -> Void
 }
 
+/// Right-click > Rename: the tile's name turns into a field, and the edit ends by
+/// keeping what's typed or, with Esc, the old name.
+struct ShelfRenameActions {
+    let begin: @MainActor (ShelfItem.ID) -> Void
+    let finish: @MainActor (ShelfItem.ID, String) -> Void
+    let cancel: @MainActor (ShelfItem.ID) -> Void
+}
+
 /// The shelf's items as a scrolling grid, in the shelf's order. New items arrive at
 /// the top left. While tiles are being moved, `items` is the order they'd have if
 /// dropped now, so the others slide aside to make room. Sorted by Kind or File Type,
@@ -44,6 +52,9 @@ struct ShelfGridView: View {
     let onToggleTemporary: @MainActor (ShelfItem.ID) -> Void
     let onToggleKeepCopy: (@MainActor (ShelfItem.ID) -> Void)?
     let commands: ShelfItemCommands
+    /// The tile whose name is being edited, if any.
+    let renamingItemID: ShelfItem.ID?
+    let rename: ShelfRenameActions
     /// A selection rectangle starts, with the keys held: Shift adds, Command flips.
     let onMarqueeBegan: @MainActor (SelectionClick) -> Void
     /// The rectangle moved; these are the tiles it touches now.
@@ -120,6 +131,10 @@ struct ShelfGridView: View {
                                           onOpen: { commands.open(item.id) },
                                           onQuickLook: { commands.quickLook(item.id) },
                                           onShowInfo: { commands.showInfo(item.id) },
+                                          isRenaming: renamingItemID == item.id,
+                                          onRename: { rename.begin(item.id) },
+                                          onRenameFinished: { rename.finish(item.id, $0) },
+                                          onRenameCancelled: { rename.cancel(item.id) },
                                           onPressAreaMoved: { pressAreas.frames[item.id] = $0 },
                                           onPictureInSlotMeasured: { geometry.pictureInSlot = $0 })
                                 .transition(tileTransition)
