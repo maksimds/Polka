@@ -16,8 +16,6 @@ final class ExpirySweeper {
 
     func start() {
         sweep()
-        // `$items` sends the new list just before the store updates, so this reads the
-        // list it is given rather than `store.items`.
         nextExpiryWatcher = store.$items
             .map { items in items.compactMap(\.expiresAt).min() }
             .removeDuplicates()

@@ -1,10 +1,3 @@
-//
-//  PolkaUITests.swift
-//  PolkaUITests
-//
-//  Created by Denis on 7/11/26.
-//
-
 import XCTest
 
 final class PolkaUITests: XCTestCase {

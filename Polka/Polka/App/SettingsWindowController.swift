@@ -4,9 +4,7 @@ import SwiftUI
 /// The Settings window, opened from the menu bar menu or the gear in the panel.
 ///
 /// It's a plain AppKit window rather than a SwiftUI `Settings` scene so that Polka
-/// controls how it comes forward and goes away. Polka is almost never the active app
-/// (its panel never takes focus), and a window from an inactive app opens behind the
-/// app you're in, where it can't take keystrokes.
+/// controls how it comes forward and goes away.
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let loginItem: LoginItem
@@ -30,9 +28,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
         loginItem.refresh()
 
-        // Making Polka the active app is what lets the window take keyboard focus.
-        // You asked for a window, so focus moving to it is expected here. The notch
-        // panel never does this.
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         // If macOS turns the activation down, the window still comes to the front,

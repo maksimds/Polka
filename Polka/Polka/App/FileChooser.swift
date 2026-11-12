@@ -2,10 +2,6 @@ import AppKit
 
 /// The standard Open dialog, for "Add New", "File": the same one apps and websites
 /// show when you choose a file.
-///
-/// Polka makes itself the active app for it, as for Settings and Quick Look, because
-/// a window from an inactive app opens behind the app you're in and can't take
-/// keystrokes. When it closes, focus goes back to the app you were in.
 @MainActor
 final class FileChooser {
     private let focus: FocusReturner
@@ -44,8 +40,6 @@ final class FileChooser {
                 if !urls.isEmpty { add(urls) }
             }
         }
-        // If macOS turns the activation down, the dialog still comes to the front,
-        // and one click on it gives it the keys.
         panel.orderFrontRegardless()
     }
 

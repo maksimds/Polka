@@ -1,10 +1,3 @@
-//
-//  PolkaApp.swift
-//  Polka
-//
-//  Created by Denis on 7/11/26.
-//
-
 import SwiftUI
 
 @main

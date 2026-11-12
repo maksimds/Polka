@@ -1,10 +1,3 @@
-//
-//  PolkaTests.swift
-//  PolkaTests
-//
-//  Created by Denis on 7/11/26.
-//
-
 import Testing
 @testable import Polka
 

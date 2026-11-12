@@ -30,8 +30,6 @@ final class CopyKeeper {
     func start() {
         removeLeftovers()
         foldersInUse = folders(usedBy: store.items)
-        // `$items` sends the new list just before the store updates, so this works from
-        // the list it is given rather than `store.items`.
         watcher = store.$items.sink { [weak self] items in
             self?.removeCopiesNoLongerUsed(by: items)
         }
