@@ -2,8 +2,9 @@ import AppKit
 
 /// Where a drop of the shelf's own tiles puts them.
 struct TileDrop: Equatable {
-    /// The spot the first of them lands in, counted among the tiles that stay.
-    let target: Int
+    /// The spot the first of them lands in, counted among the tiles that stay. Nil
+    /// on a sorted shelf, where they go back to their own spots.
+    let target: Int?
     /// Where each dragged picture ends up, in the drag's order, in SwiftUI's
     /// coordinates (from the panel's top left). Empty if they can't all be placed,
     /// in which case the pictures don't glide.
@@ -155,7 +156,7 @@ final class DropTargetView: NSView {
                 item.draggingFrame = frames[index]
             }
         }
-        Log.drop.debug("Tiles dropped at spot \(drop.target), gliding: \(gliding)")
+        Log.drop.debug("Tiles dropped at spot \(drop.target.map(String.init) ?? "none (sorted)"), gliding: \(gliding)")
         DispatchQueue.main.async { [weak self] in self?.onTileDropped?(drop, gliding) }
         return true
     }

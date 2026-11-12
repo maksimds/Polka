@@ -31,5 +31,10 @@ echo "Installing to $app..."
 rm -rf "$app"
 ditto "$built" "$app"
 
+# Tell macOS the app changed, so Finder, Spotlight and the Dock show its current icon
+# rather than one they saved earlier.
+touch "$app"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$app"
+
 open "$app"
 echo "Installed $(git -C "$repo" describe --tags --always --dirty) and launched it."

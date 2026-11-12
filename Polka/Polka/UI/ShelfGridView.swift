@@ -13,9 +13,12 @@ struct ShelfItemCommands {
 
 /// The shelf's items as a scrolling grid, in the shelf's order. New items arrive at
 /// the top left. While tiles are being moved, `items` is the order they'd have if
-/// dropped now, so the others slide aside to make room.
+/// dropped now, so the others slide aside to make room. Sorted by Kind or File Type,
+/// the tiles show in `groups`, each starting a new row under its title.
 struct ShelfGridView: View {
     let items: [ShelfItem]
+    /// The titled groups `items` fall into, in order. Empty for a plain grid.
+    let groups: [ShelfGroup]
     /// False while the panel is closed or a drag out is running; the grid stays built.
     let isActive: Bool
     let missingItemIDs: Set<ShelfItem.ID>
@@ -27,6 +30,8 @@ struct ShelfGridView: View {
     let isMovingTiles: Bool
     /// The edge to scroll toward, a row at a time, while a tile is held near it.
     let scrollEdge: VerticalEdge?
+    /// A just-dropped item to bring into view on opening, instead of the first items.
+    let revealItemID: ShelfItem.ID?
     /// Where the grid is, kept up to date here for finding the spot under the pointer.
     let geometry: ShelfGridGeometry
     let images: ShelfItemImages
@@ -53,8 +58,9 @@ struct ShelfGridView: View {
     /// Where the current rectangle started, to tell a new rectangle from one that moved.
     @State private var marqueeStart: CGPoint?
 
-    /// Five equal columns (see `ShelfGridLayout`). Shared with the panel's header,
-    /// which lines its name and gear up with the tiles.
+    /// Five equal columns, matching `ShelfGridLayout`. The grid itself is laid out by
+    /// `ShelfGridArrangement`; the panel's header uses these to line its name and
+    /// buttons up with the tiles.
     static let columns = Array(repeating: GridItem(.flexible(), spacing: ShelfGridLayout.spacing),
                                count: ShelfGridLayout.columnCount)
 
@@ -81,7 +87,12 @@ struct ShelfGridView: View {
         GeometryReader { proxy in
             ScrollViewReader { scroller in
                 ScrollView {
-                    LazyVGrid(columns: Self.columns, spacing: ShelfGridLayout.spacing) {
+                    ShelfGridArrangement(groups: groups, tileIDs: items.map(\.id)) {
+                        ForEach(groups, id: \.title) { group in
+                            ShelfGroupHeader(title: group.title)
+                                .transition(.opacity)
+                                .layoutValue(key: ShelfGridEntryKey.self, value: .header(group.title))
+                        }
                         ForEach(items) { item in
                             ShelfItemTile(item: item,
                                           isAvailable: !missingItemIDs.contains(item.id),
@@ -104,6 +115,7 @@ struct ShelfGridView: View {
                                           onPressAreaMoved: { pressAreas.frames[item.id] = $0 },
                                           onPictureInSlotMeasured: { geometry.pictureInSlot = $0 })
                                 .transition(tileTransition)
+                                .layoutValue(key: ShelfGridEntryKey.self, value: .tile(item.id))
                         }
                     }
                     // The whole grid, rows scrolled out of sight included, before it's
@@ -114,6 +126,8 @@ struct ShelfGridView: View {
                         geometry.content = frame
                     }
                     .animation(reflowAnimation, value: items.map(\.id))
+                    // A change of groups alone, such as Kind to File Type, slides too.
+                    .animation(reflowAnimation, value: groups)
                     // At least as tall as the visible area, so a click or drag anywhere
                     // around the tiles reaches the gestures below. Presses on a tile's
                     // picture or name never get here: its AppKit layer takes them first.
@@ -141,14 +155,38 @@ struct ShelfGridView: View {
                         try? await Task.sleep(for: .milliseconds(450))
                     }
                 }
-                // The grid isn't rebuilt each time anymore, so bring the first items back
-                // into view on opening, while the shelf is still fading in.
+                // The grid isn't rebuilt each time anymore, so pick where it shows on
+                // opening, while the shelf is still fading in.
                 .onChange(of: isActive) { _, active in
-                    if active, let newest = items.first {
-                        scroller.scrollTo(newest.id, anchor: .top)
+                    if active {
+                        scrollOnOpening(with: scroller)
                     }
                 }
             }
+        }
+    }
+
+    // MARK: - Scrolling on opening
+
+    /// The top, or, after a drop, as far down as it takes to show the new item. On a
+    /// sorted shelf it may have landed below the first rows. A row (or a group's
+    /// title) stays lined up with the top, as when scrolling a row at a time.
+    private func scrollOnOpening(with scroller: ScrollViewProxy) {
+        let placement = geometry.layout.placement(tileCount: items.count, groups: groups.map(\.count))
+        guard let firstRow = placement.rows.first else { return }
+        var row = firstRow
+        if let revealItemID,
+           let index = items.firstIndex(where: { $0.id == revealItemID }),
+           placement.tiles.indices.contains(index) {
+            // The highest row that still keeps the new item in view when it's at the top.
+            let lowestTop = placement.tiles[index].maxY - geometry.viewport.height
+            row = placement.rows.first { $0.minY >= lowestTop - 0.5 } ?? firstRow
+        }
+        switch row.start {
+        case .header(let group):
+            scroller.scrollTo(groups[group].title, anchor: .top)
+        case .tile(let index):
+            scroller.scrollTo(items[index].id, anchor: .top)
         }
     }
 
@@ -210,6 +248,33 @@ struct ShelfGridView: View {
                 .offset(x: marquee.minX, y: marquee.minY)
                 .allowsHitTesting(false)
         }
+    }
+}
+
+/// A group's title, such as "Folders" or "PDF", followed by a hairline that runs to
+/// the end of the row. Dim white like the panel's header. It takes no presses, so a
+/// click there clears the selection and a drag starts a selection rectangle, as on
+/// any other free space.
+private struct ShelfGroupHeader: View {
+    let title: String
+
+    @Environment(\.displayScale) private var displayScale
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1)
+                .fixedSize()
+            Rectangle()
+                .fill(.white.opacity(0.18))
+                .frame(height: 1 / displayScale)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 

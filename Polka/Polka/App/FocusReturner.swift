@@ -3,10 +3,9 @@ import AppKit
 /// Gives focus back to the app you were in when a Polka window that took it closes.
 ///
 /// Polka activates itself for only two windows, Settings and Quick Look, because a
-/// window from an inactive app can't take keystrokes. Polka has no Dock icon and its
-/// notch panel never takes focus, so when that window closes, macOS would leave
-/// Polka active with nothing to type into. Shared by both, so it always knows the
-/// last other app you used.
+/// window from an inactive app can't take keystrokes. Polka's notch panel never takes
+/// focus, so when that window closes, macOS would leave Polka active with nothing to
+/// type into. Shared by both, so it always knows the last other app you used.
 @MainActor
 final class FocusReturner {
     /// The last other app that was active, kept up to date in case you switch to

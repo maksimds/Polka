@@ -9,6 +9,8 @@ struct NotchView: View {
     let dragSource: ShelfDragSource
     let openSettings: @MainActor () -> Void
     let commands: ShelfItemCommands
+    /// The pointer in the panel's SwiftUI space, for the drop zone's eyes.
+    let pointer: @MainActor () -> CGPoint?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Goes up each time a drag arrives over the drop zone, to bounce its icon once.
@@ -18,6 +20,10 @@ struct NotchView: View {
     private static let hoverGrowth = CGSize(width: 14, height: 4)
     /// Space between the panel's sides and the tiles, also used by the header.
     private static let sideInset: CGFloat = 16
+    /// Space between the notch and the drop zone's eyes.
+    private static let eyesTopGap: CGFloat = 9.9
+    /// Space between the eyes and the dashed box below them.
+    private static let eyesBottomGap: CGFloat = 11.88
 
     private var isTargeted: Bool { model.isDropTargeted }
     /// The shelf is showing and can be used.
@@ -139,6 +145,7 @@ struct NotchView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ShelfGridView(items: model.displayedItems,
+                              groups: model.displayedGroups,
                               isActive: isOpen,
                               missingItemIDs: store.missingItemIDs,
                               copyingItemIDs: store.copyingItemIDs,
@@ -146,6 +153,7 @@ struct NotchView: View {
                               hiddenItemIDs: model.hiddenItemIDs,
                               isMovingTiles: model.tileMove != nil,
                               scrollEdge: model.scrollEdge,
+                              revealItemID: model.itemToReveal,
                               geometry: model.gridGeometry,
                               images: images,
                               dragSource: dragSource,
@@ -176,7 +184,8 @@ struct NotchView: View {
     /// The strip beside the notch, laid out on the tiles' own grid: same columns, same
     /// side inset, and each end held to a picture's width. So "Polka" starts exactly
     /// where the first column's pictures start, and the gear ends exactly where the
-    /// last column's pictures end. The middle columns sit under the notch.
+    /// last column's pictures end. The sort button sits left of the gear, inside the
+    /// same picture's width, well clear of the notch. The middle columns sit under it.
     private var header: some View {
         LazyVGrid(columns: ShelfGridView.columns, spacing: 0) {
             nameLabel
@@ -184,8 +193,13 @@ struct NotchView: View {
             ForEach(0..<3, id: \.self) { _ in
                 Color.clear
             }
-            settingsButton
-                .frame(width: ShelfItemTile.imageSide, alignment: .trailing)
+            // 16 pt apart, so the two 8 pt click areas meet without overlapping.
+            HStack(spacing: 16) {
+                SortMenuButton(sort: store.sort, height: model.notchSize.height) { model.chooseSort($0) }
+                settingsButton
+            }
+            .fixedSize()
+            .frame(width: ShelfItemTile.imageSide, alignment: .trailing)
         }
         .frame(height: model.notchSize.height)
         .padding(.horizontal, Self.sideInset)
@@ -217,7 +231,22 @@ struct NotchView: View {
 
     // MARK: - Drop zone
 
+    /// Eyes hanging just under the notch, watching the drag, over the dashed box.
     private var dropZone: some View {
+        VStack(spacing: 0) {
+            DropZoneEyes(pointer: pointer, isTargeted: isTargeted)
+                // Just the eyes' own height, so its middle is where they look from.
+                // They can lean past it a little as they turn; nothing clips them.
+                .frame(height: DropZoneEyes.eyeSize.height)
+                .padding(.top, Self.eyesTopGap)
+                .padding(.bottom, Self.eyesBottomGap)
+            dropBox
+        }
+        .padding(.top, model.notchSize.height)
+        .padding([.horizontal, .bottom], 16)
+    }
+
+    private var dropBox: some View {
         RoundedRectangle(cornerRadius: 14, style: .continuous)
             .strokeBorder(style: StrokeStyle(lineWidth: 2, dash: [6, 5]))
             .foregroundStyle(.white.opacity(isTargeted ? 0.9 : 0.4))
@@ -242,7 +271,5 @@ struct NotchView: View {
             .onChange(of: isTargeted) { _, targeted in
                 if targeted { dropArrivals += 1 }
             }
-            .padding(.top, model.notchSize.height + 8)
-            .padding([.horizontal, .bottom], 16)
     }
 }
