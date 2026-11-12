@@ -38,6 +38,11 @@ final class NotchViewModel: ObservableObject {
             if state != .expanded, renamingItemID != nil {
                 renamingItemID = nil
             }
+            // Dust only rises over the open shelf.
+            if state != .expanded {
+                finishDissolving(dissolvingItemIDs)
+                dust.clear()
+            }
             if state == .collapsed {
                 clearSelection()
                 itemToReveal = nil
@@ -84,6 +89,20 @@ final class NotchViewModel: ObservableObject {
     @Published private(set) var tileMove: TileMove?
     /// Tiles just dropped, hidden while their pictures glide into place.
     @Published private(set) var landingItemIDs: Set<ShelfItem.ID> = []
+    /// Removed tiles taking their pictures for the dust, just before they leave the shelf.
+    @Published private(set) var dissolvingItemIDs: Set<ShelfItem.ID> = []
+    /// True while the tiles close the gap that dust left, which they do slowly.
+    @Published private(set) var isClosingDustGap = false
+    /// Where removed tiles turn to dust, drawn over the whole panel.
+    let dust = DustField()
+    /// Tiles that have taken their pictures, waiting to leave the shelf together.
+    private var dissolvedItemIDs: Set<ShelfItem.ID> = []
+    private var isFinishingDissolve = false
+    private var gapTask: Task<Void, Never>?
+    /// How long a removed tile may take to hand over its picture before it leaves anyway.
+    private static let dissolveTimeout: Duration = .milliseconds(250)
+    /// How long the grid's tiles take to close the gap, so the slow reflow covers it.
+    private static let dustGapDuration: Duration = .seconds(ShelfGridView.dustGapDuration)
     /// The edge the grid scrolls toward, one row at a time, while a tile is held near it.
     @Published private(set) var scrollEdge: VerticalEdge?
     /// Kept up to date by the grid, and read to find the spot under the pointer.
@@ -377,9 +396,66 @@ final class NotchViewModel: ObservableObject {
     /// just `id`, like Quick Look and Get Info. Only the shelf entries go; original
     /// files are never touched.
     func remove(from id: ShelfItem.ID) {
-        let ids = selection.contains(id) ? selection : [id]
-        store.remove(ids: ids)
-        selection.subtract(ids)
+        remove(selection.contains(id) ? selection : [id])
+    }
+
+    /// Takes items off the shelf (the × button, and the menu's "Remove"). On the open
+    /// shelf they turn to dust, after Telegram's delete animation: each tile hands a
+    /// picture of itself to `dust` and hides, then the items leave the shelf together
+    /// and the other tiles close the gap while the dust rises. With Reduce Motion, or
+    /// without the dust's view, they leave at once and shrink away.
+    func remove(_ ids: Set<ShelfItem.ID>) {
+        let leaving = ids.filter { id in store.items.contains { $0.id == id } }
+        guard state == .expanded, dust.canScatter,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              !leaving.isEmpty else {
+            store.remove(ids: ids)
+            selection.subtract(ids)
+            return
+        }
+        dissolvingItemIDs.formUnion(leaving)
+        // In case a tile never gets to take its picture, it leaves anyway.
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.dissolveTimeout)
+            self?.finishDissolving(leaving)
+        }
+    }
+
+    /// A tile has handed its picture to the dust. The others removed with it do so
+    /// while the same change is drawn, so they're all taken off the shelf together a
+    /// moment later, with one save.
+    func tileDissolved(_ id: ShelfItem.ID) {
+        dissolvedItemIDs.insert(id)
+        guard !isFinishingDissolve else { return }
+        isFinishingDissolve = true
+        // After the update that took the pictures, not during it.
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.isFinishingDissolve = false
+            let ids = self.dissolvedItemIDs
+            self.dissolvedItemIDs = []
+            self.finishDissolving(ids)
+        }
+    }
+
+    /// The items leave the shelf, and the other tiles close the gap slowly, as the dust
+    /// rises. Items that already left are skipped.
+    private func finishDissolving(_ ids: Set<ShelfItem.ID>) {
+        let leaving = dissolvingItemIDs.intersection(ids)
+        guard !leaving.isEmpty else { return }
+        isClosingDustGap = true
+        dissolvingItemIDs.subtract(leaving)
+        // Selected tiles stay selected until now, so their highlight turns to dust too.
+        selection.subtract(leaving)
+        store.remove(ids: leaving)
+        // Long enough for the grid to animate this change; another tile removed in the
+        // meantime closes its gap the same way.
+        gapTask?.cancel()
+        gapTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.dustGapDuration)
+            guard !Task.isCancelled else { return }
+            self?.isClosingDustGap = false
+        }
     }
 
     /// For something that went wrong outside the panel, such as a file that wouldn't open.

@@ -69,7 +69,7 @@ Polka is a native Swift and SwiftUI app with AppKit underneath for window and dr
 | Window | Borderless, non-activating panel pinned to the notch, visible on all Spaces | `NSPanel`, `collectionBehavior`, `NSScreen.safeAreaInsets`, `auxiliaryTopLeftArea` |
 | Input | Hover detection and global drag detection | `NSTrackingArea`, global `NSEvent` monitor for dragged events, `NSPasteboard(name: .drag).changeCount` |
 | Drag and drop | Panel as drop target and as drag source | `NSDraggingDestination`, `NSDraggingSource`, `NSItemProvider` |
-| UI | Collapsed and expanded states, item grid, animation | SwiftUI, spring animations |
+| UI | Collapsed and expanded states, item grid, animation | SwiftUI, spring animations, Metal for the dust a removed tile turns into |
 | Storage | Item model, persistence, expiry sweep | JSON file, `FileManager`, security-scoped bookmarks if needed |
 | App shell | Menu bar item, Dock icon, settings, launch at login | `MenuBarExtra`, `SMAppService` |
 

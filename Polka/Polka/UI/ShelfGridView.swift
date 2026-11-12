@@ -49,6 +49,13 @@ struct ShelfGridView: View {
     let dragContents: @MainActor (ShelfItem.ID) -> ShelfDragContents
     let onDelete: @MainActor (ShelfItem.ID) -> Void
     let onRemoveFromMenu: @MainActor (ShelfItem.ID) -> Void
+    /// Removed tiles taking their pictures for the dust, just before they leave.
+    let dissolvingItemIDs: Set<ShelfItem.ID>
+    /// True while the tiles close the gap dust left, which they do slowly.
+    let isClosingDustGap: Bool
+    let dust: DustField
+    /// A removed tile has handed its picture to the dust, and can leave the shelf.
+    let onDissolved: @MainActor (ShelfItem.ID) -> Void
     let onToggleTemporary: @MainActor (ShelfItem.ID) -> Void
     let onToggleKeepCopy: (@MainActor (ShelfItem.ID) -> Void)?
     let commands: ShelfItemCommands
@@ -93,11 +100,19 @@ struct ShelfGridView: View {
         reduceMotion ? .opacity : .scale(scale: 0.8).combined(with: .opacity)
     }
 
+    /// How long tiles take to close the gap left by tiles turning to dust: as long as
+    /// the front takes to cross a tile, as in Telegram, so the shelf settles while the
+    /// dust rises instead of sliding under a tile that's still there.
+    static let dustGapDuration: TimeInterval = 0.8
+
     /// With Reduce Motion, tiles making room for a moved one jump to their places
     /// instead of sliding there.
     private var reflowAnimation: Animation? {
         if reduceMotion {
             return isMovingTiles ? nil : .easeInOut(duration: 0.2)
+        }
+        if isClosingDustGap {
+            return .smooth(duration: Self.dustGapDuration)
         }
         return .snappy(duration: 0.28)
     }
@@ -125,6 +140,8 @@ struct ShelfGridView: View {
                                           dragContents: { dragContents(item.id) },
                                           onDelete: { onDelete(item.id) },
                                           onRemoveFromMenu: { onRemoveFromMenu(item.id) },
+                                          isDissolving: dissolvingItemIDs.contains(item.id),
+                                          onDissolve: { dissolve(item.id, picture: $0, scale: $1) },
                                           selectionCount: selection.count,
                                           onToggleTemporary: { onToggleTemporary(item.id) },
                                           onToggleKeepCopy: onToggleKeepCopy.map { toggle in { toggle(item.id) } },
@@ -191,6 +208,24 @@ struct ShelfGridView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Turning to dust
+
+    /// A removed tile's picture turns to dust right where the tile is drawn, and only
+    /// as much of it as the grid shows. The picture's top left is
+    /// `ShelfItemTile.snapshotMargin` above and left of the tile's picture and text,
+    /// which is what `pressAreas` holds, in the grid's visible area.
+    private func dissolve(_ id: ShelfItem.ID, picture: CGImage?, scale: CGFloat) {
+        if let picture, let area = pressAreas.frames[id] {
+            let viewport = geometry.viewport
+            let margin = ShelfItemTile.snapshotMargin
+            dust.scatter(picture,
+                         scale: scale,
+                         at: CGPoint(x: viewport.minX + area.minX - margin, y: viewport.minY + area.minY - margin),
+                         within: viewport)
+        }
+        onDissolved(id)
     }
 
     // MARK: - Scrolling on opening

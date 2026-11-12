@@ -26,6 +26,12 @@ struct ShelfItemTile: View {
     let onDelete: @MainActor () -> Void
     /// The menu's "Remove": this item, or the whole selection if this item is in it.
     let onRemoveFromMenu: @MainActor () -> Void
+    /// Set as the tile is removed from the open shelf: it takes a picture of what's
+    /// drawn of it, hands it over, and hides, and dust takes its place.
+    let isDissolving: Bool
+    /// The picture, at the display's scale and `snapshotMargin` larger on every side
+    /// than the tile's picture and text. Nil if it couldn't be made.
+    let onDissolve: @MainActor (CGImage?, CGFloat) -> Void
     /// How many items are selected, for the menu's "Remove 3 Items".
     let selectionCount: Int
     let onToggleTemporary: @MainActor () -> Void
@@ -65,8 +71,14 @@ struct ShelfItemTile: View {
     /// What's typed in the rename field, which the field grows to fit. Nil until
     /// something is typed.
     @State private var typedName: String?
+    /// True once the tile has handed its picture to the dust, so it hides.
+    @State private var isDissolved = false
 
     private static let coordinateSpace = "ShelfItemTile"
+
+    /// Room around the picture the dust starts from, so a selected picture's grey
+    /// square, which reaches 5 pt past the picture, comes along whole.
+    static let snapshotMargin: CGFloat = 8
 
     /// The name's font, as AppKit needs it for the rename field and for measuring.
     /// The same as the `Text` under the picture.
@@ -118,7 +130,10 @@ struct ShelfItemTile: View {
         return entries
     }
 
-    var body: some View {
+    /// What's drawn of the tile: its picture, name and type line. The tile itself also
+    /// measures the name and type line, and hides the name while it's being renamed.
+    /// The picture the dust starts from does neither.
+    private func face(isLive: Bool) -> some View {
         VStack(spacing: 2) {
             artwork
                 .frame(width: Self.imageSide, height: Self.imageSide)
@@ -141,25 +156,21 @@ struct ShelfItemTile: View {
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
                 .background(Capsule().fill(Color.accentColor.opacity(isSelected ? 1 : 0)))
-                .onGeometryChange(for: CGRect.self) { proxy in
-                    proxy.frame(in: .named(Self.coordinateSpace))
-                } action: { frame in
-                    nameFrame = frame
-                }
+                .modifier(FrameReport(isOn: isLive, space: Self.coordinateSpace) { nameFrame = $0 })
                 // The rename field takes its place, at once, as in Finder, rather than
                 // with the selection's fade.
-                .opacity(isRenaming ? 0 : 1)
+                .opacity(isLive && isRenaming ? 0 : 1)
                 .animation(nil, value: isRenaming)
             Text(detailLine)
                 .font(.system(size: 10))
                 .foregroundStyle(.white.opacity(0.55))
                 .lineLimit(1)
-                .onGeometryChange(for: CGRect.self) { proxy in
-                    proxy.frame(in: .named(Self.coordinateSpace))
-                } action: { frame in
-                    typeLineFrame = frame
-                }
+                .modifier(FrameReport(isOn: isLive, space: Self.coordinateSpace) { typeLineFrame = $0 })
         }
+    }
+
+    var body: some View {
+        face(isLive: true)
         // The picture and text, measured before the tile stretches to its column. Like
         // an icon on the desktop, only what's drawn of them counts as the tile, for
         // presses and hover (`tileShape`); the rest of the column is free space.
@@ -224,6 +235,23 @@ struct ShelfItemTile: View {
         }
         .onChange(of: isRenaming) { _, renaming in
             if !renaming { typedName = nil }
+        }
+        // Removed: a picture of the tile goes to the dust, and then the tile hides, at
+        // once. The dust's first frame looks just like the tile, so for a moment both
+        // may show, but never neither.
+        .background {
+            if isDissolving {
+                DissolveSnapshot(face: face(isLive: false).padding(Self.snapshotMargin),
+                                 width: tileWidth + 2 * Self.snapshotMargin) { picture, scale in
+                    onDissolve(picture, scale)
+                    isDissolved = true
+                }
+            }
+        }
+        .opacity(isDissolved ? 0 : 1)
+        .animation(nil, value: isDissolved)
+        .onChange(of: isDissolving) { _, dissolving in
+            if !dissolving { isDissolved = false }
         }
         // Lifting out is instant, since the picture is already under the pointer.
         // Coming back is a quick fade, so it doesn't pop in.
@@ -412,6 +440,51 @@ struct ShelfItemTile: View {
                     .strokeBorder(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 3)
                     .padding(-3)
             )
+    }
+}
+
+/// Reports where a part of the tile is drawn, in the tile, when `isOn`. The picture the
+/// dust starts from is drawn outside the tile, so it must not report.
+private struct FrameReport: ViewModifier {
+    let isOn: Bool
+    let space: String
+    let action: (CGRect) -> Void
+
+    func body(content: Content) -> some View {
+        if isOn {
+            content.onGeometryChange(for: CGRect.self) { proxy in
+                proxy.frame(in: .named(space))
+            } action: { frame in
+                action(frame)
+            }
+        } else {
+            content
+        }
+    }
+}
+
+/// Takes the picture a removed tile turns to dust from, as soon as it's added: `face`
+/// laid out `width` wide, at the display's scale.
+///
+/// `ImageRenderer` draws outside the panel, so it doesn't inherit the panel's
+/// settings, such as Reduce Transparency, which the glass reads. This view passes all
+/// of them on. It only exists for that moment, so the tiles themselves don't have to
+/// watch every setting.
+private struct DissolveSnapshot<Face: View>: View {
+    let face: Face
+    let width: CGFloat
+    let onTaken: @MainActor (CGImage?, CGFloat) -> Void
+
+    @Environment(\.self) private var environment
+
+    var body: some View {
+        Color.clear
+            .onAppear {
+                let renderer = ImageRenderer(content: face.environment(\.self, environment))
+                renderer.proposedSize = ProposedViewSize(width: width, height: nil)
+                renderer.scale = environment.displayScale
+                onTaken(renderer.cgImage, renderer.scale)
+            }
     }
 }
 

@@ -75,6 +75,14 @@ struct NotchView: View {
         VStack(spacing: 0) {
             content
                 .frame(width: shapeSize.width, height: shapeSize.height, alignment: .top)
+                // Removed tiles turn to dust over everything in the panel, and only
+                // inside its outline.
+                .overlay(alignment: .top) {
+                    DustOverlay(field: model.dust,
+                                outline: NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
+                                    .path(in: CGRect(origin: .zero, size: model.expandedSize)))
+                        .frame(width: model.expandedSize.width, height: model.expandedSize.height)
+                }
                 .clipped()
                 .background(
                     NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
@@ -185,8 +193,12 @@ struct NotchView: View {
                               onClick: { model.click($0, $1) },
                               onClearSelection: { model.clearSelection() },
                               dragContents: { model.dragContents(from: $0) },
-                              onDelete: { store.remove(id: $0) },
+                              onDelete: { model.remove([$0]) },
                               onRemoveFromMenu: { model.remove(from: $0) },
+                              dissolvingItemIDs: model.dissolvingItemIDs,
+                              isClosingDustGap: model.isClosingDustGap,
+                              dust: model.dust,
+                              onDissolved: { model.tileDissolved($0) },
                               onToggleTemporary: { model.toggleTemporary($0) },
                               onToggleKeepCopy: keepCopyAction,
                               commands: commands,
