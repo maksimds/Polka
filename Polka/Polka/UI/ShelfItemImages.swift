@@ -227,6 +227,41 @@ final class ShelfItemImages {
         switch item.source {
         case .file(let path, _): return NSWorkspace.shared.icon(forFile: path)
         case .link: return NSWorkspace.shared.icon(for: .internetLocation)
+        case .text(let text): return Self.textPage(for: text)
+        }
+    }
+
+    // MARK: - Text
+
+    /// A text item's page, shaped like a letter-size sheet, as tall as the picture square.
+    nonisolated static let textPageSize = CGSize(width: 40, height: 52)
+
+    /// A text item's picture: a small white page with the start of the text on it, the
+    /// way Finder shows a text file. Being page-shaped, it gets its remove badge on the
+    /// page's corner, like a document's thumbnail. It's drawn each time it's shown, so
+    /// it's sharp at any scale.
+    nonisolated static func textPage(for text: String) -> NSImage {
+        // Plenty to fill the page; the rest wouldn't show.
+        let start = String(text.prefix(400)).replacingOccurrences(of: "\t", with: "    ")
+        return NSImage(size: textPageSize, flipped: true) { rect in
+            NSColor.white.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
+
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byWordWrapping
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 5.5),
+                .foregroundColor: NSColor(white: 0.2, alpha: 1),
+                .paragraphStyle: paragraph,
+            ]
+            let textArea = rect.insetBy(dx: 4, dy: 4.5)
+            NSGraphicsContext.saveGraphicsState()
+            // Lines that don't fit stop at the page's margin rather than run past it.
+            NSBezierPath(rect: textArea).setClip()
+            NSAttributedString(string: start, attributes: attributes)
+                .draw(with: textArea, options: [.usesLineFragmentOrigin])
+            NSGraphicsContext.restoreGraphicsState()
+            return true
         }
     }
 }

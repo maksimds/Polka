@@ -24,8 +24,8 @@ v1 is a lean shelf for files and links. Everything else waits until the core fee
 
 | Bucket | Items |
 | --- | --- |
-| In v1 | Hover to expand, drag in, drag out, files, folders, links with their site's name and icon, temporary and permanent items, delete, open, Quick Look and Get Info, renaming a tile, converting a document to PDF, menu bar item, launch at login |
-| Later | Plain text and image snippets, search, tags or groups, pin to top, keyboard shortcut to open |
+| In v1 | Hover to expand, drag in, drag out, files, folders, links with their site's name and icon, text, pasting from the clipboard, screenshots straight to the shelf, temporary and permanent items, delete, open, Quick Look and Get Info, renaming a tile, converting a document to PDF, menu bar item, launch at login |
+| Later | Search, tags or groups, pin to top, keyboard shortcut to open |
 | Out of scope | Cloud sync, iPhone companion, sharing with others, AirDrop, music or calendar widgets, App Store release |
 
 ## Functional requirements
@@ -52,6 +52,8 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-16 | A file's right-click menu offers Quick Look and Get Info, which work as they do in Finder | P2 |
 | FR-17 | Any tile can be renamed from its right-click menu, in place as in Finder, to give it a shorter or clearer name. Only the tile's label changes, never the file's name, its path or the link's address, and clearing the name brings back the automatic one | P2 |
 | FR-18 | A document's right-click menu (docx, doc, rtf, rtfd, odt, txt) converts it to PDF, or every document in the selection. The PDF is saved next to the document under a free name and added to the shelf right after it; the document is never changed | P2 |
+| FR-19 | The panel's + menu has a Paste item, named after what's on the clipboard, that stores copied files, a picture, a link or plain text. Text becomes a text tile, which can also be dropped in, and drags out as text | P1 |
+| FR-20 | A Settings switch saves new screenshots and screen recordings to the shelf instead of the Desktop, as temporary items that go to the Trash when they expire or are removed. Turning it off puts back where they went before | P1 |
 
 ## Interaction flow
 
@@ -59,7 +61,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 
 Hovering the notch expands the panel. A drag from any app opens it as a drop target once the drag has lasted half a second, or right away if it reaches the notch, so quick drags elsewhere don't flash the panel open. If a drag ends somewhere else, the panel returns to collapsed.
 
-The expanded panel's + menu adds things without dragging. "Link" turns the shelf into a field for typing a link, and back into the shelf once it's added. The field takes the keyboard while it's open, without making Polka the active app. "File" opens the standard Open dialog.
+The expanded panel's + menu adds things without dragging. "Link" turns the shelf into a field for typing a link, and back into the shelf once it's added. The field takes the keyboard while it's open, without making Polka the active app. "File" opens the standard Open dialog. "Paste" stores what's on the clipboard, and says what that is ("Paste 3 Files", "Paste Image"). It's a menu item rather than Cmd-V, because the panel never takes the keyboard from the app you're in.
 
 ## Technical approach
 
@@ -89,17 +91,18 @@ Every shelf entry is one item, stored locally in the app's support folder. Nothi
 | Field | Meaning |
 | --- | --- |
 | `id` | Unique identifier |
-| `kind` | file, folder or link |
-| `title` | Automatic name (file name, or the site's name and the page's address) |
+| `kind` | file, folder, link or text |
+| `title` | Automatic name (file name, the site's name and the page's address, or a text's first line) |
 | `customName` | Empty unless the tile was renamed, otherwise the name shown instead of `title` |
-| `source` | Bookmark or path for references, or URL for links |
+| `source` | Bookmark or path for references, URL for links, or the text itself |
+| `origin` | Empty, or screenshot for one saved by macOS while screenshots go to the shelf |
 | `storageMode` | reference (points at the original) or copy (a duplicate kept by Polka) |
 | `original` | For a kept copy, the file it was made from, so the item can go back to it |
 | `createdAt` | When the item was added |
 | `expiresAt` | Empty for permanent items, otherwise the time the item is removed |
 | `sortOrder` | Position in the grid |
 
-Copy versus reference is a hybrid. Items default to reference, so no files are duplicated and the original stays the source of truth. An item's right-click menu offers to keep a copy, so it survives if the original moves. Files that an app hands over as a promise rather than a file on disk, such as a photo from Photos, a Mail attachment or an image from a browser, are stored as copies, since there is no original to point at. Deleting an item removes the entry and any Polka copy, never the original file.
+Copy versus reference is a hybrid. Items default to reference, so no files are duplicated and the original stays the source of truth. An item's right-click menu offers to keep a copy, so it survives if the original moves. Files that an app hands over as a promise rather than a file on disk, such as a photo from Photos, a Mail attachment or an image from a browser, are stored as copies, since there is no original to point at. So are pictures pasted from the clipboard, and screenshots. Deleting an item removes the entry and any Polka copy, never the original file. A screenshot's file goes to the Trash instead of being deleted, so one that turns out to be needed can still be found.
 
 New items are permanent unless the user makes them temporary. A temporary item lasts 24 hours by default, and that lifetime is a setting, not a hard-coded value. Temporary items are swept by a check at launch and on a timer.
 

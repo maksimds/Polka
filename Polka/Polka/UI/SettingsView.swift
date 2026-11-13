@@ -3,6 +3,8 @@ import SwiftUI
 /// The contents of the Settings window.
 struct SettingsView: View {
     @ObservedObject var loginItem: LoginItem
+    /// Nil when Polka has no folder of its own to save screenshots in.
+    let screenshots: ScreenshotCatcher?
 
     /// The raw stored value, watched by SwiftUI, so a change made with
     /// `defaults write` while the window is open shows up too.
@@ -61,7 +63,7 @@ struct SettingsView: View {
             } header: {
                 Text("Hover")
             } footer: {
-                footnote("A larger area or a shorter wait means more accidental opens.")
+                SettingsFootnote(text: "A larger area or a shorter wait means more accidental opens.")
             }
 
             Section {
@@ -74,8 +76,12 @@ struct SettingsView: View {
             } header: {
                 Text("Shelf")
             } footer: {
-                footnote("Items that are already temporary keep the time they have left.")
-                    .padding(.bottom, 10)
+                SettingsFootnote(text: "Items that are already temporary keep the time they have left.")
+                    .padding(.bottom, screenshots == nil ? 10 : 0)
+            }
+
+            if let screenshots {
+                ScreenshotsSection(catcher: screenshots)
             }
         }
         .formStyle(.grouped)
@@ -84,8 +90,37 @@ struct SettingsView: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
-    /// The small grey note under a section, lined up with the row labels.
-    private func footnote(_ text: String) -> some View {
+}
+
+/// "Save Screenshots to Polka" (FR-20). Its own view, so it can watch the switch's
+/// state, which macOS's Screenshot toolbar can also change.
+private struct ScreenshotsSection: View {
+    @ObservedObject var catcher: ScreenshotCatcher
+
+    var body: some View {
+        Section {
+            Toggle("Save Screenshots to Polka", isOn: Binding(
+                get: { catcher.isEnabled },
+                set: { catcher.setEnabled($0) }
+            ))
+        } header: {
+            Text("Screenshots")
+        } footer: {
+            // The same sentence on and off, so the window doesn't change height.
+            SettingsFootnote(text: """
+                Screenshots and screen recordings go on the shelf as temporary items, not \
+                to \(catcher.usualLocationName), and to the Trash when they expire or are removed.
+                """)
+                .padding(.bottom, 10)
+        }
+    }
+}
+
+/// The small grey note under a section, lined up with the row labels.
+private struct SettingsFootnote: View {
+    let text: String
+
+    var body: some View {
         Text(text)
             .font(.footnote)
             .foregroundStyle(.secondary)

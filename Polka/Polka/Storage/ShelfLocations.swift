@@ -19,6 +19,13 @@ struct ShelfLocations {
         folder.appendingPathComponent("Copies", isDirectory: true)
     }
 
+    /// Where macOS saves screenshots while "Save Screenshots to Polka" is on. Each one
+    /// is moved on into a copy folder as soon as it arrives. The name is what the
+    /// Screenshot toolbar's Options menu shows as the save location.
+    var screenshotsFolder: URL {
+        folder.appendingPathComponent("Polka Screenshots", isDirectory: true)
+    }
+
     static func standard(fileManager: FileManager = .default) throws -> ShelfLocations {
         let support = try fileManager.url(for: .applicationSupportDirectory,
                                           in: .userDomainMask,

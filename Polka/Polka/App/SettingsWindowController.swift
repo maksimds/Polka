@@ -8,13 +8,15 @@ import SwiftUI
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let loginItem: LoginItem
+    private let screenshots: ScreenshotCatcher?
     /// Gives focus back to the app you were in once Settings closes.
     private let focus: FocusReturner
     private var window: NSWindow?
     private var hasBeenPlaced = false
 
-    init(loginItem: LoginItem, focus: FocusReturner) {
+    init(loginItem: LoginItem, screenshots: ScreenshotCatcher?, focus: FocusReturner) {
         self.loginItem = loginItem
+        self.screenshots = screenshots
         self.focus = focus
         super.init()
     }
@@ -27,6 +29,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             placeOnPointerScreen(window)
         }
         loginItem.refresh()
+        // The Screenshot toolbar may have picked another save location since.
+        screenshots?.refresh()
 
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
@@ -46,7 +50,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     // MARK: - Private
 
     private func makeWindow() -> NSWindow {
-        let content = NSHostingController(rootView: SettingsView(loginItem: loginItem))
+        let content = NSHostingController(rootView: SettingsView(loginItem: loginItem, screenshots: screenshots))
         // Created with its content's size, and kept at it.
         let window = SettingsWindow(contentViewController: content)
         window.title = "Polka Settings"

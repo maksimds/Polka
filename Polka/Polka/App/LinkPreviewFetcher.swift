@@ -95,7 +95,12 @@ final class LinkPreviewFetcher {
     /// Deletes saved icons whose link is no longer on the shelf, including images left
     /// by older versions. Only PNGs named after an item, inside the Previews folder,
     /// are ever touched.
+    ///
+    /// Not when the saved shelf couldn't be read, such as one written by a newer
+    /// version: the links in it still have icons here, and once the file is put back
+    /// they'd show the generic one for good, since their previews count as done.
     private func removeUnusedIcons(keeping items: [ShelfItem]) {
+        guard !store.loadFailed else { return }
         let inUse = Set(items.compactMap { $0.linkPreview?.iconFileName })
         guard let names = try? fileManager.contentsOfDirectory(atPath: previewsFolder.path) else { return }
         for name in names where Self.isSavedByPolka(name) && !inUse.contains(name) {

@@ -1,14 +1,17 @@
 import SwiftUI
 
-/// What a tile can ask the app to do with its item. Each one collapses the panel
+/// What a tile can ask the app to do with its item. All but "Copy" collapse the panel
 /// first, so the panel controller provides them.
 struct ShelfItemCommands {
-    /// Double-click: the file in its default app, or the link in the browser.
+    /// Double-click: the file in its default app, the link in the browser, or the text
+    /// in Quick Look.
     let open: @MainActor (ShelfItem.ID) -> Void
     /// Right-click > Quick Look.
     let quickLook: @MainActor (ShelfItem.ID) -> Void
     /// Right-click > Get Info.
     let showInfo: @MainActor (ShelfItem.ID) -> Void
+    /// A text item's right-click > Copy.
+    let copy: @MainActor (ShelfItem.ID) -> Void
 }
 
 /// Right-click > Rename: the tile's name turns into a field, and the edit ends by
@@ -159,6 +162,7 @@ struct ShelfGridView: View {
                                           onOpen: { commands.open(item.id) },
                                           onQuickLook: { commands.quickLook(item.id) },
                                           onShowInfo: { commands.showInfo(item.id) },
+                                          onCopy: { commands.copy(item.id) },
                                           isRenaming: renamingItemID == item.id,
                                           onRename: { rename.begin(item.id) },
                                           onRenameFinished: { rename.finish(item.id, $0) },

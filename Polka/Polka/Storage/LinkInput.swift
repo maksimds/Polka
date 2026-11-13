@@ -35,6 +35,16 @@ enum LinkInput {
         return components.url
     }
 
+    /// The web address that pasted or dropped text is, if all it holds is one address
+    /// written out in full, with http or https. Anything less stays text: unlike in the
+    /// link field, "notes.txt" or "example.com" in a document is more likely a name or
+    /// a word than a link.
+    static func link(inText text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") else { return nil }
+        return url(from: text)
+    }
+
     /// True for an http or https address with a host: the only links Polka stores,
     /// opens or looks up, typed or dropped. Any other address (`smb:`, `vnc:`, an
     /// app's own scheme) would be handed to whatever app handles it, without the

@@ -6,7 +6,20 @@ struct ShelfItem: Identifiable, Codable, Equatable {
         case file
         case folder
         case link
+        /// A piece of plain text, pasted or dropped onto the shelf (FR-19).
+        case text
     }
+
+    /// Where an item came from, when that changes how Polka treats it.
+    enum Origin: String, Codable {
+        /// Saved by macOS into Polka's folder while "Save Screenshots to Polka" is on
+        /// (FR-20). Its file goes to the Trash, not straight out, once no item uses it.
+        case screenshot
+    }
+
+    /// The longest text a text item holds, in UTF-16 units (about 100 pages). The text
+    /// lives in shelf.json, which is saved again after every change.
+    static let maxTextLength = 200_000
 
     enum StorageMode: String, Codable {
         /// Points at the original file. The default.
@@ -26,6 +39,8 @@ struct ShelfItem: Identifiable, Codable, Equatable {
         /// A file or folder on disk. `bookmark` finds it again after it moves.
         case file(path: String, bookmark: Data?)
         case link(URL)
+        /// The text itself, kept in shelf.json.
+        case text(String)
     }
 
     /// What a link's preview fetch found (FR-6): the name the site gives itself and its icon.
@@ -68,6 +83,9 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     /// tile's label: the file keeps its own name and the link its address. Nil for the
     /// automatic name, which also means shelves saved before renaming existed still load.
     var customName: String? = nil
+    /// Nil for items dropped, pasted or added from the + menu, which also means
+    /// shelves saved before screenshots came to the shelf still load.
+    var origin: Origin? = nil
 }
 
 extension ShelfItem {
@@ -78,11 +96,13 @@ extension ShelfItem {
         customName ?? title
     }
 
-    /// The file or web address the item points at.
+    /// The file or web address the item points at. Text points at nothing and gives
+    /// `about:blank`, which Polka never opens (see `ItemOpener.open`).
     var url: URL {
         switch source {
         case .file(let path, _): return URL(fileURLWithPath: path)
         case .link(let url): return url
+        case .text: return URL(string: "about:blank")!
         }
     }
 
@@ -112,6 +132,10 @@ extension ShelfItem {
         let title: String
         let source: Source
         let storageMode: StorageMode
+        var origin: Origin? = nil
+        /// Set for an item that starts out temporary, such as a screenshot: how long
+        /// it lasts from the moment it's added. Nil for a permanent one.
+        var lifetime: TimeInterval? = nil
 
         /// `storageMode` is `.copy` for a file that already sits in Polka's Copies
         /// folder, such as one an app wrote there to keep a promise.
@@ -132,6 +156,30 @@ extension ShelfItem {
             source = .link(url)
             storageMode = .reference
         }
+
+        /// Text as it was pasted or dropped. The tile is named after its first line.
+        init(text: String) {
+            kind = .text
+            title = Self.title(forText: text)
+            source = .text(text)
+            storageMode = .reference
+        }
+
+        /// The longest automatic name a text item gets, before "…".
+        static let maxTextTitleLength = 60
+
+        /// The first line with something on it, spaces squeezed together, and cut short
+        /// with "…" past `maxTextTitleLength` characters. "Text" if there's nothing.
+        static func title(forText text: String) -> String {
+            let firstLine = text.split(whereSeparator: \.isNewline)
+                .lazy
+                .map { $0.split(whereSeparator: \.isWhitespace).joined(separator: " ") }
+                .first { !$0.isEmpty }
+            guard let firstLine else { return "Text" }
+            guard firstLine.count > maxTextTitleLength else { return firstLine }
+            let cut = firstLine.prefix(maxTextTitleLength).trimmingCharacters(in: .whitespaces)
+            return cut + "…"
+        }
     }
 
     /// Everything this item stands for when checking a drop for duplicates. A kept
@@ -151,6 +199,8 @@ extension ShelfItem.Source {
         switch self {
         case .file(let path, _): return "file:\(path)"
         case .link(let url): return "link:\(url.absoluteString)"
+        // The same text pasted twice is the same item, like the same link.
+        case .text(let text): return "text:\(text)"
         }
     }
 }
