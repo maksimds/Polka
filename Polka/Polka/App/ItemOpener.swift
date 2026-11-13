@@ -17,9 +17,9 @@ enum ItemOpener {
         }
         let opened = NSWorkspace.shared.open(url)
         if opened {
-            Log.app.debug("Opened \(url.absoluteString, privacy: .public)")
+            Log.app.debug("Opened \(url.absoluteString, privacy: .private)")
         } else {
-            Log.app.error("Couldn't open \(url.absoluteString, privacy: .public)")
+            Log.app.error("Couldn't open \(url.absoluteString, privacy: .private)")
         }
         return opened
     }

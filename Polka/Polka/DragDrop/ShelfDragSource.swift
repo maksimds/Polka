@@ -48,7 +48,7 @@ final class ShelfDragSource: NSObject, NSDraggingSource {
         current = contents
         onWillStart?(contents)
         Log.drop.debug("""
-            Dragging \(items.map(\.title).joined(separator: ", "), privacy: .public)\
+            Dragging \(items.map(\.title).joined(separator: ", "), privacy: .private)\
             \(contents.staysOnShelf ? " (shelf only)" : "", privacy: .public)
             """)
         let frame = NSRect(x: point.x - previewSide / 2,

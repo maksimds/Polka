@@ -101,8 +101,8 @@ struct LinkPreviewTests {
     }
 
     @Test func withoutIconTagsOnlyTheSitesFaviconIsTried() {
-        #expect(LinkPreviewFetcher.iconCandidates(inHTML: "", pageURL: url("http://localhost:8080/a/b"))
-                == [url("http://localhost:8080/favicon.ico")])
+        #expect(LinkPreviewFetcher.iconCandidates(inHTML: "", pageURL: url("https://example.com:8443/a/b"))
+                == [url("https://example.com:8443/favicon.ico")])
     }
 
     @Test func iconAddressesAreReadTheWayBrowsersReadThem() {

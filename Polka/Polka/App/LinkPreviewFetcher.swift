@@ -54,7 +54,7 @@ final class LinkPreviewFetcher {
     private func fetchMissingPreviews(in items: [ShelfItem]) {
         for item in items {
             guard case .link(let url) = item.source,
-                  LinkInput.isWebAddress(url),
+                  Self.mayLookUp(url),
                   item.linkPreview?.isCurrent != true,
                   !inFlight.contains(item.id),
                   !failed.contains(item.id) else { continue }
@@ -71,8 +71,8 @@ final class LinkPreviewFetcher {
         } catch {
             failed.insert(id)
             Log.app.info("""
-                Couldn't reach \(url.host ?? "a link", privacy: .public) for its preview: \
-                \(error.localizedDescription, privacy: .public)
+                Couldn't reach \(url.host ?? "a link", privacy: .private) for its preview: \
+                \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)
                 """)
             return
         }
@@ -84,7 +84,7 @@ final class LinkPreviewFetcher {
                 try Self.savePNG(icon, to: previewsFolder.appendingPathComponent(name))
                 iconFileName = name
             } catch {
-                Log.app.error("Could not save a site icon: \(error.localizedDescription, privacy: .public)")
+                Log.app.error("Could not save a site icon: \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)")
             }
         }
         // Saving and recording happen back to back on the main actor, so the cleanup
@@ -135,15 +135,35 @@ final class LinkPreviewFetcher {
     /// ImageIO doesn't read it, and AppKit's own reader is a whole XML parser.
     static let iconTypes: Set<String> = Set([UTType.ico, .png, .jpeg, .gif, .bmp, .webP].map(\.identifier))
 
+    /// Whether a link may be looked up at all: a web address (`LinkInput.isWebAddress`)
+    /// on the public internet. One on this Mac or the local network (`LocalNetwork`)
+    /// keeps the name from its address and the generic icon, and still opens as usual.
+    nonisolated static func mayLookUp(_ url: URL) -> Bool {
+        LinkInput.isWebAddress(url) && !LocalNetwork.contains(url)
+    }
+
     /// A session of its own rather than the shared one: every download gets a total
-    /// time limit, not just one on waiting, and nothing it fetches is cached on disk
-    /// or kept after Polka quits.
+    /// time limit, not just one on waiting, nothing it fetches is cached on disk or
+    /// kept after Polka quits, and no redirect leads off the public internet.
     nonisolated private static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = Limits.idleSeconds
         configuration.timeoutIntervalForResource = Limits.totalSeconds
-        return URLSession(configuration: configuration)
+        return URLSession(configuration: configuration, delegate: PublicRedirectsOnly(), delegateQueue: nil)
     }()
+
+    /// Turns down a redirect to anywhere `mayLookUp` wouldn't go, so a public page can't
+    /// send Polka on to a device on the local network. The redirect itself then comes
+    /// back as the answer, which isn't a 200, so the link gets the fallbacks.
+    final class PublicRedirectsOnly: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession,
+                        task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest) async -> URLRequest? {
+            guard let url = request.url, LinkPreviewFetcher.mayLookUp(url) else { return nil }
+            return request
+        }
+    }
 
     // MARK: - Fetching and saving
 
@@ -219,7 +239,8 @@ final class LinkPreviewFetcher {
 
     /// Where else to look for an icon, best first: the page's Apple touch icons (usually
     /// a large PNG), then its other icons, in the order the page lists them, then the
-    /// site's /favicon.ico. Only web addresses, each once, and at most `iconCandidates`.
+    /// site's /favicon.ico. Only addresses `mayLookUp` allows, each once, and at most
+    /// `iconCandidates`, so a public page can't point Polka at a local device either.
     /// A Safari pinned-tab `mask-icon` isn't an icon, and a `data:` icon is skipped.
     static func iconCandidates(inHTML html: String, pageURL: URL) -> [URL] {
         var touchIcons: [URL] = []
@@ -249,7 +270,7 @@ final class LinkPreviewFetcher {
 
         var candidates: [URL] = []
         for address in touchIcons + icons + [siteFavicon.url].compactMap({ $0 })
-        where LinkInput.isWebAddress(address) && !candidates.contains(address) {
+        where mayLookUp(address) && !candidates.contains(address) {
             candidates.append(address)
         }
         return Array(candidates.prefix(Limits.iconCandidates))

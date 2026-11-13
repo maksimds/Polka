@@ -64,11 +64,11 @@ final class CopyKeeper {
                 }
                 return false
             }
-            Log.storage.info("Keeping a copy of \(item.title, privacy: .public)")
+            Log.storage.info("Keeping a copy of \(item.title, privacy: .private)")
             return true
         case .failure(let error):
             Log.storage.error("""
-                Could not copy \(item.title, privacy: .public): \(error.localizedDescription, privacy: .public)
+                Could not copy \(item.title, privacy: .private): \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)
                 """)
             return false
         }
@@ -88,7 +88,7 @@ final class CopyKeeper {
             do {
                 destination = try copies.makeFolder()
             } catch {
-                Log.drop.error("No folder for a promised file: \(error.localizedDescription, privacy: .public)")
+                Log.drop.error("No folder for a promised file: \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)")
                 onFailure(nil)
                 continue
             }
@@ -111,7 +111,7 @@ final class CopyKeeper {
                              onFailure: @MainActor (_ fileName: String?) -> Void) {
         let name = url.lastPathComponent.isEmpty ? nil : url.lastPathComponent
         if let failure {
-            Log.drop.error("A promised file didn't arrive: \(failure, privacy: .public)")
+            Log.drop.error("A promised file didn't arrive: \(failure, privacy: .private)")
             onFailure(name)
             return
         }
@@ -123,7 +123,7 @@ final class CopyKeeper {
         // Apps write where they're asked, but anything that lands elsewhere is only
         // ever referenced, so Polka never deletes it.
         let mode: ShelfItem.StorageMode = copies.folderName(containing: url.path) != nil ? .copy : .reference
-        Log.drop.info("Received promised file \(url.lastPathComponent, privacy: .public)")
+        Log.drop.info("Received promised file \(url.lastPathComponent, privacy: .private)")
         store.add([ShelfItem.Draft(fileURL: url, storageMode: mode)])
     }
 
