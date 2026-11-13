@@ -25,7 +25,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         focus.rememberFrontmostApp()
         let window = self.window ?? makeWindow()
         self.window = window
-        if !window.isVisible {
+        let isOpening = !window.isVisible
+        if isOpening {
             placeOnPointerScreen(window)
         }
         loginItem.refresh()
@@ -37,6 +38,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // If macOS turns the activation down, the window still comes to the front,
         // and one click on it gives it focus.
         window.orderFrontRegardless()
+        if isOpening {
+            // AppKit puts the caret in a window's first text field when it opens, and
+            // here that's the hex code, which you rarely want to type. SwiftUI may
+            // place it a moment later, hence once more on the next pass.
+            window.makeFirstResponder(nil)
+            DispatchQueue.main.async { window.makeFirstResponder(nil) }
+        }
     }
 
     // MARK: - NSWindowDelegate
@@ -80,6 +88,18 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 /// Polka's menu bar has no File menu, so no Close item, and the window handles
 /// Cmd-W itself.
 private final class SettingsWindow: NSWindow {
+    /// A click anywhere but the field being typed in ends the typing and applies it, as
+    /// in Finder. On its own, AppKit keeps the field going when you click a control
+    /// that doesn't take typing, such as a swatch, or the window's background.
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown || event.type == .rightMouseDown,
+           let field = (firstResponder as? NSTextView)?.delegate as? NSView,
+           !field.convert(field.bounds, to: nil).contains(event.locationInWindow) {
+            makeFirstResponder(nil)
+        }
+        super.sendEvent(event)
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
            event.charactersIgnoringModifiers == "w" {

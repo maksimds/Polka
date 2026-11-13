@@ -22,6 +22,8 @@ struct NotchView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     /// Settings' Transparency, watched so a change shows on the next opening.
     @AppStorage(ShelfSettings.panelTransparencyKey) private var storedTransparency = ShelfSettings.defaultPanelTransparency
+    /// Settings' Color, a hex code, or nothing for black.
+    @AppStorage(ShelfSettings.panelColorKey) private var storedColor = ""
     /// Goes up each time a drag arrives over the drop zone, to bounce its icon once.
     @State private var dropArrivals = 0
 
@@ -96,10 +98,12 @@ struct NotchView: View {
                         .frame(width: model.expandedSize.width, height: model.expandedSize.height)
                 }
                 .clipped()
-                // Solid black, or see-through glass while open (Settings' Transparency).
+                // Solid black, or glass while open: see-through (Settings' Transparency),
+                // colored (Settings' Color), or both.
                 .background(
                     PanelBackground(shape: NotchShape(topRadius: topRadius, bottomRadius: bottomRadius),
                                     transparency: transparency,
+                                    color: ShelfSettings.panelColor(stored: storedColor),
                                     isClosed: model.state.isAtNotchSize,
                                     isOpen: isOpen)
                 )

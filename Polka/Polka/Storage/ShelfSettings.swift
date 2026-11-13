@@ -99,6 +99,28 @@ struct ShelfSettings {
         min(max(stored, panelTransparencyRange.lowerBound), panelTransparencyRange.upperBound)
     }
 
+    static let panelColorKey = "panelColor"
+
+    /// The color the open panel's glass is made from, kept as its hex code. Nil is
+    /// black, the panel as it always was.
+    var panelColor: PanelColor? {
+        get { Self.panelColor(stored: defaults.string(forKey: Self.panelColorKey) ?? "") }
+        nonmutating set { defaults.set(Self.storedValue(for: newValue), forKey: Self.panelColorKey) }
+    }
+
+    /// The color a stored value stands for. Nothing stored, a code Polka can't read,
+    /// or #000000 is black.
+    static func panelColor(stored: String) -> PanelColor? {
+        guard let color = PanelColor(hex: stored), color != .black else { return nil }
+        return color
+    }
+
+    /// What's stored for a color: its hex code, or nothing for black.
+    static func storedValue(for color: PanelColor?) -> String {
+        guard let color, color != .black else { return "" }
+        return color.hex
+    }
+
     // MARK: - Sorting
 
     static let shelfSortKey = "shelfSort"
