@@ -54,6 +54,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-18 | A document's right-click menu (docx, doc, rtf, rtfd, odt, txt) converts it to PDF, or every document in the selection. The PDF is saved next to the document under a free name and added to the shelf right after it; the document is never changed | P2 |
 | FR-19 | The panel's + menu has a Paste item, named after what's on the clipboard, that stores copied files, a picture, a link or plain text. Text becomes a text tile, which can also be dropped in, and drags out as text | P1 |
 | FR-20 | A Settings switch saves new screenshots and screen recordings to the shelf instead of the Desktop, as temporary items that go to the Trash when they expire or are removed. Turning it off puts back where they went before | P1 |
+| FR-21 | Any tile can be pinned from its right-click menu. Pinned tiles have the first row to themselves in every sort, marked with a pin, at most five of them; pinning a sixth says why it can't | P2 |
 
 ## Interaction flow
 
@@ -101,6 +102,7 @@ Every shelf entry is one item, stored locally in the app's support folder. Nothi
 | `createdAt` | When the item was added |
 | `expiresAt` | Empty for permanent items, otherwise the time the item is removed |
 | `sortOrder` | Position in the grid |
+| `pinned` | Empty unless the item is pinned to the first row |
 
 Copy versus reference is a hybrid. Items default to reference, so no files are duplicated and the original stays the source of truth. An item's right-click menu offers to keep a copy, so it survives if the original moves. Files that an app hands over as a promise rather than a file on disk, such as a photo from Photos, a Mail attachment or an image from a browser, are stored as copies, since there is no original to point at. So are pictures pasted from the clipboard, and screenshots. Deleting an item removes the entry and any Polka copy, never the original file. A screenshot's file goes to the Trash instead of being deleted, so one that turns out to be needed can still be found.
 

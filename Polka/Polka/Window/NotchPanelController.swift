@@ -22,6 +22,11 @@ final class NotchPanelController {
     private var mouseMonitors: [Any] = []
     private var screenObserver: NSObjectProtocol?
     private var keyObserver: NSObjectProtocol?
+    private var menuObservers: [NSObjectProtocol] = []
+    /// A menu is open: a header symbol's ("Sort By", "Add New") or a tile's right-click
+    /// menu. The shelf stays open meanwhile, wherever the pointer goes, so the menu
+    /// is never left floating over a collapsed notch.
+    private var isMenuOpen = false
     private var cancellables = Set<AnyCancellable>()
     private var hoverTask: Task<Void, Never>?
     private var delayedCollapseTask: Task<Void, Never>?
@@ -152,6 +157,7 @@ final class NotchPanelController {
         startDragSource()
         observeScreenChanges()
         observeKeyboardLoss(of: panel)
+        observeMenus()
     }
 
     // MARK: - Layout
@@ -453,9 +459,11 @@ final class NotchPanelController {
                 cancelHover()
             }
         case .expanded:
-            if model.renamingItemID != nil {
+            if model.renamingItemID != nil || isMenuOpen {
                 // The shelf stays open while you type a name, wherever the pointer
                 // goes, as the link field does. Return, Esc or a click ends it.
+                // Likewise while a menu is open: choosing or dismissing it ends that,
+                // and the next move away collapses the shelf as usual.
                 cancelDelayedCollapse()
             } else if isPointerNearPanel(geometry) {
                 cancelDelayedCollapse()
@@ -546,13 +554,30 @@ final class NotchPanelController {
     private func collapseIfStillAway() {
         delayedCollapseTask = nil
         guard let geometry, model.state == .expanded, model.renamingItemID == nil,
-              !isPointerNearPanel(geometry) else { return }
+              !isMenuOpen, !isPointerNearPanel(geometry) else { return }
         model.state = .collapsed
     }
 
     private func cancelDelayedCollapse() {
         delayedCollapseTask?.cancel()
         delayedCollapseTask = nil
+    }
+
+    // MARK: - Menus
+
+    /// AppKit announces every menu Polka opens, pop-up or right-click, when it starts
+    /// and stops following the pointer. While one is open, mouse moves still reach
+    /// `pointerMoved`, which would otherwise collapse the shelf under the menu.
+    private func observeMenus() {
+        let changes: [(Notification.Name, Bool)] = [(NSMenu.didBeginTrackingNotification, true),
+                                                     (NSMenu.didEndTrackingNotification, false)]
+        menuObservers = changes.map { name, isOpen in
+            // Run as it's posted, which is always on the main thread, so the flag is
+            // set before the next mouse move is handled.
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated { self?.isMenuOpen = isOpen }
+            }
+        }
     }
 
     // MARK: - Global drag

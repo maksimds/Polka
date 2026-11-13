@@ -49,12 +49,19 @@ enum Glass {
 struct GlassSurface<S: InsettableShape>: View {
     let shape: S
     var tint: Color?
+    /// How much lighter the top is than the bottom, from 0 (flat) to 1, around the
+    /// same middle.
+    var gradient: Double
+    /// How bright the light along the edge is, from 0 (none) to 1.
+    var rimLight: Double
 
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
-    init(_ shape: S, tint: Color? = nil) {
+    init(_ shape: S, tint: Color? = nil, gradient: Double = 1, rimLight: Double = 1) {
         self.shape = shape
         self.tint = tint
+        self.gradient = gradient
+        self.rimLight = rimLight
     }
 
     var body: some View {
@@ -68,13 +75,22 @@ struct GlassSurface<S: InsettableShape>: View {
                     shape.fill(Color(white: 0.3))
                 }
             } else {
-                shape.fill(LinearGradient(colors: [.white.opacity(0.17), .white.opacity(0.06)],
-                                          startPoint: .top, endPoint: .bottom))
+                shape.fill(fill)
                 shape.strokeBorder(Glass.rim, lineWidth: Glass.rimWidth)
+                    .opacity(rimLight)
             }
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+    }
+
+    /// From 0.17 white at the top to 0.06 at the bottom at full gradient. Less
+    /// narrows the spread but keeps the middle, so the glass is flatter, not darker.
+    private var fill: LinearGradient {
+        let middle = 0.115
+        let spread = 0.055 * gradient
+        return LinearGradient(colors: [.white.opacity(middle + spread), .white.opacity(middle - spread)],
+                              startPoint: .top, endPoint: .bottom)
     }
 }
 
@@ -97,6 +113,22 @@ struct GlassHeaderSymbol: View {
                 .font(.system(size: 14, weight: .semibold))
         }
         .frame(height: height)
+    }
+}
+
+/// The pin on a pinned tile's picture (FR-21), made of the same glass as the header's
+/// symbols, a little smaller. See-through glass would vanish over a light picture,
+/// such as a white page, so a soft dark halo sits behind it; over the dark shelf the
+/// halo doesn't show.
+struct GlassPinBadge: View {
+    var body: some View {
+        GlassGlyph(gloss: GlassHeaderSymbol.gloss) {
+            Image(systemName: "pin.fill")
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .compositingGroup()
+        .shadow(color: .black.opacity(0.55), radius: 1.5)
+        .accessibilityLabel("Pinned")
     }
 }
 
@@ -222,6 +254,10 @@ struct GlassTitle: View {
 /// `shape`. Nothing here is see-through, so it stays with Reduce Transparency.
 struct GlassPictureFinish<S: InsettableShape>: View {
     let shape: S
+    /// How strong the sheen across the top is, from 0 (none) to 1.
+    var sheen: Double = 1
+    /// How bright the light along the edge is, from 0 (none) to 1.
+    var rimLight: Double = 1
 
     var body: some View {
         ZStack {
@@ -230,7 +266,9 @@ struct GlassPictureFinish<S: InsettableShape>: View {
                 .init(color: .white.opacity(0.06), location: 0.35),
                 .init(color: .clear, location: 0.5),
             ], startPoint: .top, endPoint: .bottom))
+                .opacity(sheen)
             shape.strokeBorder(Glass.pictureRim, lineWidth: 1)
+                .opacity(rimLight)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)

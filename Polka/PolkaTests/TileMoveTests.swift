@@ -95,8 +95,10 @@ struct TileMoveTests {
     @Test func thePointerOnTheHeaderPicksTheTopRowYouCanSee() {
         let header = CGPoint(x: 16 + 2 * 99.2 + 40, y: 20)
 
-        #expect(geometry(rows: 4).slot(at: header) == 2)
-        #expect(geometry(rows: 4, scrolledRows: 1).slot(at: header) == 7)
+        let grid = layout.placement(tileCount: 20, groups: [])
+
+        #expect(geometry(rows: 4).spot(at: header, in: grid).index == 2)
+        #expect(geometry(rows: 4, scrolledRows: 1).spot(at: header, in: grid).index == 7)
     }
 
     @Test func aDroppedPictureLandsOnItsSpotsPicture() {

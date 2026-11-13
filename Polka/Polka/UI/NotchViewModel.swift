@@ -316,6 +316,17 @@ final class NotchViewModel: ObservableObject {
         }
     }
 
+    /// The tile's "Pin" or "Unpin" menu item (FR-21). Past the limit, nothing is pinned
+    /// and a message says why, rather than the item being greyed out without a reason.
+    func togglePinned(_ id: ShelfItem.ID) {
+        guard let item = store.items.first(where: { $0.id == id }) else { return }
+        if item.isPinned {
+            store.unpin(id: id)
+        } else if !store.pin(id: id) {
+            notice = "You can pin up to \(ShelfStore.maxPinned) items. Unpin one to pin this."
+        }
+    }
+
     /// Starts receiving the files an app promised in a drop. Called during the drop
     /// itself, so it changes nothing now; a failure shows a message later.
     func receivePromisedFiles(_ promises: [NSFilePromiseReceiver]) {
@@ -672,14 +683,16 @@ final class NotchViewModel: ObservableObject {
     /// somewhere doesn't shuffle every tile it passes.
     ///
     /// A sorted shelf keeps its order, so there the other tiles never make room and
-    /// the grid doesn't scroll: the moved tiles can only go back where they were.
+    /// the grid doesn't scroll: the moved tiles can only go back where they were. The
+    /// same goes for pinned and unpinned tiles moved together, which have no one
+    /// part of the shelf to land in.
     func tileMoved(to point: CGPoint) {
-        guard let tileMove, store.sort == .none else { return }
+        guard let tileMove, store.sort == .none,
+              let target = target(at: point, moving: tileMove.ids) else { return }
         let edge = gridGeometry.scrollEdge(at: point)
         if edge != scrollEdge {
             scrollEdge = edge
         }
-        let target = target(at: point, moving: tileMove.ids.count)
         guard target != pendingTarget else { return }
         pendingTarget = target
         settleTask?.cancel()
@@ -714,12 +727,12 @@ final class NotchViewModel: ObservableObject {
     /// like an icon dropped in a sorted Finder window.
     func tileDrop(at point: CGPoint) -> TileDrop? {
         guard let tileMove else { return nil }
-        let target = store.sort == .none ? target(at: point, moving: tileMove.ids.count) : nil
+        let target = store.sort == .none ? target(at: point, moving: tileMove.ids) : nil
         let landedItems = target.map { store.items.moving(Set(tileMove.ids), to: $0) } ?? store.items
         let landed = landedItems.map(\.id)
-        // Laid out with the groups' titles, if the order has them.
+        // Laid out in groups, the pinned row and the order's titled groups.
         let placement = gridGeometry.layout.placement(tileCount: landed.count,
-                                                      groups: store.sort.groups(of: landedItems).map(\.count))
+                                                      groups: store.sort.groups(of: landedItems))
         let frames = tileMove.ids.compactMap { id in
             landed.firstIndex(of: id).flatMap { gridGeometry.pictureFrame(ofTile: $0, in: placement) }
         }
@@ -757,10 +770,31 @@ final class NotchViewModel: ObservableObject {
         }
     }
 
-    /// Where the first moved tile would land with the pointer at `point`. Past the
-    /// last tile counts as the end.
-    private func target(at point: CGPoint, moving count: Int) -> Int {
-        min(gridGeometry.slot(at: point), max(store.items.count - count, 0))
+    /// Where the first moved tile would land with the pointer at `point`, counted
+    /// among the tiles that stay, as `moving(_:to:)` counts.
+    ///
+    /// Tiles stay in their part of the shelf: pinned ones in the pinned row, the
+    /// others after it. Held over the other part, they go to the nearest end of their
+    /// own, and past the last tile counts as the end. Nil for pinned and unpinned
+    /// tiles moved together, which can't land side by side in either part.
+    private func target(at point: CGPoint, moving ids: [ShelfItem.ID]) -> Int? {
+        let items = store.items
+        let moving = Set(ids)
+        let pinnedCount = items.filter(\.isPinned).count
+        let pinnedMoving = items.filter { moving.contains($0.id) && $0.isPinned }.count
+        let movingCount = items.filter { moving.contains($0.id) }.count
+        guard pinnedMoving == 0 || pinnedMoving == movingCount else { return nil }
+        let staying = items.count - movingCount
+        // Tiles only move within their part, so its size stays the same throughout.
+        let placement = gridGeometry.layout.placement(tileCount: items.count, groups: store.sort.groups(of: items))
+        let spot = gridGeometry.spot(at: point, in: placement)
+        // With anything pinned, the pinned row is the first group.
+        let isOverPinned = pinnedCount > 0 && spot.group == 0
+        if pinnedMoving > 0 {
+            let pinnedStaying = pinnedCount - pinnedMoving
+            return isOverPinned ? min(spot.index, pinnedStaying) : pinnedStaying
+        }
+        return isOverPinned ? pinnedCount : min(max(spot.index, pinnedCount), staying)
     }
 
     private func applyTarget(_ target: Int) {

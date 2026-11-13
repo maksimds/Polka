@@ -54,7 +54,8 @@ struct ShelfGridLayout: Equatable {
     /// From a title to its group's first row. Small, since a tile already has room
     /// above its picture.
     static let headerSpacing: CGFloat = 2
-    /// From a group's last row to the next group's title.
+    /// From a group's last row to the next group's title, or to its first row if it
+    /// has no title, as after the pinned row.
     static let groupSpacing: CGFloat = 10
 
     /// What a row of the grid starts with: a group's title, or a tile (by index).
@@ -66,6 +67,8 @@ struct ShelfGridLayout: Equatable {
     struct Row: Equatable {
         let start: RowStart
         let minY: CGFloat
+        /// The group the row belongs to. Zero on a plain grid.
+        var group = 0
     }
 
     /// Where everything goes, from the grid's top left.
@@ -84,28 +87,30 @@ struct ShelfGridLayout: Equatable {
         max((columnWidth - ShelfItemTile.imageSide) / 2, 0)
     }
 
-    /// Lays out `tileCount` tiles. `groups` is how many tiles each titled group has,
-    /// in order: each group starts a new row, under its title. Empty means one plain
-    /// grid with no titles, in the same spots as `frame(ofSlot:)`.
-    func placement(tileCount: Int, groups: [Int]) -> Placement {
-        let titled = !groups.isEmpty && groups.reduce(0, +) == tileCount
+    /// Lays out `tileCount` tiles in `groups`, in order: each group starts a new row,
+    /// under its title if it has one (`headers` holds only those). Empty, or groups
+    /// that don't add up to `tileCount`, means one plain grid, in the same spots as
+    /// `frame(ofSlot:)`.
+    func placement(tileCount: Int, groups: [ShelfGroup]) -> Placement {
+        let grouped = !groups.isEmpty && groups.map(\.count).reduce(0, +) == tileCount
         var placement = Placement()
         var y: CGFloat = 0
         var firstTile = 0
-        for (group, count) in (titled ? groups : [tileCount]).enumerated() {
-            if titled {
-                if group > 0 { y += Self.groupSpacing }
-                placement.rows.append(Row(start: .header(group), minY: y))
+        for (group, info) in (grouped ? groups : [ShelfGroup(title: nil, count: tileCount)]).enumerated() {
+            if group > 0 { y += Self.groupSpacing }
+            if info.title != nil {
+                placement.rows.append(Row(start: .header(group), minY: y, group: group))
                 placement.headers.append(CGRect(x: pictureInset, y: y,
                                                 width: max(width - 2 * pictureInset, 0),
                                                 height: Self.headerHeight))
                 y += Self.headerHeight + Self.headerSpacing
             }
+            let count = info.count
             let rowCount = (count + Self.columnCount - 1) / Self.columnCount
             for row in 0..<rowCount {
                 if row > 0 { y += Self.spacing }
                 let rowStart = firstTile + row * Self.columnCount
-                placement.rows.append(Row(start: .tile(rowStart), minY: y))
+                placement.rows.append(Row(start: .tile(rowStart), minY: y, group: group))
                 for column in 0..<min(Self.columnCount, firstTile + count - rowStart) {
                     placement.tiles.append(CGRect(x: CGFloat(column) * columnPitch, y: y,
                                                   width: columnWidth, height: Self.rowHeight))
@@ -116,6 +121,37 @@ struct ShelfGridLayout: Equatable {
         }
         placement.height = y
         return placement
+    }
+
+    /// A spot in a grid laid out with groups: the group it's in, and the index of the
+    /// tile that would be there, counted from the first tile of the whole grid. Past
+    /// the end of a group's last row, the index runs on as if the row were full.
+    struct Spot: Equatable {
+        let group: Int
+        let index: Int
+    }
+
+    /// The spot under `point`, from the grid's top left, in `placement`. Like
+    /// `slot(at:)`, which it matches on a plain grid: the gap between two rows,
+    /// a title included, is split between them, a point above the grid counts for
+    /// the first row, and one below it for rows past the last.
+    func spot(at point: CGPoint, in placement: Placement) -> Spot {
+        let rows = placement.rows.compactMap { row -> (start: Int, minY: CGFloat, group: Int)? in
+            guard case .tile(let start) = row.start else { return nil }
+            return (start, row.minY, row.group)
+        }
+        guard columnPitch > 0, var row = rows.first else { return Spot(group: 0, index: 0) }
+        for next in rows.dropFirst() {
+            guard point.y >= (row.minY + Self.rowHeight + next.minY) / 2 else { break }
+            row = next
+        }
+        // Rows that aren't there yet, below the last one.
+        let rowsPast = row.start == rows.last?.start
+            ? max(Int(((point.y - row.minY + Self.spacing / 2) / rowPitch).rounded(.down)), 0)
+            : 0
+        let column = Int(((point.x + Self.spacing / 2) / columnPitch).rounded(.down))
+        let index = row.start + rowsPast * Self.columnCount + min(max(column, 0), Self.columnCount - 1)
+        return Spot(group: row.group, index: index)
     }
 }
 
@@ -165,8 +201,9 @@ struct ShelfGridArrangement: Layout {
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
         let placement = placement(width: bounds.width)
         var frames: [ShelfGridEntry: CGRect] = [:]
-        for (index, group) in groups.enumerated() where placement.headers.indices.contains(index) {
-            frames[.header(group.title)] = placement.headers[index]
+        // The headers are those of the titled groups, in order.
+        for (index, title) in groups.compactMap(\.title).enumerated() where placement.headers.indices.contains(index) {
+            frames[.header(title)] = placement.headers[index]
         }
         for (index, id) in tileIDs.enumerated() where placement.tiles.indices.contains(index) {
             frames[.tile(id)] = placement.tiles[index]
@@ -184,7 +221,7 @@ struct ShelfGridArrangement: Layout {
     }
 
     private func placement(width: CGFloat) -> ShelfGridLayout.Placement {
-        ShelfGridLayout(width: width).placement(tileCount: tileIDs.count, groups: groups.map(\.count))
+        ShelfGridLayout(width: width).placement(tileCount: tileIDs.count, groups: groups)
     }
 }
 
@@ -210,13 +247,13 @@ final class ShelfGridGeometry {
         ShelfGridLayout(width: content.width)
     }
 
-    /// The spot under a point in the panel. A point outside the visible part counts
-    /// as the nearest point inside it, so the pointer on the header or beside the
-    /// grid picks one of the tiles you can see.
-    func slot(at point: CGPoint) -> Int {
+    /// The spot under a point in the panel, in the grid laid out as `placement` says.
+    /// A point outside the visible part counts as the nearest point inside it, so the
+    /// pointer on the header or beside the grid picks one of the tiles you can see.
+    func spot(at point: CGPoint, in placement: ShelfGridLayout.Placement) -> ShelfGridLayout.Spot {
         let inside = CGPoint(x: min(max(point.x, viewport.minX), viewport.maxX - 1),
                              y: min(max(point.y, viewport.minY), viewport.maxY - 1))
-        return layout.slot(at: CGPoint(x: inside.x - content.minX, y: inside.y - content.minY))
+        return layout.spot(at: CGPoint(x: inside.x - content.minX, y: inside.y - content.minY), in: placement)
     }
 
     /// Where the picture of the tile in spot `index` is, in the panel, on a grid

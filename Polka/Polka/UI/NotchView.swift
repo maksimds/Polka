@@ -211,6 +211,7 @@ struct NotchView: View {
                               dust: model.dust,
                               onDissolved: { model.tileDissolved($0) },
                               onToggleTemporary: { model.toggleTemporary($0) },
+                              onTogglePinned: { model.togglePinned($0) },
                               onToggleKeepCopy: keepCopyAction,
                               convertibleSelectionCount: model.convertibleSelectionCount,
                               onConvertToPDF: convertAction,
