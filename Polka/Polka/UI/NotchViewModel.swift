@@ -46,6 +46,7 @@ final class NotchViewModel: ObservableObject {
             if state == .collapsed {
                 clearSelection()
                 itemToReveal = nil
+                itemToShow = nil
             } else if state == .addingLink {
                 clearSelection()
             }
@@ -54,6 +55,9 @@ final class NotchViewModel: ObservableObject {
     /// A just-dropped item for the grid to scroll to as the panel opens, since on a
     /// sorted shelf it may land out of view. Nil means the first items.
     @Published private(set) var itemToReveal: ShelfItem.ID?
+    /// An item that just arrived on the open shelf, such as a converted PDF, for the
+    /// grid to scroll into view if it's out of sight.
+    @Published private(set) var itemToShow: ShelfItem.ID?
     /// Selected tiles. A drag that starts on one of them carries them all (FR-10).
     @Published private(set) var selection: Set<ShelfItem.ID> = []
     /// The tile whose name is being edited ("Rename"). The panel takes the keys while
@@ -114,6 +118,8 @@ final class NotchViewModel: ObservableObject {
     private let store: ShelfStore
     /// Nil when Polka has no folder of its own to keep copies in.
     private let copies: CopyKeeper?
+    /// Nil when Polka has no folder of its own to make PDFs in.
+    private let converter: PDFConverter?
     private let temporaryLifetime: () -> TimeInterval
     /// Remembers a "Sort By" choice for the next launch.
     private let saveSort: (ShelfSort) -> Void
@@ -128,11 +134,13 @@ final class NotchViewModel: ObservableObject {
 
     init(store: ShelfStore,
          copies: CopyKeeper? = nil,
+         converter: PDFConverter? = nil,
          temporaryLifetime: @escaping () -> TimeInterval = { ShelfSettings().temporaryLifetime },
          saveSort: @escaping (ShelfSort) -> Void = { ShelfSettings().shelfSort = $0 },
          moveSettleDelay: Duration = .milliseconds(150)) {
         self.store = store
         self.copies = copies
+        self.converter = converter
         self.temporaryLifetime = temporaryLifetime
         self.saveSort = saveSort
         self.moveSettleDelay = moveSettleDelay
@@ -140,6 +148,10 @@ final class NotchViewModel: ObservableObject {
 
     var canKeepCopies: Bool {
         copies != nil
+    }
+
+    var canConvertToPDF: Bool {
+        converter != nil
     }
 
     /// The shelf turned into the link field: as wide as the shelf, and only as tall
@@ -265,6 +277,65 @@ final class NotchViewModel: ObservableObject {
             if !store.useOriginal(id: id) {
                 notice = "Can't find the original of \(item.displayName), so the copy stays"
             }
+        }
+    }
+
+    // MARK: - Converting to PDF
+
+    /// What "Convert to PDF" on `id` converts: the whole selection if `id` is in it,
+    /// otherwise just `id`, like Quick Look and Remove. Anything that isn't a document,
+    /// can't be found, or is already being converted is skipped. In shelf order.
+    func documentsToConvert(from id: ShelfItem.ID) -> [ShelfItem.ID] {
+        let ids = selection.contains(id) ? selection : [id]
+        return store.items.filter { ids.contains($0.id) && canConvertNow($0) }.map(\.id)
+    }
+
+    /// How many selected documents "Convert to PDF" would convert, for the menu's
+    /// "Convert 3 Items to PDF".
+    var convertibleSelectionCount: Int {
+        guard !selection.isEmpty else { return 0 }
+        return store.items.filter { selection.contains($0.id) && canConvertNow($0) }.count
+    }
+
+    /// The tile's "Convert to PDF" menu item. Each PDF lands right after its document;
+    /// on the open shelf the grid scrolls to the first if it's out of sight, otherwise
+    /// the panel opens scrolled to it next time.
+    func convertToPDF(from id: ShelfItem.ID) {
+        guard let converter else { return }
+        let ids = documentsToConvert(from: id)
+        guard !ids.isEmpty else { return }
+        Task {
+            let outcome = await converter.convert(ids)
+            if let message = Self.conversionMessage(for: outcome) {
+                notice = message
+            }
+            let added = Set(outcome.added)
+            guard let first = store.items.first(where: { added.contains($0.id) })?.id else { return }
+            if state == .expanded {
+                itemToShow = first
+            } else {
+                itemToReveal = first
+            }
+        }
+    }
+
+    private func canConvertNow(_ item: ShelfItem) -> Bool {
+        PDFConversion.canConvert(item)
+            && !store.missingItemIDs.contains(item.id)
+            && !store.convertingItemIDs.contains(item.id)
+    }
+
+    /// A failure matters more than where a PDF ended up, so it's the one said.
+    static func conversionMessage(for outcome: PDFConverter.Outcome) -> String? {
+        switch outcome.failed.count {
+        case 0: break
+        case 1: return "Couldn't convert \(outcome.failed[0]) to PDF"
+        default: return "Couldn't convert \(outcome.failed.count) files to PDF"
+        }
+        switch outcome.keptInPolka.count {
+        case 0: return nil
+        case 1: return "Couldn't save \(outcome.keptInPolka[0]) next to its document, so Polka keeps it"
+        default: return "Couldn't save \(outcome.keptInPolka.count) PDFs next to their documents, so Polka keeps them"
         }
     }
 
