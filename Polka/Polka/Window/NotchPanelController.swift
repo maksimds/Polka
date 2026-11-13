@@ -10,6 +10,7 @@ final class NotchPanelController {
     private let images: ShelfItemImages
     private let openSettings: @MainActor () -> Void
     private let quickLook: QuickLookController
+    private let share: ShareController
     private let fileChooser: FileChooser
     private let model: NotchViewModel
     private let dragMonitor = GlobalDragMonitor()
@@ -56,11 +57,13 @@ final class NotchPanelController {
          copies: CopyKeeper?,
          converter: PDFConverter?,
          quickLook: QuickLookController,
+         share: ShareController,
          fileChooser: FileChooser,
          openSettings: @escaping @MainActor () -> Void) {
         self.store = store
         self.images = images
         self.quickLook = quickLook
+        self.share = share
         self.fileChooser = fileChooser
         self.openSettings = openSettings
         dragSource = ShelfDragSource(images: images)
@@ -158,6 +161,9 @@ final class NotchPanelController {
         observeScreenChanges()
         observeKeyboardLoss(of: panel)
         observeMenus()
+        // Sharing held the shelf open. The pointer may have stopped moving outside it,
+        // so check where it is now rather than wait for the next move.
+        share.onFinished = { [weak self] in self?.pointerMoved() }
     }
 
     // MARK: - Layout
@@ -380,13 +386,14 @@ final class NotchPanelController {
 
     // MARK: - Opening and inspecting items
 
-    /// Each one collapses the panel first, so it isn't covering what opens. The files
-    /// are worked out before that, since collapsing clears the selection.
+    /// Each one but Copy and Share collapses the panel first, so it isn't covering what
+    /// opens. The files are worked out before that, since collapsing clears the selection.
     private var itemCommands: ShelfItemCommands {
         ShelfItemCommands(open: { [weak self] in self?.openItem($0) },
                           quickLook: { [weak self] in self?.quickLookItems(from: $0) },
                           showInfo: { [weak self] in self?.showInfoForItems(from: $0) },
-                          copy: { [weak self] in self?.model.copyText($0) })
+                          copy: { [weak self] in self?.model.copyText($0) },
+                          share: { [weak self] in self?.shareItems(from: $0, pointingAt: $1, $2) })
     }
 
     /// Double-click. A file that can't be found does nothing, as it can't be dragged.
@@ -428,6 +435,18 @@ final class NotchPanelController {
         }
     }
 
+    /// The shelf stays open, since the popover points at the tile: like a menu, it
+    /// holds the shelf open until it closes, and so does the service picked from it.
+    /// Shown a tick later, once the menu that chose it has gone.
+    private func shareItems(from id: ShelfItem.ID, pointingAt view: NSView, _ area: NSRect) {
+        let objects = ShareController.objects(for: model.itemsToShare(from: id))
+        guard !objects.isEmpty else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.model.state == .expanded else { return }
+            self.share.share(objects, from: view, at: area)
+        }
+    }
+
     // MARK: - Hover
 
     private func startMouseMonitors() {
@@ -459,11 +478,12 @@ final class NotchPanelController {
                 cancelHover()
             }
         case .expanded:
-            if model.renamingItemID != nil || isMenuOpen {
+            if model.renamingItemID != nil || isMenuOpen || share.isSharing {
                 // The shelf stays open while you type a name, wherever the pointer
                 // goes, as the link field does. Return, Esc or a click ends it.
                 // Likewise while a menu is open: choosing or dismissing it ends that,
-                // and the next move away collapses the shelf as usual.
+                // and the next move away collapses the shelf as usual. And while the
+                // share popover, or the service picked from it, is up.
                 cancelDelayedCollapse()
             } else if isPointerNearPanel(geometry) {
                 cancelDelayedCollapse()
@@ -554,7 +574,7 @@ final class NotchPanelController {
     private func collapseIfStillAway() {
         delayedCollapseTask = nil
         guard let geometry, model.state == .expanded, model.renamingItemID == nil,
-              !isMenuOpen, !isPointerNearPanel(geometry) else { return }
+              !isMenuOpen, !share.isSharing, !isPointerNearPanel(geometry) else { return }
         model.state = .collapsed
     }
 

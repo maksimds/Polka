@@ -19,7 +19,24 @@ final class TileDragView: NSView {
         var isEnabled = true
         /// Puts a divider above this entry, to start a new group.
         var startsGroup = false
-        let action: @MainActor () -> Void
+        /// Handed this layer and the tile as drawn in it (`drawnArea`), for whatever
+        /// shows next to the tile, like Share's popover. Most entries don't need them.
+        let run: @MainActor (_ tile: NSView, _ drawnArea: NSRect) -> Void
+
+        init(title: String, isChecked: Bool = false, isEnabled: Bool = true, startsGroup: Bool = false,
+             action: @escaping @MainActor () -> Void) {
+            self.init(title: title, isChecked: isChecked, isEnabled: isEnabled, startsGroup: startsGroup,
+                      pointingAtTile: { _, _ in action() })
+        }
+
+        init(title: String, isChecked: Bool = false, isEnabled: Bool = true, startsGroup: Bool = false,
+             pointingAtTile action: @escaping @MainActor (_ tile: NSView, _ drawnArea: NSRect) -> Void) {
+            self.title = title
+            self.isChecked = isChecked
+            self.isEnabled = isEnabled
+            self.startsGroup = startsGroup
+            run = action
+        }
     }
 
     weak var source: ShelfDragSource?
@@ -228,7 +245,16 @@ final class TileDragView: NSView {
 
     @objc private func menuEntryChosen(_ sender: NSMenuItem) {
         guard shownEntries.indices.contains(sender.tag) else { return }
-        shownEntries[sender.tag].action()
+        shownEntries[sender.tag].run(self, drawnArea)
+    }
+
+    /// The tile as drawn (its picture, name and type line), in this layer's own
+    /// coordinates, which go up from the bottom. The whole layer until SwiftUI has
+    /// measured the tile.
+    private var drawnArea: NSRect {
+        guard let first = shape.first else { return bounds }
+        let area = shape.dropFirst().reduce(first) { $0.union($1) }
+        return NSRect(x: area.minX, y: bounds.height - area.maxY, width: area.width, height: area.height)
     }
 }
 
