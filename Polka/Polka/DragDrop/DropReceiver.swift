@@ -74,7 +74,7 @@ enum DropReceiver {
             Log.drop.info("Drop had nothing Polka can store (types: \(types, privacy: .public))")
         }
         for item in items {
-            Log.drop.info("Dropped \(item.label, privacy: .public)")
+            Log.drop.info("Dropped \(item.label, privacy: .private)")
         }
         return items
     }

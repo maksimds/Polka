@@ -107,6 +107,96 @@ struct LinkSafetyTests {
         #expect(store.items[0].linkPreview == nil)
     }
 
+    // MARK: - Not the local network
+
+    @Test func addressesOnThisMacOrTheLocalNetworkAreLocal() {
+        let local = [
+            "http://localhost:3000/", "http://LOCALHOST./", "http://myapp.localhost/",
+            "http://127.0.0.1/", "http://127.1/", "http://2130706433/", "http://0x7f000001/",
+            "http://0.0.0.0/", "http://10.0.0.5/", "http://100.64.0.1/", "http://169.254.1.1/",
+            "http://172.16.0.1/", "http://172.31.255.255/", "http://192.168.1.1/admin",
+            "http://224.0.0.1/", "http://255.255.255.255/",
+            "http://[::1]/", "http://[::]/", "http://[fe80::1]/", "http://[fd12:3456::1]/",
+            "http://[::ffff:192.168.1.1]/", "http://[::ffff:c0a8:101]/",
+            "http://nas/", "http://printer.local/", "http://router.lan/", "http://box.home.arpa/",
+            "http://service.internal/",
+        ]
+        for address in local {
+            #expect(LocalNetwork.contains(url(address)), "\(address)")
+        }
+    }
+
+    @Test func publicAddressesAreNotLocal() {
+        let outside = [
+            "https://example.com/", "https://github.com/apple/swift", "https://example.com./",
+            "https://localhost.example.com/", "https://local.example.com/",
+            "http://8.8.8.8/", "http://172.32.0.1/", "http://100.128.0.1/", "http://192.169.0.1/",
+            "http://[2606:4700:4700::1111]/",
+        ]
+        for address in outside {
+            #expect(!LocalNetwork.contains(url(address)), "\(address)")
+        }
+    }
+
+    @Test func onlyPublicWebAddressesAreLookedUp() {
+        #expect(LinkPreviewFetcher.mayLookUp(url("https://example.com/a")))
+        #expect(!LinkPreviewFetcher.mayLookUp(url("http://192.168.1.1/")))
+        #expect(!LinkPreviewFetcher.mayLookUp(url("http://localhost:3000/")))
+        #expect(!LinkPreviewFetcher.mayLookUp(url("smb://example.com/share")))
+    }
+
+    @Test func aLinkOnTheLocalNetworkIsNeverContacted() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = ShelfStore()
+        var fetched: [URL] = []
+        let fetcher = LinkPreviewFetcher(store: store, previewsFolder: folder) { link in
+            fetched.append(link)
+            return .init(siteName: nil, icon: nil)
+        }
+        fetcher.start()
+
+        store.add([ShelfItem.Draft(linkURL: url("http://192.168.1.1/admin")),
+                   ShelfItem.Draft(linkURL: url("https://example.com/page"))])
+        try await waitUntil { store.items.contains { $0.linkPreview != nil } }
+
+        #expect(fetched == [url("https://example.com/page")])
+        let router = try #require(store.items.first { $0.url == url("http://192.168.1.1/admin") })
+        #expect(router.linkPreview == nil)
+        #expect(router.title == "192.168.1.1/admin")
+    }
+
+    @Test func aPublicPageCantPointItsIconsAtTheLocalNetwork() {
+        let html = #"""
+            <link rel="apple-touch-icon" href="http://192.168.1.1/cgi-bin/reboot">
+            <link rel="icon" href="http://printer.local/icon.png">
+            <link rel="icon" href="/icon.png">
+            """#
+
+        #expect(LinkPreviewFetcher.iconCandidates(inHTML: html, pageURL: url("https://example.com/")) == [
+            url("https://example.com/icon.png"),
+            url("https://example.com/favicon.ico"),
+        ])
+        #expect(LinkPreviewFetcher.iconCandidates(inHTML: html, pageURL: url("http://localhost:3000/")).isEmpty)
+    }
+
+    @Test func aRedirectToTheLocalNetworkIsTurnedDown() async throws {
+        let redirects = LinkPreviewFetcher.PublicRedirectsOnly()
+        let task = URLSession.shared.dataTask(with: url("https://example.com/"))
+        let response = try #require(HTTPURLResponse(url: url("https://example.com/"), statusCode: 302,
+                                                    httpVersion: nil, headerFields: nil))
+
+        func follows(to address: String) async -> Bool {
+            await redirects.urlSession(.shared, task: task, willPerformHTTPRedirection: response,
+                                       newRequest: URLRequest(url: url(address))) != nil
+        }
+
+        #expect(await follows(to: "https://www.example.com/"))
+        #expect(!(await follows(to: "http://192.168.1.1/cgi-bin/reboot")))
+        #expect(!(await follows(to: "http://localhost:8080/")))
+        #expect(!(await follows(to: "someapp://do-something")))
+    }
+
     // MARK: - Download limits
 
     private func stream(_ bytes: [UInt8]) -> AsyncStream<UInt8> {

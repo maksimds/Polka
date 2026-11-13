@@ -38,7 +38,7 @@ final class FocusReturner {
         // Polka is active, so it can pass activation on to another app.
         let activated = app.activate(from: .current, options: [])
         Log.app.debug("""
-            \(window, privacy: .public) closed, focus back to \(app.localizedName ?? "?", privacy: .public): \
+            \(window, privacy: .public) closed, focus back to \(app.localizedName ?? "?", privacy: .private): \
             \(activated)
             """)
     }

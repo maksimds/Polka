@@ -54,13 +54,13 @@ struct ShelfCopies {
     /// Deletes one copy folder and what's in it. Any other name is refused.
     func removeFolder(named name: String) {
         guard Self.isCopyFolderName(name) else {
-            Log.storage.error("Refused to delete \(name, privacy: .public): not one of Polka's copy folders")
+            Log.storage.error("Refused to delete \(name, privacy: .private): not one of Polka's copy folders")
             return
         }
         do {
             try FileManager.default.removeItem(at: folder.appendingPathComponent(name, isDirectory: true))
         } catch {
-            Log.storage.error("Could not delete a copy: \(error.localizedDescription, privacy: .public)")
+            Log.storage.error("Could not delete a copy: \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)")
         }
     }
 

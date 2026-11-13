@@ -40,7 +40,7 @@ final class LoginItem: ObservableObject {
         } catch {
             Log.app.error("""
                 Couldn't turn open at login \(enabled ? "on" : "off", privacy: .public): \
-                \(error.localizedDescription, privacy: .public)
+                \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)
                 """)
         }
         refresh()

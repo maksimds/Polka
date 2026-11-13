@@ -41,7 +41,7 @@ final class ShelfStore: ObservableObject {
             let saved = try persistence.load().sorted { $0.sortOrder < $1.sortOrder }
             items = Self.numbered(sort.arranged(saved))
         } catch {
-            Log.storage.error("Could not load the shelf: \(error.localizedDescription, privacy: .public)")
+            Log.storage.error("Could not load the shelf: \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)")
             items = []
             loadFailed = true
         }
@@ -268,7 +268,7 @@ final class ShelfStore: ObservableObject {
         do {
             try persistence.save(items)
         } catch {
-            Log.storage.error("Could not save the shelf: \(error.localizedDescription, privacy: .public)")
+            Log.storage.error("Could not save the shelf: \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)")
         }
     }
 

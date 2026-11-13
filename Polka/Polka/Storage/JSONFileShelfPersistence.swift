@@ -63,7 +63,7 @@ final class JSONFileShelfPersistence: ShelfPersistence {
             isSavingBlocked = true
             Log.storage.error("""
                 The shelf file could not be read or moved aside, so Polka won't save over it: \
-                \(error.localizedDescription, privacy: .public)
+                \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)
                 """)
         }
     }

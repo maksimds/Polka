@@ -86,12 +86,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func makeLocations() -> ShelfLocations? {
         do {
             let locations = try ShelfLocations.standard()
-            Log.storage.info("Shelf file: \(locations.shelfFile.path, privacy: .public)")
+            Log.storage.info("Shelf file: \(locations.shelfFile.path, privacy: .private)")
             return locations
         } catch {
             Log.storage.error("""
                 No Application Support folder, so the shelf won't be saved: \
-                \(error.localizedDescription, privacy: .public)
+                \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)
                 """)
             return nil
         }
