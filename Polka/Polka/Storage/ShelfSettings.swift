@@ -79,6 +79,26 @@ struct ShelfSettings {
         nonmutating set { defaults.set(newValue.rawValue, forKey: Self.hoverAreaKey) }
     }
 
+    // MARK: - Appearance
+
+    static let panelTransparencyKey = "panelTransparencyPercent"
+    /// Solid black, as the panel always was.
+    static let defaultPanelTransparency = 0
+    static let panelTransparencyRange = 0...100
+
+    /// How see-through the open panel is, in percent: 0 is solid black, 100 is the
+    /// blurred glass alone.
+    var panelTransparency: Int {
+        get { Self.panelTransparency(stored: defaults.integer(forKey: Self.panelTransparencyKey)) }
+        nonmutating set { defaults.set(newValue, forKey: Self.panelTransparencyKey) }
+    }
+
+    /// The transparency a stored value stands for. Nothing stored reads as 0, which is
+    /// the default; a value outside the range counts as the nearest end.
+    static func panelTransparency(stored: Int) -> Int {
+        min(max(stored, panelTransparencyRange.lowerBound), panelTransparencyRange.upperBound)
+    }
+
     // MARK: - Sorting
 
     static let shelfSortKey = "shelfSort"

@@ -19,6 +19,9 @@ struct NotchView: View {
     let pointer: @MainActor () -> CGPoint?
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    /// Settings' Transparency, watched so a change shows on the next opening.
+    @AppStorage(ShelfSettings.panelTransparencyKey) private var storedTransparency = ShelfSettings.defaultPanelTransparency
     /// Goes up each time a drag arrives over the drop zone, to bounce its icon once.
     @State private var dropArrivals = 0
 
@@ -53,7 +56,7 @@ struct NotchView: View {
     /// The outward curves where the shape meets the top of the screen. A real notch
     /// has its own, so the closed shape there stays square and hidden inside it.
     private var topRadius: CGFloat {
-        guard model.state.isAtNotchSize else { return 14 }
+        guard model.state.isAtNotchSize else { return NotchShape.openTopRadius }
         return model.hasNotch ? 0 : 6
     }
 
@@ -61,6 +64,12 @@ struct NotchView: View {
     private var bottomRadius: CGFloat {
         guard model.state.isAtNotchSize else { return 24 }
         return model.hasNotch ? 10 : shapeSize.height / 2
+    }
+
+    /// How see-through the open panel is, from 0 to 1. Reduce Transparency keeps it solid.
+    private var transparency: Double {
+        guard !reduceTransparency else { return 0 }
+        return Double(ShelfSettings.panelTransparency(stored: storedTransparency)) / 100
     }
 
     /// Opening: one smooth spring with a touch of bounce, shared by the shape and the
@@ -87,17 +96,12 @@ struct NotchView: View {
                         .frame(width: model.expandedSize.width, height: model.expandedSize.height)
                 }
                 .clipped()
+                // Solid black, or see-through glass while open (Settings' Transparency).
                 .background(
-                    NotchShape(topRadius: topRadius, bottomRadius: bottomRadius)
-                        .fill(Color.black)
-                        // Lifts the open panel off whatever is behind it. Pushed down so
-                        // it falls below the panel rather than on the menu bar beside
-                        // it, and none while closed, where it would ring the notch. It
-                        // fades in as the opening settles, not while the shape grows.
-                        .animation(isOpen ? .easeOut(duration: 0.2).delay(0.2) : .easeIn(duration: 0.1)) {
-                            $0.shadow(color: .black.opacity(model.state.isAtNotchSize ? 0 : 0.3),
-                                      radius: 10, y: 9)
-                        }
+                    PanelBackground(shape: NotchShape(topRadius: topRadius, bottomRadius: bottomRadius),
+                                    transparency: transparency,
+                                    isClosed: model.state.isAtNotchSize,
+                                    isOpen: isOpen)
                 )
             // Drops are received by DropTargetView (AppKit), which wraps this view.
             Spacer(minLength: 0)

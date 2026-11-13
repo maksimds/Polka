@@ -11,6 +11,8 @@ struct SettingsView: View {
     @AppStorage(ShelfSettings.temporaryLifetimeKey) private var storedLifetime: Double = 0
     @AppStorage(ShelfSettings.hoverDelayKey) private var storedHoverDelay = ShelfSettings.defaultHoverDelay
     @AppStorage(ShelfSettings.hoverAreaKey) private var hoverArea = ShelfSettings.defaultHoverArea
+    @AppStorage(ShelfSettings.panelTransparencyKey) private var storedTransparency = ShelfSettings.defaultPanelTransparency
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private var lifetime: Binding<TimeInterval> {
         Binding(get: { ShelfSettings.temporaryLifetime(stored: storedLifetime) },
@@ -32,6 +34,20 @@ struct SettingsView: View {
         hoverDelay == 0 ? "Instantly" : "\(hoverDelay) ms"
     }
 
+    private var transparency: Int {
+        ShelfSettings.panelTransparency(stored: storedTransparency)
+    }
+
+    /// In 5% steps, rounded here like the hover delay's, so there are no tick marks.
+    private var transparencySlider: Binding<Double> {
+        Binding(get: { Double(transparency) },
+                set: { storedTransparency = Int(($0 / 5).rounded()) * 5 })
+    }
+
+    private var transparencyLabel: String {
+        transparency == 0 ? "Solid" : "\(transparency)%"
+    }
+
     var body: some View {
         Form {
             Section("General") {
@@ -39,6 +55,29 @@ struct SettingsView: View {
                     get: { loginItem.isEnabled },
                     set: { loginItem.setEnabled($0) }
                 ))
+            }
+
+            Section {
+                LabeledContent("Transparency") {
+                    HStack(spacing: 10) {
+                        Slider(value: transparencySlider,
+                               in: Double(ShelfSettings.panelTransparencyRange.lowerBound)...Double(ShelfSettings.panelTransparencyRange.upperBound))
+                            .labelsHidden()
+                            .frame(width: 150)
+                        Text(transparencyLabel)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                            .frame(width: 58, alignment: .trailing)
+                    }
+                }
+                .disabled(reduceTransparency)
+            } header: {
+                Text("Appearance")
+            } footer: {
+                // About as long either way, so the window keeps its height.
+                SettingsFootnote(text: reduceTransparency
+                    ? "Reduce Transparency is on in Accessibility settings, so the shelf stays solid."
+                    : "How much of what's behind the open shelf shows through, blurred, as in Finder.")
             }
 
             Section {

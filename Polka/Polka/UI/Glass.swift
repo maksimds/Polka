@@ -5,10 +5,12 @@ import SwiftUI
 /// falls on the top, fading down the sides, with a faint reflection along the
 /// bottom.
 ///
-/// Apple's own glass (`glassEffect`) needs macOS 26, so this is drawn by hand. It
-/// doesn't blur what's behind it: the panel is a transparent window, and a blur
-/// there would show the desktop through it. On the black panel there's nothing to
-/// blur anyway. With Reduce Transparency on, every piece turns solid, as iOS does.
+/// Apple's own glass (`glassEffect`) needs macOS 26, so this is drawn by hand. These
+/// pieces don't blur what's behind them: the panel is a transparent window, so a blur
+/// would show the desktop there, not the panel. The panel's own background can be
+/// see-through glass instead (`PanelBackground`, Settings' Transparency), which
+/// blurs what's behind the whole window. With Reduce Transparency on, every piece
+/// turns solid, as iOS does.
 enum Glass {
     /// Between two symbols in the panel's header: +, Sort, Settings.
     static let headerSymbolSpacing: CGFloat = 16

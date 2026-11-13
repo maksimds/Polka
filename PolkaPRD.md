@@ -55,6 +55,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-19 | The panel's + menu has a Paste item, named after what's on the clipboard, that stores copied files, a picture, a link or plain text. Text becomes a text tile, which can also be dropped in, and drags out as text | P1 |
 | FR-20 | A Settings switch saves new screenshots and screen recordings to the shelf instead of the Desktop, as temporary items that go to the Trash when they expire or are removed. Turning it off puts back where they went before | P1 |
 | FR-21 | Any tile can be pinned from its right-click menu. Pinned tiles have the first row to themselves in every sort, marked with a pin, at most five of them; pinning a sixth says why it can't | P2 |
+| FR-22 | A Settings slider makes the open panel see-through glass, from solid black to a blurred view of what's behind it, like Finder's sidebar. The closed notch stays solid, and so does everything with Reduce Transparency on | P2 |
 
 ## Interaction flow
 

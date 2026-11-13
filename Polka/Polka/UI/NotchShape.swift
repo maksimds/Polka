@@ -8,6 +8,9 @@ import SwiftUI
 /// exactly the size it's given and only the top edge is wider. Both radii animate,
 /// so the shape can morph smoothly between the closed notch and the open panel.
 struct NotchShape: Shape {
+    /// The ears' radius on the open panel, the widest they get.
+    static let openTopRadius: CGFloat = 14
+
     var topRadius: CGFloat
     var bottomRadius: CGFloat
 
