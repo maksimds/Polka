@@ -117,12 +117,16 @@ struct GlassHeaderSymbol: View {
 }
 
 /// The pin on a pinned tile's picture (FR-21), made of the same glass as the header's
-/// symbols, a little smaller. See-through glass would vanish over a light picture,
-/// such as a white page, so a soft dark halo sits behind it; over the dark shelf the
-/// halo doesn't show.
+/// symbols, a little smaller, with a slight red tint so it stands out from the white
+/// symbols and pictures around it. See-through glass would vanish over a light
+/// picture, such as a white page, so a soft dark halo sits behind it; over the dark
+/// shelf the halo doesn't show.
 struct GlassPinBadge: View {
+    /// #FF6B5E: a warm red. Paler, with more white in it, it read as pink.
+    static let tint = Color(.sRGB, red: 1, green: 0x6B / 255, blue: 0x5E / 255)
+
     var body: some View {
-        GlassGlyph(gloss: GlassHeaderSymbol.gloss) {
+        GlassGlyph(gloss: GlassHeaderSymbol.gloss, tint: Self.tint) {
             Image(systemName: "pin.fill")
                 .font(.system(size: 11, weight: .semibold))
         }
