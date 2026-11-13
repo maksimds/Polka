@@ -57,6 +57,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-21 | Any tile can be pinned from its right-click menu. Pinned tiles have the first row to themselves in every sort, marked with a pin, at most five of them; pinning a sixth says why it can't | P2 |
 | FR-22 | A Settings slider makes the open panel see-through glass, from solid black to a blurred view of what's behind it, like Finder's sidebar. The closed notch stays solid, and so does everything with Reduce Transparency on | P2 |
 | FR-23 | Every tile's right-click menu has Share, which opens macOS's share popover pointing at the tile, as Finder's Share does for a file: files and folders, links and text, or the whole selection, go to AirDrop, Mail, Messages, Notes and the rest | P2 |
+| FR-24 | Settings offers a color for the open panel, from a color picker or a hex code. It's never drawn as the color itself but as a diagonal two-tone glass gradient made from it, deepened so the shelf's white names stay readable, and it works with the Transparency slider | P2 |
 
 ## Interaction flow
 
