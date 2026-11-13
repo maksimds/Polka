@@ -31,6 +31,7 @@ struct ShelfGridView: View {
     let isActive: Bool
     let missingItemIDs: Set<ShelfItem.ID>
     let copyingItemIDs: Set<ShelfItem.ID>
+    let convertingItemIDs: Set<ShelfItem.ID>
     let selection: Set<ShelfItem.ID>
     /// Tiles shown as empty gaps: being moved, or just dropped and still landing.
     let hiddenItemIDs: Set<ShelfItem.ID>
@@ -40,6 +41,9 @@ struct ShelfGridView: View {
     let scrollEdge: VerticalEdge?
     /// A just-dropped item to bring into view on opening, instead of the first items.
     let revealItemID: ShelfItem.ID?
+    /// An item that just arrived on the open shelf, such as a converted PDF, to scroll
+    /// into view if it's out of sight.
+    let showItemID: ShelfItem.ID?
     /// Where the grid is, kept up to date here for finding the spot under the pointer.
     let geometry: ShelfGridGeometry
     let images: ShelfItemImages
@@ -58,6 +62,10 @@ struct ShelfGridView: View {
     let onDissolved: @MainActor (ShelfItem.ID) -> Void
     let onToggleTemporary: @MainActor (ShelfItem.ID) -> Void
     let onToggleKeepCopy: (@MainActor (ShelfItem.ID) -> Void)?
+    /// How many selected documents "Convert to PDF" would convert.
+    let convertibleSelectionCount: Int
+    /// Nil when Polka has nowhere to make PDFs.
+    let onConvertToPDF: (@MainActor (ShelfItem.ID) -> Void)?
     let commands: ShelfItemCommands
     /// The tile whose name is being edited, if any.
     let renamingItemID: ShelfItem.ID?
@@ -131,6 +139,7 @@ struct ShelfGridView: View {
                             ShelfItemTile(item: item,
                                           isAvailable: !missingItemIDs.contains(item.id),
                                           isCopying: copyingItemIDs.contains(item.id),
+                                          isConverting: convertingItemIDs.contains(item.id),
                                           isSelected: selection.contains(item.id),
                                           isLifted: hiddenItemIDs.contains(item.id),
                                           isActive: isActive,
@@ -145,6 +154,8 @@ struct ShelfGridView: View {
                                           selectionCount: selection.count,
                                           onToggleTemporary: { onToggleTemporary(item.id) },
                                           onToggleKeepCopy: onToggleKeepCopy.map { toggle in { toggle(item.id) } },
+                                          convertibleSelectionCount: convertibleSelectionCount,
+                                          onConvertToPDF: onConvertToPDF.map { convert in { convert(item.id) } },
                                           onOpen: { commands.open(item.id) },
                                           onQuickLook: { commands.quickLook(item.id) },
                                           onShowInfo: { commands.showInfo(item.id) },
@@ -204,6 +215,17 @@ struct ShelfGridView: View {
                 .onChange(of: isActive) { _, active in
                     if active {
                         scrollOnOpening(with: scroller)
+                    }
+                }
+                // A tile that arrives while the shelf is open, like a converted PDF,
+                // is scrolled to only as far as it takes to show it whole.
+                .onChange(of: showItemID) { _, id in
+                    guard let id, isActive else { return }
+                    // A tick later, once the grid has laid the new tile out.
+                    DispatchQueue.main.async {
+                        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
+                            scroller.scrollTo(id)
+                        }
                     }
                 }
             }

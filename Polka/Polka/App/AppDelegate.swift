@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchController: NotchPanelController?
     private var expirySweeper: ExpirySweeper?
     private var copyKeeper: CopyKeeper?
+    private var pdfConverter: PDFConverter?
     private var linkPreviewFetcher: LinkPreviewFetcher?
     private var settingsWindow: SettingsWindowController?
 
@@ -38,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let keeper = CopyKeeper(store: store, copies: ShelfCopies(folder: locations.copiesFolder))
             keeper.start()
             copyKeeper = keeper
+            // PDFs are drawn in a copy folder before they move next to their documents.
+            pdfConverter = PDFConverter(store: store, copies: ShelfCopies(folder: locations.copiesFolder))
         }
 
         let sweeper = ExpirySweeper(store: store)
@@ -54,6 +57,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let controller = NotchPanelController(store: store,
                                               images: images,
                                               copies: copyKeeper,
+                                              converter: pdfConverter,
                                               quickLook: quickLook,
                                               fileChooser: fileChooser,
                                               openSettings: { [weak self] in self?.showSettings() })

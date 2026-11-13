@@ -20,6 +20,8 @@ final class ShelfStore: ObservableObject {
     @Published private(set) var missingItemIDs: Set<ShelfItem.ID> = []
     /// File items whose copy is being made right now. Not saved.
     @Published private(set) var copyingItemIDs: Set<ShelfItem.ID> = []
+    /// Documents being converted to PDF right now. Not saved.
+    @Published private(set) var convertingItemIDs: Set<ShelfItem.ID> = []
     /// The order the shelf keeps. Saved by whoever changes it (in UserDefaults), not here.
     @Published private(set) var sort: ShelfSort
     /// True when a saved shelf existed but couldn't be read, so `items` may be
@@ -47,11 +49,12 @@ final class ShelfStore: ObservableObject {
         }
     }
 
-    /// Adds new items to the front, in the order given, or to their sorted spots if
-    /// the shelf is sorted. Anything already on the shelf is left where it is and
-    /// reported in the result, so the UI can say so.
+    /// Adds new items to the front, in the order given, or right after the item
+    /// `after` (a PDF lands next to the document it was made from), or to their sorted
+    /// spots if the shelf is sorted. Anything already on the shelf is left where it is
+    /// and reported in the result, so the UI can say so.
     @discardableResult
-    func add(_ drafts: [ShelfItem.Draft]) -> AddResult {
+    func add(_ drafts: [ShelfItem.Draft], after neighborID: ShelfItem.ID? = nil) -> AddResult {
         var seen = Set(items.flatMap(\.dedupeKeys))
         var newItems: [ShelfItem] = []
         var duplicates: [ShelfItem.Draft] = []
@@ -73,7 +76,11 @@ final class ShelfStore: ObservableObject {
         }
 
         guard !newItems.isEmpty else { return AddResult(added: [], duplicates: duplicates) }
-        commit(newItems + items)
+        // The front, unless the neighbor is still on the shelf.
+        let index = neighborID.flatMap { id in items.firstIndex { $0.id == id } }.map { $0 + 1 } ?? 0
+        var newList = items
+        newList.insert(contentsOf: newItems, at: index)
+        commit(newList)
         // Looked up again for their final places: sorted, they may not be at the front.
         let added = newItems.compactMap { new in items.first { $0.id == new.id } }
         return AddResult(added: added, duplicates: duplicates)
@@ -171,6 +178,14 @@ final class ShelfStore: ObservableObject {
             copyingItemIDs.insert(id)
         } else {
             copyingItemIDs.remove(id)
+        }
+    }
+
+    func setConverting(_ id: ShelfItem.ID, _ isConverting: Bool) {
+        if isConverting {
+            convertingItemIDs.insert(id)
+        } else {
+            convertingItemIDs.remove(id)
         }
     }
 

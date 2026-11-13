@@ -160,6 +160,12 @@ struct NotchView: View {
         return { [model] id in model.toggleKeepCopy(id) }
     }
 
+    /// Nil when Polka has nowhere to make PDFs, so tiles show no "Convert to PDF".
+    private var convertAction: (@MainActor (ShelfItem.ID) -> Void)? {
+        guard model.canConvertToPDF else { return nil }
+        return { [model] id in model.convertToPDF(from: id) }
+    }
+
     /// "Rename" starts a tick later, since it's chosen as the menu closes, and the
     /// panel shouldn't take the keys while the menu still tracks the pointer.
     private var renameActions: ShelfRenameActions {
@@ -182,11 +188,13 @@ struct NotchView: View {
                               isActive: isOpen,
                               missingItemIDs: store.missingItemIDs,
                               copyingItemIDs: store.copyingItemIDs,
+                              convertingItemIDs: store.convertingItemIDs,
                               selection: model.selection,
                               hiddenItemIDs: model.hiddenItemIDs,
                               isMovingTiles: model.tileMove != nil,
                               scrollEdge: model.scrollEdge,
                               revealItemID: model.itemToReveal,
+                              showItemID: model.itemToShow,
                               geometry: model.gridGeometry,
                               images: images,
                               dragSource: dragSource,
@@ -201,6 +209,8 @@ struct NotchView: View {
                               onDissolved: { model.tileDissolved($0) },
                               onToggleTemporary: { model.toggleTemporary($0) },
                               onToggleKeepCopy: keepCopyAction,
+                              convertibleSelectionCount: model.convertibleSelectionCount,
+                              onConvertToPDF: convertAction,
                               commands: commands,
                               renamingItemID: model.renamingItemID,
                               rename: renameActions,

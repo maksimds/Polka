@@ -49,6 +49,7 @@ final class NotchPanelController {
     init(store: ShelfStore,
          images: ShelfItemImages,
          copies: CopyKeeper?,
+         converter: PDFConverter?,
          quickLook: QuickLookController,
          fileChooser: FileChooser,
          openSettings: @escaping @MainActor () -> Void) {
@@ -58,7 +59,7 @@ final class NotchPanelController {
         self.fileChooser = fileChooser
         self.openSettings = openSettings
         dragSource = ShelfDragSource(images: images)
-        model = NotchViewModel(store: store, copies: copies)
+        model = NotchViewModel(store: store, copies: copies, converter: converter)
     }
 
     func start() {

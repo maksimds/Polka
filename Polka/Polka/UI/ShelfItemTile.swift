@@ -11,6 +11,8 @@ struct ShelfItemTile: View {
     let isAvailable: Bool
     /// True while Polka is making a copy of the file.
     let isCopying: Bool
+    /// True while Polka is making a PDF of the document.
+    let isConverting: Bool
     let isSelected: Bool
     /// True while the tile is being moved, or has just been dropped and its picture
     /// is still gliding into place. It shows as an empty gap.
@@ -37,6 +39,12 @@ struct ShelfItemTile: View {
     let onToggleTemporary: @MainActor () -> Void
     /// Nil when Polka has nowhere to keep copies.
     let onToggleKeepCopy: (@MainActor () -> Void)?
+    /// How many selected documents "Convert to PDF" would convert, for the menu's
+    /// "Convert 3 Items to PDF".
+    let convertibleSelectionCount: Int
+    /// This document, or every document in the selection if this item is in it. Nil
+    /// when Polka has nowhere to make PDFs.
+    let onConvertToPDF: (@MainActor () -> Void)?
     /// Double-click.
     let onOpen: @MainActor () -> Void
     /// This item, or the whole selection if this item is in it.
@@ -90,6 +98,7 @@ struct ShelfItemTile: View {
 
     private var detailLine: String {
         if isCopying { return "Copying…" }
+        if isConverting { return "Converting…" }
         guard isAvailable else { return "Unavailable" }
         return [item.typeLabel, item.storageMode == .copy ? "Copy" : nil, item.timeLeftLabel(now: Date())]
             .compactMap { $0 }
@@ -101,7 +110,9 @@ struct ShelfItemTile: View {
     /// checked while it has an expiry, and for files and folders "Keep a Copy", checked
     /// for a copy. Links have no file to show or copy, so they skip those. "Remove"
     /// comes last, set apart. Unchecking "Keep a Copy" goes back to the original, so it
-    /// can't be unchecked for a promised file, which has none.
+    /// can't be unchecked for a promised file, which has none. A document (docx, doc,
+    /// rtf, rtfd, odt, txt) also gets "Convert to PDF" in a group of its own, since it
+    /// makes a new file rather than changing how Polka keeps this one.
     private var menuEntries: [TileDragView.MenuEntry] {
         let isFile = item.kind != .link
         var entries: [TileDragView.MenuEntry] = []
@@ -121,6 +132,14 @@ struct ShelfItemTile: View {
                                                   isChecked: isCopy,
                                                   isEnabled: !isCopying && (isCopy ? item.original != nil : isAvailable),
                                                   action: onToggleKeepCopy))
+        }
+        if let onConvertToPDF, PDFConversion.canConvert(item) {
+            let convertCount = isSelected ? max(convertibleSelectionCount, 1) : 1
+            entries.append(TileDragView.MenuEntry(title: convertCount > 1 ? "Convert \(convertCount) Items to PDF"
+                                                                          : "Convert to PDF",
+                                                  isEnabled: isAvailable && !isConverting,
+                                                  startsGroup: true,
+                                                  action: onConvertToPDF))
         }
         // A destructive choice says how much it removes when it's more than this tile.
         let removeCount = isSelected ? max(selectionCount, 1) : 1
