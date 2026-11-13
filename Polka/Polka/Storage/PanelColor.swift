@@ -1,6 +1,6 @@
 import Foundation
 
-/// A color picked for the panel in Settings (FR-24), by swatch or hex code. It's never
+/// A color picked for the panel in Settings (FR-24), with the color picker or a hex code. It's never
 /// drawn as it is: `gradient` turns it into the panel's glass, a diagonal two-tone
 /// deepened so the shelf's white names stay readable on it, whatever was picked.
 struct PanelColor: Hashable {
@@ -42,21 +42,50 @@ struct PanelColor: Hashable {
 
     static let black = PanelColor(red: 0, green: 0, blue: 0)
 
-    // MARK: - Swatches
+    // MARK: - Hue, saturation and brightness
 
-    /// Settings' swatches: Black, the panel as it always was, then macOS's accent
-    /// colors as Dark Mode draws them.
-    static let swatches: [PanelSwatch] = [
-        PanelSwatch(name: "Black", color: nil),
-        PanelSwatch(name: "Blue", hex: "#0A84FF"),
-        PanelSwatch(name: "Purple", hex: "#BF5AF2"),
-        PanelSwatch(name: "Pink", hex: "#FF375F"),
-        PanelSwatch(name: "Red", hex: "#FF453A"),
-        PanelSwatch(name: "Orange", hex: "#FF9F0A"),
-        PanelSwatch(name: "Yellow", hex: "#FFD60A"),
-        PanelSwatch(name: "Green", hex: "#32D74B"),
-        PanelSwatch(name: "Graphite", hex: "#98989D"),
-    ]
+    /// A color from the picker's terms: `hue` around the color wheel from red (0) back
+    /// to red (1), `saturation` from grey (0) to full color (1), and `brightness` from
+    /// black (0) to full (1).
+    init(hue: Double, saturation: Double, brightness: Double) {
+        var turn = hue.truncatingRemainder(dividingBy: 1)
+        if turn < 0 { turn += 1 }
+        let saturation = min(max(saturation, 0), 1)
+        let brightness = min(max(brightness, 0), 1)
+
+        let range = brightness * saturation
+        let side = turn * 6
+        let middle = range * (1 - abs(side.truncatingRemainder(dividingBy: 2) - 1))
+        let lowest = brightness - range
+        let (r, g, b): (Double, Double, Double)
+        switch side {
+        case ..<1: (r, g, b) = (range, middle, 0)
+        case ..<2: (r, g, b) = (middle, range, 0)
+        case ..<3: (r, g, b) = (0, range, middle)
+        case ..<4: (r, g, b) = (0, middle, range)
+        case ..<5: (r, g, b) = (middle, 0, range)
+        default: (r, g, b) = (range, 0, middle)
+        }
+        self.init(red: r + lowest, green: g + lowest, blue: b + lowest)
+    }
+
+    /// The color in the picker's terms. Black and greys have no hue, which reads as 0,
+    /// and black has no saturation either.
+    var hsb: (hue: Double, saturation: Double, brightness: Double) {
+        let brightest = max(red, green, blue)
+        let range = brightest - min(red, green, blue)
+        guard range > 0 else { return (0, 0, brightest) }
+
+        var hue: Double
+        switch brightest {
+        case red: hue = (green - blue) / range
+        case green: hue = (blue - red) / range + 2
+        default: hue = (red - green) / range + 4
+        }
+        hue /= 6
+        if hue < 0 { hue += 1 }
+        return (hue, range / brightest, brightest)
+    }
 
     // MARK: - Gradient
 
@@ -116,32 +145,9 @@ struct PanelColor: Hashable {
     /// The same color turned around the color wheel, keeping its saturation and
     /// brightness. A grey has no hue, so it stays as it is.
     func turningHue(by degrees: Double) -> PanelColor {
-        let brightest = max(red, green, blue)
-        let range = brightest - min(red, green, blue)
-        guard range > 0 else { return self }
-
-        var hue: Double
-        switch brightest {
-        case red: hue = (green - blue) / range
-        case green: hue = (blue - red) / range + 2
-        default: hue = (red - green) / range + 4
-        }
-        hue = (hue * 60 + degrees).truncatingRemainder(dividingBy: 360)
-        if hue < 0 { hue += 360 }
-
-        let side = hue / 60
-        let middle = range * (1 - abs(side.truncatingRemainder(dividingBy: 2) - 1))
-        let lowest = brightest - range
-        let (r, g, b): (Double, Double, Double)
-        switch side {
-        case ..<1: (r, g, b) = (range, middle, 0)
-        case ..<2: (r, g, b) = (middle, range, 0)
-        case ..<3: (r, g, b) = (0, range, middle)
-        case ..<4: (r, g, b) = (0, middle, range)
-        case ..<5: (r, g, b) = (middle, 0, range)
-        default: (r, g, b) = (range, 0, middle)
-        }
-        return PanelColor(red: r + lowest, green: g + lowest, blue: b + lowest)
+        let (hue, saturation, brightness) = hsb
+        guard saturation > 0 else { return self }
+        return PanelColor(hue: hue + degrees / 360, saturation: saturation, brightness: brightness)
     }
 }
 
@@ -149,21 +155,4 @@ struct PanelColor: Hashable {
 struct PanelGradient: Equatable {
     let start: PanelColor
     let end: PanelColor
-}
-
-/// One of Settings' swatches. Black has no color: the panel as it always was.
-struct PanelSwatch: Identifiable {
-    let name: String
-    let color: PanelColor?
-
-    var id: String { name }
-
-    init(name: String, color: PanelColor?) {
-        self.name = name
-        self.color = color
-    }
-
-    init(name: String, hex: String) {
-        self.init(name: name, color: PanelColor(hex: hex))
-    }
 }

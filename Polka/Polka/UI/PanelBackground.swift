@@ -35,8 +35,9 @@ struct PanelBackground: View {
         .init(color: .white.opacity(0.22), location: 1),
     ], startPoint: .top, endPoint: .bottom)
 
-    /// Light falling on the top of the colored glass, gone by the middle.
-    private static let sheen = LinearGradient(stops: [
+    /// Light falling on the top of the colored glass, gone by the middle. Settings'
+    /// preview of the shelf has it too.
+    static let sheen = LinearGradient(stops: [
         .init(color: .white.opacity(0.09), location: 0),
         .init(color: .white.opacity(0.02), location: 0.35),
         .init(color: .clear, location: 0.55),
@@ -104,7 +105,7 @@ struct PanelBackground: View {
 }
 
 extension PanelGradient {
-    /// From the top left to the bottom right, in the panel and on Settings' swatches.
+    /// From the top left to the bottom right, in the panel and in Settings' preview of it.
     var linear: LinearGradient {
         LinearGradient(colors: [Color(start), Color(end)], startPoint: .topLeading, endPoint: .bottomTrailing)
     }

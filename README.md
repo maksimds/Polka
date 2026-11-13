@@ -69,7 +69,7 @@ In Settings, turn on **Save Screenshots to Polka**. New screenshots and screen r
 ### Change the look
 In Settings, under **Appearance**:
 - **Transparency** lets your desktop show through the open shelf, softly blurred, like the sidebar in Finder. Slide it all the way to the left for the solid black shelf.
-- **Color** tints the shelf. Click one of the swatches, or type a color code such as **#2881DB** in the **Hex** box and press **Return**. Polka turns your color into a deep, glassy gradient, so the names on the shelf always stay easy to read. Light colors like yellow or white come out darker. **Black** keeps the classic look.
+- **Color** tints the shelf. Pick a shade on the rainbow bar, then drag in the square above it, or type a color code such as **#2881DB** in the **Hex** box and press **Return**. Polka turns your color into a deep, glassy gradient, so the names on the shelf always stay easy to read. The block on the left shows how the shelf will look, so light colors like yellow or white come out darker there. Drag to the very bottom of the square for the classic black.
 
 If **Reduce transparency** is on in your Mac's Accessibility settings, the shelf stays solid.
 

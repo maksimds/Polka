@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Polka
 
-/// Settings' Color (FR-24): hex codes, the swatches, and the glass made from a color.
+/// Settings' Color (FR-24): hex codes, the picker's terms, and the glass made from a color.
 struct PanelColorTests {
     private func withDefaults(_ body: (UserDefaults) throws -> Void) throws {
         let suite = "PolkaTests-\(UUID().uuidString)"
@@ -60,18 +60,40 @@ struct PanelColorTests {
         #expect(ShelfSettings.storedValue(for: nil) == "")
     }
 
-    @Test func theSwatchesStartWithBlackAndAllRead() {
-        #expect(PanelColor.swatches.first?.color == nil)
-        #expect(PanelColor.swatches.dropFirst().allSatisfy { $0.color != nil })
-        #expect(Set(PanelColor.swatches.map(\.name)).count == PanelColor.swatches.count)
+    // MARK: - The picker's terms
+
+    @Test func huesGoAroundTheWheelFromRed() {
+        #expect(PanelColor(hue: 0, saturation: 1, brightness: 1).hex == "#FF0000")
+        #expect(PanelColor(hue: 1.0 / 3, saturation: 1, brightness: 1).hex == "#00FF00")
+        #expect(PanelColor(hue: 2.0 / 3, saturation: 1, brightness: 1).hex == "#0000FF")
+        #expect(PanelColor(hue: 1, saturation: 1, brightness: 1).hex == "#FF0000")
+    }
+
+    @Test func noSaturationIsGreyAndNoBrightnessIsBlack() {
+        #expect(PanelColor(hue: 0.3, saturation: 0, brightness: 1).hex == "#FFFFFF")
+        #expect(PanelColor(hue: 0.3, saturation: 0, brightness: 0.5).hex == "#808080")
+        #expect(PanelColor(hue: 0.3, saturation: 1, brightness: 0) == .black)
+    }
+
+    @Test func aColorComesBackFromThePickersTerms() throws {
+        for code in ["#2881DB", "#FCBA03", "#BF5AF2", "#32D74B", "#FF453A", "#808080"] {
+            let color = try #require(PanelColor(hex: code))
+            let hsb = color.hsb
+            #expect(PanelColor(hue: hsb.hue, saturation: hsb.saturation, brightness: hsb.brightness).hex == code)
+        }
+    }
+
+    @Test func greysAndBlackHaveNoHue() {
+        #expect(PanelColor(red: 0.5, green: 0.5, blue: 0.5).hsb == (0, 0, 0.5))
+        #expect(PanelColor.black.hsb == (0, 0, 0))
     }
 
     // MARK: - The glass
 
-    /// The swatches, plus the colors hardest on white text.
+    /// macOS's accent colors, plus the colors hardest on white text.
     private var colors: [PanelColor] {
-        PanelColor.swatches.compactMap(\.color)
-            + ["#FFFFFF", "#FFFF00", "#00FF00", "#00FFFF", "#2881DB", "#102030"].compactMap { PanelColor(hex: $0) }
+        ["#0A84FF", "#BF5AF2", "#FF375F", "#FF453A", "#FF9F0A", "#FFD60A", "#32D74B", "#98989D",
+         "#FFFFFF", "#FFFF00", "#00FF00", "#00FFFF", "#2881DB", "#102030"].compactMap { PanelColor(hex: $0) }
     }
 
     @Test func whiteNamesStayReadableOnEveryColor() {
