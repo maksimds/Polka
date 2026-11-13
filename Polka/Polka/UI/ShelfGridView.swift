@@ -23,12 +23,14 @@ struct ShelfRenameActions {
 }
 
 /// The shelf's items as a scrolling grid, in the shelf's order. New items arrive at
-/// the top left. While tiles are being moved, `items` is the order they'd have if
-/// dropped now, so the others slide aside to make room. Sorted by Kind or File Type,
-/// the tiles show in `groups`, each starting a new row under its title.
+/// the top left, after any pinned ones. While tiles are being moved, `items` is the
+/// order they'd have if dropped now, so the others slide aside to make room. Pinned
+/// tiles have the first row to themselves, and sorted by Kind or File Type, the tiles
+/// show in `groups`, each starting a new row under its title.
 struct ShelfGridView: View {
     let items: [ShelfItem]
-    /// The titled groups `items` fall into, in order. Empty for a plain grid.
+    /// The groups `items` fall into, in order, each starting a new row: the pinned
+    /// row, and the order's titled groups. Empty for a plain grid.
     let groups: [ShelfGroup]
     /// False while the panel is closed or a drag out is running; the grid stays built.
     let isActive: Bool
@@ -64,6 +66,7 @@ struct ShelfGridView: View {
     /// A removed tile has handed its picture to the dust, and can leave the shelf.
     let onDissolved: @MainActor (ShelfItem.ID) -> Void
     let onToggleTemporary: @MainActor (ShelfItem.ID) -> Void
+    let onTogglePinned: @MainActor (ShelfItem.ID) -> Void
     let onToggleKeepCopy: (@MainActor (ShelfItem.ID) -> Void)?
     /// How many selected documents "Convert to PDF" would convert.
     let convertibleSelectionCount: Int
@@ -133,10 +136,10 @@ struct ShelfGridView: View {
             ScrollViewReader { scroller in
                 ScrollView {
                     ShelfGridArrangement(groups: groups, tileIDs: items.map(\.id)) {
-                        ForEach(groups, id: \.title) { group in
-                            ShelfGroupHeader(title: group.title)
+                        ForEach(groups.compactMap(\.title), id: \.self) { title in
+                            ShelfGroupHeader(title: title)
                                 .transition(.opacity)
-                                .layoutValue(key: ShelfGridEntryKey.self, value: .header(group.title))
+                                .layoutValue(key: ShelfGridEntryKey.self, value: .header(title))
                         }
                         ForEach(items) { item in
                             ShelfItemTile(item: item,
@@ -156,6 +159,7 @@ struct ShelfGridView: View {
                                           onDissolve: { dissolve(item.id, picture: $0, scale: $1) },
                                           selectionCount: selection.count,
                                           onToggleTemporary: { onToggleTemporary(item.id) },
+                                          onTogglePinned: { onTogglePinned(item.id) },
                                           onToggleKeepCopy: onToggleKeepCopy.map { toggle in { toggle(item.id) } },
                                           convertibleSelectionCount: convertibleSelectionCount,
                                           onConvertToPDF: onConvertToPDF.map { convert in { convert(item.id) } },
@@ -260,7 +264,7 @@ struct ShelfGridView: View {
     /// sorted shelf it may have landed below the first rows. A row (or a group's
     /// title) stays lined up with the top, as when scrolling a row at a time.
     private func scrollOnOpening(with scroller: ScrollViewProxy) {
-        let placement = geometry.layout.placement(tileCount: items.count, groups: groups.map(\.count))
+        let placement = geometry.layout.placement(tileCount: items.count, groups: groups)
         guard let firstRow = placement.rows.first else { return }
         var row = firstRow
         if let revealItemID,
@@ -270,14 +274,21 @@ struct ShelfGridView: View {
             let lowestTop = placement.tiles[index].maxY - geometry.viewport.height
             row = placement.rows.first { $0.minY >= lowestTop - 0.5 } ?? firstRow
         }
-        // The first row goes back to the very top, keeping the room above it.
-        if row == firstRow {
+        scroll(toRow: row, isFirst: row == firstRow, with: scroller)
+    }
+
+    /// Lines `row` up with the top of the visible area. The first row goes back to the
+    /// very top instead, keeping the room above it.
+    private func scroll(toRow row: ShelfGridLayout.Row, isFirst: Bool, with scroller: ScrollViewProxy) {
+        if isFirst {
             scroller.scrollTo(Self.topID, anchor: .top)
             return
         }
         switch row.start {
         case .header(let group):
-            scroller.scrollTo(groups[group].title, anchor: .top)
+            if let title = groups[group].title {
+                scroller.scrollTo(title, anchor: .top)
+            }
         case .tile(let index):
             scroller.scrollTo(items[index].id, anchor: .top)
         }
@@ -285,20 +296,18 @@ struct ShelfGridView: View {
 
     // MARK: - Scrolling while moving a tile
 
-    /// Brings the next row past `edge` into view, lining a row up with the top.
+    /// Brings the next row past `edge` into view, lining a row up with the top. The
+    /// rows come from the layout, since the pinned row is a row of its own however
+    /// few tiles it has.
     private func scrollOneRow(toward edge: VerticalEdge, with scroller: ScrollViewProxy) {
-        let pitch = geometry.layout.rowPitch
-        guard !items.isEmpty, pitch > 0 else { return }
-        let topRow = Int(((geometry.viewport.minY - geometry.content.minY) / pitch).rounded())
-        let lastRow = (items.count - 1) / ShelfGridLayout.columnCount
-        let row = min(max(edge == .top ? topRow - 1 : topRow + 1, 0), lastRow)
+        let rows = geometry.layout.placement(tileCount: items.count, groups: groups).rows
+        guard !rows.isEmpty else { return }
+        // The row nearest the top of the visible area.
+        let scrolled = geometry.viewport.minY - geometry.content.minY
+        let top = rows.indices.min { abs(rows[$0].minY - scrolled) < abs(rows[$1].minY - scrolled) } ?? 0
+        let next = min(max(edge == .top ? top - 1 : top + 1, 0), rows.count - 1)
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) {
-            // The first row goes back to the very top, keeping the room above it.
-            if row == 0 {
-                scroller.scrollTo(Self.topID, anchor: .top)
-            } else {
-                scroller.scrollTo(items[row * ShelfGridLayout.columnCount].id, anchor: .top)
-            }
+            scroll(toRow: rows[next], isFirst: next == 0, with: scroller)
         }
     }
 

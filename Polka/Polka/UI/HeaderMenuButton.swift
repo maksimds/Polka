@@ -68,6 +68,10 @@ final class HeaderMenuView: NSView {
         showMenu()
     }
 
+    /// How far above the point it's opened at a menu's window starts (measured: the
+    /// window's top is 5 pt above it, the room above the first item).
+    private static let menuWindowTopInset: CGFloat = 5
+
     private func showMenu() {
         guard let menu = makeMenu?() else { return }
         // The symbol is the click area minus its margin. The menu's top left goes
@@ -76,7 +80,22 @@ final class HeaderMenuView: NSView {
         let location = NSPoint(x: bounds.maxX - margin - menu.size.width,
                                y: bounds.maxY - margin + 4)
         // Returns once the menu has closed, after any choice has run.
-        menu.popUp(positioning: nil, at: location, in: self)
+        menu.popUp(positioning: nil, at: belowMenuBar(location), in: self)
+    }
+
+    /// The header sits in the menu bar's strip, so just under a symbol is still inside
+    /// the menu bar, where menus aren't allowed. Opened with a click, AppKit slides the
+    /// menu down below the menu bar. Opened by a press that's still held, as here, it
+    /// can trim the part over the menu bar off the menu's window instead, so the last
+    /// item is cut off behind a scroll arrow until you scroll. Asking for the spot
+    /// AppKit would slide it to leaves it nothing to fix, and looks the same.
+    private func belowMenuBar(_ location: NSPoint) -> NSPoint {
+        guard let window, let screen = window.screen else { return location }
+        var onScreen = window.convertPoint(toScreen: convert(location, to: nil))
+        let highest = screen.visibleFrame.maxY - Self.menuWindowTopInset
+        guard onScreen.y > highest else { return location }
+        onScreen.y = highest
+        return convert(window.convertPoint(fromScreen: onScreen), from: nil)
     }
 
     // MARK: - Accessibility

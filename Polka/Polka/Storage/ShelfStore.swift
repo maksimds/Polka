@@ -2,8 +2,10 @@ import Combine
 import Foundation
 
 /// The shelf's contents, in the order they're shown. Unsorted, new items arrive at
-/// the front and the user can move items anywhere. Sorted (`sort`), the shelf stays
-/// in that order through every change, like a Finder window with "Sort By" set.
+/// the front, right after any pinned ones, and the user can move items anywhere in
+/// their part of the shelf. Sorted (`sort`), the shelf stays in that order through
+/// every change, like a Finder window with "Sort By" set. Pinned items always come
+/// first (`ShelfSort.arranged`).
 /// No window or AppKit code lives here, so the logic can be tested on its own.
 @MainActor
 final class ShelfStore: ObservableObject {
@@ -49,9 +51,9 @@ final class ShelfStore: ObservableObject {
         }
     }
 
-    /// Adds new items to the front, in the order given, or right after the item
-    /// `after` (a PDF lands next to the document it was made from), or to their sorted
-    /// spots if the shelf is sorted. Anything already on the shelf is left where it is
+    /// Adds new items to the front, after any pinned ones, in the order given, or
+    /// right after the item `after` (a PDF lands next to the document it was made
+    /// from), or to their sorted spots if the shelf is sorted. Anything already on the shelf is left where it is
     /// and reported in the result, so the UI can say so.
     @discardableResult
     func add(_ drafts: [ShelfItem.Draft], after neighborID: ShelfItem.ID? = nil) -> AddResult {
@@ -121,6 +123,43 @@ final class ShelfStore: ObservableObject {
         let arranged = newSort.arranged(items)
         guard arranged.map(\.id) != items.map(\.id) else { return }
         commit(arranged)
+    }
+
+    // MARK: - Pinning
+
+    /// The most items the shelf pins: one row's worth, as the grid has five columns
+    /// (FR-21).
+    static let maxPinned = 5
+
+    var pinnedCount: Int {
+        items.filter(\.isPinned).count
+    }
+
+    /// Pins an item to the shelf's first row. Unsorted, it goes to the end of that
+    /// row; sorted, to its sorted spot there. Returns false, and pins nothing, when
+    /// `maxPinned` items are pinned already.
+    @discardableResult
+    func pin(id: ShelfItem.ID) -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == id }) else { return true }
+        guard !items[index].isPinned else { return true }
+        guard pinnedCount < Self.maxPinned else { return false }
+        var newItems = items
+        var item = newItems.remove(at: index)
+        item.pinned = true
+        newItems.insert(item, at: pinnedCount)
+        commit(newItems)
+        return true
+    }
+
+    /// Takes an item off the first row. Unsorted, it becomes the first item after the
+    /// pinned ones, where a new item would arrive; sorted, it goes to its sorted spot.
+    func unpin(id: ShelfItem.ID) {
+        guard let index = items.firstIndex(where: { $0.id == id }), items[index].isPinned else { return }
+        var newItems = items
+        var item = newItems.remove(at: index)
+        item.pinned = nil
+        newItems.insert(item, at: pinnedCount - 1)
+        commit(newItems)
     }
 
     /// Makes an item temporary: it is removed `lifetime` seconds from now.

@@ -37,6 +37,8 @@ struct ShelfItemTile: View {
     /// How many items are selected, for the menu's "Remove 3 Items".
     let selectionCount: Int
     let onToggleTemporary: @MainActor () -> Void
+    /// "Pin" or "Unpin": this item alone.
+    let onTogglePinned: @MainActor () -> Void
     /// Nil when Polka has nowhere to keep copies.
     let onToggleKeepCopy: (@MainActor () -> Void)?
     /// How many selected documents "Convert to PDF" would convert, for the menu's
@@ -109,8 +111,9 @@ struct ShelfItemTile: View {
 
     /// Quick Look and Get Info for files and folders, and "Rename" for every tile,
     /// right after Get Info as in Finder. Text has no file to get info on, so it gets
-    /// Quick Look and "Copy". Then how Polka keeps the item: "Temporary", checked while
-    /// it has an expiry, and for files and folders "Keep a Copy", checked for a copy.
+    /// Quick Look and "Copy". Then how Polka keeps the item: "Pin", which reads "Unpin"
+    /// on a pinned tile as in Notes and Messages, "Temporary", checked while it has an
+    /// expiry, and for files and folders "Keep a Copy", checked for a copy.
     /// Links and text have no file to show or copy, so they skip those. "Remove" comes
     /// last, set apart. Unchecking "Keep a Copy" goes back to the original, so it can't
     /// be unchecked for a promised file, a pasted picture or a screenshot, which have
@@ -129,9 +132,12 @@ struct ShelfItemTile: View {
         }
         // Only the tile's label changes, so a missing file can be renamed too.
         entries.append(TileDragView.MenuEntry(title: "Rename", action: onRename))
+        // Always enabled: past the limit, choosing it says why nothing was pinned.
+        entries.append(TileDragView.MenuEntry(title: item.isPinned ? "Unpin" : "Pin",
+                                              startsGroup: true,
+                                              action: onTogglePinned))
         entries.append(TileDragView.MenuEntry(title: "Temporary",
                                               isChecked: item.isTemporary,
-                                              startsGroup: true,
                                               action: onToggleTemporary))
         if isFile, let onToggleKeepCopy {
             let isCopy = item.storageMode == .copy
@@ -163,6 +169,16 @@ struct ShelfItemTile: View {
         VStack(spacing: 2) {
             artwork
                 .frame(width: Self.imageSide, height: Self.imageSide)
+                // Part of the face, so it goes with the tile when it turns to dust,
+                // and dims with it when the file can't be found.
+                .overlay(alignment: .topLeading) {
+                    if item.isPinned {
+                        GlassPinBadge()
+                            .position(pinBadgeCenter)
+                            .transition(.opacity)
+                    }
+                }
+                .animation(.easeOut(duration: 0.15), value: item.isPinned)
                 .saturation(isAvailable ? 1 : 0)
                 .opacity(isAvailable ? 1 : 0.35)
                 // Selected, as in Finder: a soft square behind the picture...
@@ -316,9 +332,10 @@ struct ShelfItemTile: View {
                 .clipShape(Self.linkIconShape)
                 .overlay(GlassPictureFinish(shape: Self.linkIconShape))
         case .logo:
-            GlassSurface(Self.linkIconShape)
+            GlassSurface(Self.linkIconShape, gradient: Self.logoGlassGradient, rimLight: Self.logoGlassRim)
                 .overlay(siteIcon)
-                .overlay(GlassPictureFinish(shape: Self.linkIconShape))
+                .overlay(GlassPictureFinish(shape: Self.linkIconShape,
+                                            sheen: Self.logoGlassSheen, rimLight: Self.logoGlassRim))
         case .darkLogo:
             LightGlassCard(shape: Self.linkIconShape)
                 .overlay(siteIcon)
@@ -342,6 +359,11 @@ struct ShelfItemTile: View {
 
     /// A link's icon or card.
     private static let linkIconShape = RoundedRectangle(cornerRadius: 12, style: .continuous)
+    /// The dark glass behind a bare logo is quieter than the panel's other glass, so
+    /// the logo stands out: a nearly flat body, half the sheen, and a softer edge.
+    private static let logoGlassGradient = 0.4
+    private static let logoGlassSheen = 0.5
+    private static let logoGlassRim = 0.7
     /// A bare logo in its 52 pt square, leaving room around it like an app icon's art.
     private static let logoSide: CGFloat = 34
     /// A small favicon, kept small, since it's drawn for 16 to 64 pixels.
@@ -382,6 +404,20 @@ struct ShelfItemTile: View {
         let drop = item.kind == .folder ? picture.height * Self.folderBadgeDrop : 0
         return CGPoint(x: pressArea.midX - Self.imageSide / 2 + picture.maxX - Self.removeBadgeInset,
                        y: pressArea.minY + picture.minY + Self.removeBadgeInset + drop)
+    }
+
+    /// How far inside the picture's top-left corner the pin's middle sits: nearer the
+    /// corner than the remove badge, since the pin is smaller.
+    private static let pinBadgeInset: CGFloat = 2
+
+    /// Where the pin's middle goes in the picture square: over the top-left corner of
+    /// the picture you can see, mirroring the remove badge, and as much lower on a
+    /// folder.
+    private var pinBadgeCenter: CGPoint {
+        let picture = visiblePicture
+        let drop = item.kind == .folder ? picture.height * Self.folderBadgeDrop : 0
+        return CGPoint(x: picture.minX + Self.pinBadgeInset,
+                       y: picture.minY + Self.pinBadgeInset + drop)
     }
 
     /// The picture as drawn, in the picture square. A link's icon or card fills it. A

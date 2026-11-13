@@ -86,6 +86,9 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     /// Nil for items dropped, pasted or added from the + menu, which also means
     /// shelves saved before screenshots came to the shelf still load.
     var origin: Origin? = nil
+    /// True for an item pinned to the shelf's first row ("Pin", FR-21). Nil when it
+    /// isn't, which also means shelves saved before pinning existed still load.
+    var pinned: Bool? = nil
 }
 
 extension ShelfItem {
@@ -118,6 +121,10 @@ extension ShelfItem {
 
     var isTemporary: Bool {
         expiresAt != nil
+    }
+
+    var isPinned: Bool {
+        pinned == true
     }
 
     func isExpired(at date: Date) -> Bool {

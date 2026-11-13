@@ -171,7 +171,8 @@ struct ShelfSortTests {
 
     @Test func eachGroupStartsANewRowUnderItsTitle() {
         // Two folders, then six files, which take two rows.
-        let placement = layout.placement(tileCount: 8, groups: [2, 6])
+        let placement = layout.placement(tileCount: 8, groups: [ShelfGroup(title: "Folders", count: 2),
+                                                               ShelfGroup(title: "Files", count: 6)])
         let rowHeight = ShelfGridLayout.rowHeight
         let firstTiles = ShelfGridLayout.headerHeight + ShelfGridLayout.headerSpacing
         let secondTitle = firstTiles + rowHeight + ShelfGridLayout.groupSpacing
@@ -188,7 +189,7 @@ struct ShelfSortTests {
 
     /// Like the header strip: the line runs from the first picture's left edge to the last one's right edge.
     @Test func aTitleLinesUpWithThePictures() {
-        let title = layout.placement(tileCount: 1, groups: [1]).headers[0]
+        let title = layout.placement(tileCount: 1, groups: [ShelfGroup(title: "Files", count: 1)]).headers[0]
         let inset = (layout.columnWidth - ShelfItemTile.imageSide) / 2
 
         #expect(abs(title.minX - inset) < 0.001)
@@ -196,7 +197,8 @@ struct ShelfSortTests {
     }
 
     @Test func groupsThatDontAddUpGiveAPlainGrid() {
-        #expect(layout.placement(tileCount: 3, groups: [1, 1]).headers.isEmpty)
+        #expect(layout.placement(tileCount: 3, groups: [ShelfGroup(title: "Folders", count: 1),
+                                                             ShelfGroup(title: "Files", count: 1)]).headers.isEmpty)
     }
 
     // MARK: - The panel
@@ -266,7 +268,7 @@ struct ShelfSortTests {
 
         let drop = try #require(model.tileDrop(at: point(onSlot: 2, of: model)))
 
-        let placement = model.gridGeometry.layout.placement(tileCount: 3, groups: [3])
+        let placement = model.gridGeometry.layout.placement(tileCount: 3, groups: [ShelfGroup(title: "Files", count: 3)])
         #expect(drop.landingFrames == [model.gridGeometry.pictureFrame(ofTile: 0, in: placement)])
         #expect(drop.landingFrames.first?.minY
                 == model.gridGeometry.pictureFrame(ofSlot: 0).minY

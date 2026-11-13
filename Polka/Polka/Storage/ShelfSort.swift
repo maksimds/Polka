@@ -3,7 +3,8 @@ import Foundation
 /// How the shelf keeps its tiles in order, like Finder's "Sort By". `none` is the
 /// order you arrange by hand. Any other choice keeps the shelf sorted: new items land
 /// in their sorted spot, and tiles can't be moved by hand until it's back on `none`.
-/// Kind and File Type also show the tiles in titled groups (`groups(of:)`).
+/// Kind and File Type also show the tiles in titled groups (`groups(of:)`). Pinned
+/// items come first in every order.
 enum ShelfSort: String, CaseIterable {
     case none
     case name
@@ -27,26 +28,42 @@ enum ShelfSort: String, CaseIterable {
         groupingKey != nil
     }
 
-    /// The titled groups `items` fall into, in order, each one a run of neighbors.
-    /// Expects the items already in this order, so each title comes up once. Empty
-    /// for an order without groups.
+    /// The groups `items` fall into, in order, each one a run of neighbors, each
+    /// starting a new row. Pinned items come first, as a group with no title, so they
+    /// have the first row to themselves. Then, in an order with groups (Kind, File
+    /// Type), each titled group; in one without, the rest as one untitled group, but
+    /// only after pinned items, since a plain grid needs no groups at all. Expects the
+    /// items already in this order (`arranged`), so each title comes up once.
     func groups(of items: [ShelfItem]) -> [ShelfGroup] {
-        guard let groupingKey else { return [] }
-        var groups: [ShelfGroup] = []
-        for item in items {
+        let pinnedCount = items.prefix { $0.isPinned }.count
+        var groups = pinnedCount > 0 ? [ShelfGroup(title: nil, count: pinnedCount)] : []
+        let rest = items.dropFirst(pinnedCount)
+        guard let groupingKey else {
+            if !groups.isEmpty, !rest.isEmpty {
+                groups.append(ShelfGroup(title: nil, count: rest.count))
+            }
+            return groups
+        }
+        var titled: [ShelfGroup] = []
+        for item in rest {
             let title = groupingKey(item).title
-            if groups.last?.title == title {
-                groups[groups.count - 1].count += 1
+            if titled.last?.title == title {
+                titled[titled.count - 1].count += 1
             } else {
-                groups.append(ShelfGroup(title: title, count: 1))
+                titled.append(ShelfGroup(title: title, count: 1))
             }
         }
-        return groups
+        return groups + titled
     }
 
-    /// The items in this order. Items that tie keep the order they came in, so a
-    /// shelf that's already sorted never shuffles. `none` leaves them as they are.
+    /// The items in this order, pinned ones first (FR-21), each part sorted on its own.
+    /// Items that tie keep the order they came in, so a shelf that's already sorted
+    /// never shuffles. `none` only brings the pinned ones forward.
     func arranged(_ items: [ShelfItem]) -> [ShelfItem] {
+        sorted(items.filter(\.isPinned)) + sorted(items.filter { !$0.isPinned })
+    }
+
+    private func sorted(_ items: [ShelfItem]) -> [ShelfItem] {
         guard self != .none else { return items }
         return items.enumerated()
             .sorted { a, b in
@@ -125,9 +142,11 @@ enum ShelfSort: String, CaseIterable {
     }
 }
 
-/// One titled group of tiles in a grouped order, such as "Folders" or "PDF": a run
-/// of `count` neighbors on the shelf.
+/// One group of tiles, such as "Folders" or "PDF" in a grouped order: a run of
+/// `count` neighbors on the shelf, starting a new row.
 struct ShelfGroup: Equatable {
-    let title: String
+    /// Nil for a group shown without a title: the pinned tiles, and the rest of a
+    /// shelf whose order has no groups.
+    let title: String?
     var count: Int
 }
