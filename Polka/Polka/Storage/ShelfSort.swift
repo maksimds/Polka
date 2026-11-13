@@ -88,17 +88,18 @@ enum ShelfSort: String, CaseIterable {
     private var groupingKey: ((ShelfItem) -> (rank: Int, title: String))? {
         switch self {
         case .kind:
-            // Folders first, as in Finder, then files, then links.
+            // Folders first, as in Finder, then files, then links, then text.
             return { item in
                 switch item.kind {
                 case .folder: return (0, "Folders")
                 case .file: return (1, "Files")
                 case .link: return (2, "Links")
+                case .text: return (3, "Text")
                 }
             }
         case .fileType:
             // Folders first, then a group per extension from A to Z, then files with
-            // no extension, then links. "pdf" and "PDF" are one group.
+            // no extension, then links, then text. "pdf" and "PDF" are one group.
             return { item in
                 switch item.kind {
                 case .folder:
@@ -108,6 +109,8 @@ enum ShelfSort: String, CaseIterable {
                     return fileExtension.isEmpty ? (2, "Other") : (1, fileExtension.uppercased())
                 case .link:
                     return (3, "Links")
+                case .text:
+                    return (4, "Text")
                 }
             }
         case .none, .name, .dateAdded:

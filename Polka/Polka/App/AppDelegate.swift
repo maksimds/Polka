@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var copyKeeper: CopyKeeper?
     private var pdfConverter: PDFConverter?
     private var linkPreviewFetcher: LinkPreviewFetcher?
+    private var screenshotCatcher: ScreenshotCatcher?
     private var settingsWindow: SettingsWindowController?
 
     /// One switch shared by the menu bar menu and the Settings window, so they always agree.
@@ -19,7 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var fileChooser = FileChooser(focus: focus)
 
     func showSettings() {
-        let controller = settingsWindow ?? SettingsWindowController(loginItem: loginItem, focus: focus)
+        let controller = settingsWindow ?? SettingsWindowController(loginItem: loginItem,
+                                                                    screenshots: screenshotCatcher,
+                                                                    focus: focus)
         settingsWindow = controller
         controller.show()
     }
@@ -63,6 +66,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                               openSettings: { [weak self] in self?.showSettings() })
         controller.start()
         notchController = controller
+
+        // After the panel, so screenshots that arrived while Polka was closed show
+        // when it next opens.
+        if let locations, let system = UserDefaults(suiteName: ScreenshotCatcher.systemDomain) {
+            let catcher = ScreenshotCatcher(store: store,
+                                            copies: ShelfCopies(folder: locations.copiesFolder),
+                                            inbox: locations.screenshotsFolder,
+                                            system: system)
+            catcher.onAdded = { [weak controller] ids in controller?.reveal(ids) }
+            catcher.start()
+            screenshotCatcher = catcher
+        }
     }
 
     // MARK: - Quick Look control

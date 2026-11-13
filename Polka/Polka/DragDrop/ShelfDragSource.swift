@@ -68,8 +68,9 @@ final class ShelfDragSource: NSObject, NSDraggingSource {
         session.draggingFormation = items.count > 1 ? .pile : .default
     }
 
-    /// What the target app receives: the real file, or the link as both a URL and
-    /// plain text so that text fields accept it too.
+    /// What the target app receives: the real file, the link as both a URL and plain
+    /// text so that text fields accept it too, or the text. Finder makes a text
+    /// clipping file of dropped text. Also what "Copy" puts on the clipboard.
     static func pasteboardWriter(for item: ShelfItem) -> NSPasteboardWriting {
         switch item.source {
         case .file:
@@ -78,6 +79,10 @@ final class ShelfDragSource: NSObject, NSDraggingSource {
             let pasteboardItem = NSPasteboardItem()
             pasteboardItem.setString(url.absoluteString, forType: .URL)
             pasteboardItem.setString(url.absoluteString, forType: .string)
+            return pasteboardItem
+        case .text(let text):
+            let pasteboardItem = NSPasteboardItem()
+            pasteboardItem.setString(text, forType: .string)
             return pasteboardItem
         }
     }

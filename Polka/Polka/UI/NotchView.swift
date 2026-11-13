@@ -11,6 +11,9 @@ struct NotchView: View {
     /// The + menu's choices.
     let addLink: @MainActor () -> Void
     let addFiles: @MainActor () -> Void
+    /// What "Paste" would add, read from the clipboard as the menu opens.
+    let pasteable: @MainActor () -> Pasteable?
+    let paste: @MainActor (Pasteable) -> Void
     let commands: ShelfItemCommands
     /// The pointer in the panel's SwiftUI space, for the drop zone's eyes.
     let pointer: @MainActor () -> CGPoint?
@@ -245,7 +248,11 @@ struct NotchView: View {
             }
             // Glass symbols, 16 pt apart, so their 8 pt click margins meet without overlapping.
             HStack(spacing: Glass.headerSymbolSpacing) {
-                AddMenuButton(height: model.notchSize.height, onAddLink: addLink, onAddFiles: addFiles)
+                AddMenuButton(height: model.notchSize.height,
+                              onAddLink: addLink,
+                              onAddFiles: addFiles,
+                              pasteable: pasteable,
+                              onPaste: paste)
                 SortMenuButton(sort: store.sort, height: model.notchSize.height) { model.chooseSort($0) }
                 settingsButton
             }

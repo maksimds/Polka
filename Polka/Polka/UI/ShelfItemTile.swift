@@ -51,6 +51,8 @@ struct ShelfItemTile: View {
     let onQuickLook: @MainActor () -> Void
     /// This item, or the whole selection if this item is in it.
     let onShowInfo: @MainActor () -> Void
+    /// A text item's "Copy": its text onto the clipboard. This item alone.
+    let onCopy: @MainActor () -> Void
     /// True while the name is a field being typed in ("Rename").
     let isRenaming: Bool
     /// The menu's "Rename": this item alone.
@@ -106,19 +108,24 @@ struct ShelfItemTile: View {
     }
 
     /// Quick Look and Get Info for files and folders, and "Rename" for every tile,
-    /// right after Get Info as in Finder. Then how Polka keeps the item: "Temporary",
-    /// checked while it has an expiry, and for files and folders "Keep a Copy", checked
-    /// for a copy. Links have no file to show or copy, so they skip those. "Remove"
-    /// comes last, set apart. Unchecking "Keep a Copy" goes back to the original, so it
-    /// can't be unchecked for a promised file, which has none. A document (docx, doc,
-    /// rtf, rtfd, odt, txt) also gets "Convert to PDF" in a group of its own, since it
-    /// makes a new file rather than changing how Polka keeps this one.
+    /// right after Get Info as in Finder. Text has no file to get info on, so it gets
+    /// Quick Look and "Copy". Then how Polka keeps the item: "Temporary", checked while
+    /// it has an expiry, and for files and folders "Keep a Copy", checked for a copy.
+    /// Links and text have no file to show or copy, so they skip those. "Remove" comes
+    /// last, set apart. Unchecking "Keep a Copy" goes back to the original, so it can't
+    /// be unchecked for a promised file, a pasted picture or a screenshot, which have
+    /// none. A document (docx, doc, rtf, rtfd, odt, txt) also gets "Convert to PDF" in a
+    /// group of its own, since it makes a new file rather than changing how Polka keeps
+    /// this one.
     private var menuEntries: [TileDragView.MenuEntry] {
-        let isFile = item.kind != .link
+        let isFile = item.kind == .file || item.kind == .folder
         var entries: [TileDragView.MenuEntry] = []
         if isFile {
             entries.append(TileDragView.MenuEntry(title: "Quick Look", isEnabled: isAvailable, action: onQuickLook))
             entries.append(TileDragView.MenuEntry(title: "Get Info", isEnabled: isAvailable, action: onShowInfo))
+        } else if item.kind == .text {
+            entries.append(TileDragView.MenuEntry(title: "Quick Look", action: onQuickLook))
+            entries.append(TileDragView.MenuEntry(title: "Copy", action: onCopy))
         }
         // Only the tile's label changes, so a missing file can be renamed too.
         entries.append(TileDragView.MenuEntry(title: "Rename", action: onRename))
@@ -169,8 +176,9 @@ struct ShelfItemTile: View {
                 .font(Font(Self.nameFont))
                 .foregroundStyle(.white.opacity(isAvailable || isSelected ? 1 : 0.5))
                 .lineLimit(1)
-                // File names keep their extension; link titles keep the site name.
-                .truncationMode(item.kind == .link ? .tail : .middle)
+                // File names keep their extension; link titles keep the site name, and
+                // text its first words.
+                .truncationMode(item.kind == .link || item.kind == .text ? .tail : .middle)
                 // ...and the name in an accent-colored capsule.
                 .padding(.horizontal, 5)
                 .padding(.vertical, 1)
@@ -515,6 +523,8 @@ extension ShelfItem {
             return "Folder"
         case .link:
             return "Link"
+        case .text:
+            return "Text"
         case .file:
             let fileExtension = url.pathExtension.uppercased()
             return fileExtension.isEmpty ? "File" : fileExtension

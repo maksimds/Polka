@@ -2,8 +2,10 @@ import AppKit
 import Combine
 
 /// Keeps Polka's copies in step with the shelf. It makes a copy when an item is set to
-/// keep one, receives the files apps hand over by promise, and deletes a copy once no
-/// item uses it: when the item is removed, expires, or goes back to its original.
+/// keep one, receives the files apps hand over by promise, saves pictures pasted from
+/// the clipboard, and deletes a copy once no item uses it: when the item is removed,
+/// expires, or goes back to its original. A screenshot goes to the Trash instead, so
+/// one that was still needed can be found again.
 ///
 /// Originals are never deleted. Only copy folders inside Polka's Copies folder are.
 @MainActor
@@ -11,9 +13,10 @@ final class CopyKeeper {
     private let store: ShelfStore
     private let copies: ShelfCopies
     /// Copy folders the shelf used at the last change, so a folder that drops out of
-    /// use can be deleted. A folder still being written isn't in use yet, so it is
-    /// never deleted from under the copy.
-    private var foldersInUse = Set<String>()
+    /// use can be removed, each with whether it goes to the Trash (a screenshot's) or is
+    /// deleted. A folder still being written isn't in use yet, so it is never removed
+    /// from under the copy.
+    private var foldersInUse: [String: Bool] = [:]
     private var watcher: AnyCancellable?
     /// Where apps write promised files from. The files land in the Copies folder.
     private let promiseQueue: OperationQueue = {
@@ -127,19 +130,53 @@ final class CopyKeeper {
         store.add([ShelfItem.Draft(fileURL: url, storageMode: mode)])
     }
 
+    // MARK: - Pasted pictures
+
+    /// "Paste Image": saves a picture from the clipboard into a new copy folder in the
+    /// background, then adds it to the shelf like a photo dragged in from Photos: a copy
+    /// with no original. Returns the new item, or nil if the picture couldn't be saved.
+    func addPastedImage(_ image: PastedImage, at date: Date = Date()) async -> ShelfItem? {
+        let copies = self.copies
+        // Turning a large TIFF into a PNG takes a moment, so it runs off the main thread.
+        let result = await Task.detached(priority: .userInitiated) { () -> Result<URL, Error> in
+            Result {
+                guard let encoded = image.encoded() else { throw PastedImage.Unreadable() }
+                return try copies.write(encoded.data, named: PastedImage.fileName(at: date, fileExtension: encoded.fileExtension))
+            }
+        }.value
+
+        switch result {
+        case .success(let file):
+            Log.drop.info("Pasted picture saved as \(file.lastPathComponent, privacy: .private)")
+            return store.add([ShelfItem.Draft(fileURL: file, storageMode: .copy)]).added.first
+        case .failure(let error):
+            Log.drop.error("Could not save a pasted picture: \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)")
+            return nil
+        }
+    }
+
     // MARK: - Cleaning up
 
-    private func folders(usedBy items: [ShelfItem]) -> Set<String> {
-        Set(items.compactMap { item -> String? in
-            guard item.storageMode == .copy, case .file(let path, _) = item.source else { return nil }
-            return copies.folderName(containing: path)
-        })
+    /// Each copy folder the items use, and whether it goes to the Trash once no item does.
+    private func folders(usedBy items: [ShelfItem]) -> [String: Bool] {
+        var folders: [String: Bool] = [:]
+        for item in items {
+            guard item.storageMode == .copy,
+                  case .file(let path, _) = item.source,
+                  let name = copies.folderName(containing: path) else { continue }
+            folders[name] = item.origin == .screenshot
+        }
+        return folders
     }
 
     private func removeCopiesNoLongerUsed(by items: [ShelfItem]) {
         let used = folders(usedBy: items)
-        for name in foldersInUse.subtracting(used) {
-            copies.removeFolder(named: name)
+        for (name, goesToTrash) in foldersInUse where used[name] == nil {
+            if goesToTrash {
+                copies.trashFolder(named: name)
+            } else {
+                copies.removeFolder(named: name)
+            }
         }
         foldersInUse = used
     }
@@ -153,7 +190,7 @@ final class CopyKeeper {
             return
         }
         let used = folders(usedBy: store.items)
-        let leftovers = copies.folderNames().filter { !used.contains($0) }
+        let leftovers = copies.folderNames().filter { used[$0] == nil }
         for name in leftovers {
             copies.removeFolder(named: name)
         }

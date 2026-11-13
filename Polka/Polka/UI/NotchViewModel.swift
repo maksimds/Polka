@@ -175,8 +175,74 @@ final class NotchViewModel: ObservableObject {
         if let message = Self.notAWebLinkMessage(refused: items.filter(\.isRefusedLink).count) {
             notice = message
         }
+        if items.compactMap(\.text).contains(where: Self.isTooLong) {
+            notice = Self.textTooLongMessage
+        }
         state = .expanded
     }
+
+    // MARK: - Pasting
+
+    /// "Paste" in the + menu (FR-19): what's on the clipboard, stored like the same
+    /// thing dropped. The shelf stays open and scrolls to show it. A picture is
+    /// saved first (`pasteImage`), since that takes a moment.
+    func paste(_ contents: Pasteable) {
+        switch contents {
+        case .files(let urls):
+            reveal(add(urls.map { ShelfItem.Draft(fileURL: $0) }))
+        case .links(let urls):
+            reveal(add(urls.map(ShelfItem.Draft.init(linkURL:))))
+        case .text(let text):
+            guard !Self.isTooLong(text) else {
+                notice = Self.textTooLongMessage
+                return
+            }
+            reveal(add([ShelfItem.Draft(text: text)]))
+        case .image:
+            break
+        }
+    }
+
+    /// "Paste Image": the picture goes into Polka's folder like a photo dragged in from
+    /// Photos, and onto the shelf once it's saved.
+    func pasteImage(_ image: PastedImage) {
+        guard let copies else {
+            notice = "Couldn't save the picture, since Polka has no folder to keep it in"
+            return
+        }
+        Task {
+            if let item = await copies.addPastedImage(image) {
+                reveal([item.id])
+            } else {
+                notice = "Couldn't save the picture from the clipboard"
+            }
+        }
+    }
+
+    /// The new item nearest the top: on the open shelf, the grid scrolls it into view if
+    /// it's out of sight, as for a converted PDF; otherwise the panel opens scrolled to it.
+    func reveal(_ ids: Set<ShelfItem.ID>) {
+        let first = store.items.first { ids.contains($0.id) }?.id
+        if state == .expanded {
+            itemToShow = first
+        } else {
+            itemToReveal = first
+        }
+    }
+
+    /// A text item's "Copy": its text onto the clipboard, ready to paste anywhere.
+    func copyText(_ id: ShelfItem.ID) {
+        guard let item = store.items.first(where: { $0.id == id }), case .text = item.source else { return }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects([ShelfDragSource.pasteboardWriter(for: item)])
+    }
+
+    nonisolated fileprivate static func isTooLong(_ text: String) -> Bool {
+        text.utf16.count > ShelfItem.maxTextLength
+    }
+
+    private static let textTooLongMessage = "That text is too long to keep on the shelf"
 
     // MARK: - Adding from the header's "Add New" menu
 
@@ -218,13 +284,15 @@ final class NotchViewModel: ObservableObject {
 
     /// Stores new items, says if any were already on the shelf, and remembers the new
     /// item nearest the top, so the panel opens with it in view.
-    private func add(_ drafts: [ShelfItem.Draft]) {
+    @discardableResult
+    private func add(_ drafts: [ShelfItem.Draft]) -> Set<ShelfItem.ID> {
         let result = store.add(drafts)
         if let message = Self.alreadyOnShelfMessage(for: result.duplicates) {
             notice = message
         }
         let addedIDs = Set(result.added.map(\.id))
         itemToReveal = store.items.first { addedIDs.contains($0.id) }?.id
+        return addedIDs
     }
 
     /// A choice from the header's "Sort By" menu. The shelf sorts itself now, stays
@@ -448,22 +516,33 @@ final class NotchViewModel: ObservableObject {
 
     // MARK: - Opening and inspecting
 
-    /// What a double-click on `id` opens. Nil for a file that can't be found.
+    func item(_ id: ShelfItem.ID) -> ShelfItem? {
+        store.items.first { $0.id == id }
+    }
+
+    /// What a double-click on `id` opens. Nil for a file that can't be found, and for
+    /// text, which has nothing to open and shows in Quick Look instead.
     func urlToOpen(_ id: ShelfItem.ID) -> URL? {
         guard !store.missingItemIDs.contains(id),
-              let item = store.items.first(where: { $0.id == id }) else { return nil }
+              let item = item(id), item.kind != .text else { return nil }
         return item.urlToOpen()
     }
 
-    /// The files a right-click choice on `id` (Quick Look, Get Info) acts on: the
-    /// whole selection if `id` is in it, otherwise just `id`, with `id` first, like a
-    /// drag. Links have no file and missing files can't be shown, so both stay out.
+    /// The files a right-click "Get Info" on `id` acts on: the whole selection if `id`
+    /// is in it, otherwise just `id`, with `id` first, like a drag. Links and text have
+    /// no file and missing files can't be shown, so they stay out.
     func filesToShow(from id: ShelfItem.ID) -> [URL] {
+        itemsToShow(from: id).filter { $0.kind != .text }.map { $0.urlToOpen() }
+    }
+
+    /// What a right-click "Quick Look" on `id` shows, chosen like `filesToShow`, but
+    /// with text too: Quick Look shows it as a page of text.
+    func itemsToShow(from id: ShelfItem.ID) -> [ShelfItem] {
         let ids = selection.contains(id) ? selection : [id]
-        let files = store.items.filter {
+        let shown = store.items.filter {
             ids.contains($0.id) && $0.kind != .link && !store.missingItemIDs.contains($0.id)
         }
-        return (files.filter { $0.id == id } + files.filter { $0.id != id }).map { $0.urlToOpen() }
+        return shown.filter { $0.id == id } + shown.filter { $0.id != id }
     }
 
     /// The tile's "Remove" menu item: the whole selection if `id` is in it, otherwise
@@ -726,6 +805,10 @@ private extension ShelfItem.Draft {
         switch dropped {
         case .file(let url): self.init(fileURL: url)
         case .link(let url): self.init(linkURL: url)
+        case .text(let text):
+            // Too long to keep: the panel says so instead.
+            guard !NotchViewModel.isTooLong(text) else { return nil }
+            self.init(text: text)
         case .promise, .refusedLink: return nil
         }
     }

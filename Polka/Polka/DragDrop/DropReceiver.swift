@@ -11,6 +11,8 @@ enum DroppedItem: Equatable {
     /// An address that isn't a web link, such as `smb:` or an app's own scheme. It's
     /// never stored (see `LinkInput.isWebAddress`); the panel says why instead.
     case refusedLink(URL)
+    /// Selected text dragged from a page or a document.
+    case text(String)
 
     var label: String {
         switch self {
@@ -18,7 +20,13 @@ enum DroppedItem: Equatable {
         case .link(let url): return "Link: \(url.absoluteString)"
         case .promise(let receiver): return "Promised file: \(receiver.fileTypes.joined(separator: ", "))"
         case .refusedLink(let url): return "Not a web link (\(url.scheme ?? "no scheme"))"
+        case .text(let text): return "Text, \(text.count) characters"
         }
+    }
+
+    var text: String? {
+        guard case .text(let text) = self else { return nil }
+        return text
     }
 
     var promise: NSFilePromiseReceiver? {
@@ -32,20 +40,22 @@ enum DroppedItem: Equatable {
     }
 }
 
-/// Reads file URLs, web URLs and file promises from a drag pasteboard.
+/// Reads file URLs, web URLs, file promises and text from a drag pasteboard.
 enum DropReceiver {
     /// Pasteboard types the panel registers for. Finder provides `.fileURL`,
-    /// browsers provide `.URL` for links, and apps like Photos and Mail promise files.
+    /// browsers provide `.URL` for links, apps like Photos and Mail promise files, and
+    /// selected text comes as `.string`.
     static let acceptedPasteboardTypes: [NSPasteboard.PasteboardType] =
-        [.fileURL, .URL] + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
+        [.fileURL, .URL, .string] + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) }
 
     static func canAccept(_ pasteboard: NSPasteboard) -> Bool {
-        pasteboard.canReadObject(forClasses: [NSURL.self, NSFilePromiseReceiver.self], options: nil)
+        pasteboard.canReadObject(forClasses: [NSURL.self, NSFilePromiseReceiver.self, NSString.self], options: nil)
     }
 
-    /// Real files come first, then promised files, then links. A browser dragging an
-    /// image offers both the image's address and a promise of the image itself, and
-    /// the image is what's wanted. A promise of a bookmark file, though, means the link.
+    /// Real files come first, then promised files, then links, then text. A browser
+    /// dragging an image offers both the image's address and a promise of the image
+    /// itself, and the image is what's wanted. A promise of a bookmark file, though,
+    /// means the link. Text that's nothing but a web address is the link too.
     ///
     /// Only web links are kept. A web page decides what its draggable elements carry,
     /// so a drag can bring any address at all; anything else comes back as a
@@ -60,13 +70,21 @@ enum DropReceiver {
         let hasLinks = urls.contains { !$0.isFileURL }
         let wantedPromises = promises.filter { !(hasLinks && promisesOnlyAWebLocation($0)) }
 
-        let items: [DroppedItem]
+        var items: [DroppedItem]
         if !urls.contains(where: \.isFileURL), !wantedPromises.isEmpty {
             items = wantedPromises.map { .promise($0) }
         } else {
             items = urls.map { url in
                 if url.isFileURL { return .file(url) }
                 return LinkInput.isWebAddress(url) ? .link(url) : .refusedLink(url)
+            }
+        }
+        if items.isEmpty, let string = pasteboard.string(forType: .string) {
+            let text = PasteReader.trimmed(string)
+            if let link = LinkInput.link(inText: text) {
+                items = [.link(link)]
+            } else if !text.isEmpty {
+                items = [.text(text)]
             }
         }
 

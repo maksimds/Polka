@@ -80,6 +80,12 @@ final class NotchPanelController {
                                                             addFiles: { [weak self] in
                                                                 self?.addFilesFromPanel()
                                                             },
+                                                            pasteable: {
+                                                                PasteReader.contents(of: .general)
+                                                            },
+                                                            paste: { [weak self] contents in
+                                                                self?.pasteFromPanel(contents)
+                                                            },
                                                             commands: itemCommands,
                                                             pointer: { [weak self] in
                                                                 self?.pointerInPanel()
@@ -267,6 +273,32 @@ final class NotchPanelController {
         }
     }
 
+    /// "Paste": what the menu said is on the clipboard goes on the shelf, which stays
+    /// open. A tick later, like the others, since this runs as the menu closes. A
+    /// picture's bytes are only read now; the clipboard may have changed since the menu
+    /// opened, and then there may be none.
+    private func pasteFromPanel(_ contents: Pasteable) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            guard contents == .image else {
+                self.model.paste(contents)
+                return
+            }
+            if let image = PasteReader.image(from: .general) {
+                self.model.pasteImage(image)
+            } else {
+                self.model.showNotice("The picture is no longer on the clipboard")
+            }
+        }
+    }
+
+    /// Screenshots that just arrived: the next time the panel opens, it shows them.
+    /// The open shelf doesn't jump to them while you're using it.
+    func reveal(_ ids: Set<ShelfItem.ID>) {
+        guard model.state == .collapsed else { return }
+        model.reveal(ids)
+    }
+
     /// The link field or a name being edited needs the keys. The panel becomes the key
     /// window, the one that gets typing, but Polka doesn't become the active app (see
     /// `NotchPanel`).
@@ -347,11 +379,17 @@ final class NotchPanelController {
     private var itemCommands: ShelfItemCommands {
         ShelfItemCommands(open: { [weak self] in self?.openItem($0) },
                           quickLook: { [weak self] in self?.quickLookItems(from: $0) },
-                          showInfo: { [weak self] in self?.showInfoForItems(from: $0) })
+                          showInfo: { [weak self] in self?.showInfoForItems(from: $0) },
+                          copy: { [weak self] in self?.model.copyText($0) })
     }
 
     /// Double-click. A file that can't be found does nothing, as it can't be dragged.
+    /// Text has nothing to open, so it shows in Quick Look, on its own.
     private func openItem(_ id: ShelfItem.ID) {
+        if let item = model.item(id), item.kind == .text {
+            show([item])
+            return
+        }
         guard let url = model.urlToOpen(id) else { return }
         model.state = .collapsed
         if !ItemOpener.open(url) {
@@ -360,7 +398,16 @@ final class NotchPanelController {
     }
 
     private func quickLookItems(from id: ShelfItem.ID) {
-        let files = model.filesToShow(from: id)
+        show(model.itemsToShow(from: id))
+    }
+
+    /// Quick Look shows files themselves, and text as a page of text, from a file
+    /// written for it (`TextPreviewFile`).
+    private func show(_ items: [ShelfItem]) {
+        let files = items.compactMap { item -> URL? in
+            guard case .text(let text) = item.source else { return item.urlToOpen() }
+            return TextPreviewFile.write(text, named: item.displayName, id: item.id)
+        }
         guard !files.isEmpty else { return }
         model.state = .collapsed
         quickLook.show(files)
