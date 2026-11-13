@@ -549,11 +549,15 @@ final class NotchViewModel: ObservableObject {
     /// What a right-click "Quick Look" on `id` shows, chosen like `filesToShow`, but
     /// with text too: Quick Look shows it as a page of text.
     func itemsToShow(from id: ShelfItem.ID) -> [ShelfItem] {
+        itemsToShare(from: id).filter { $0.kind != .link }
+    }
+
+    /// What a right-click "Share" on `id` sends, chosen like `filesToShow`, but with
+    /// links and text too, which the share services take as they come.
+    func itemsToShare(from id: ShelfItem.ID) -> [ShelfItem] {
         let ids = selection.contains(id) ? selection : [id]
-        let shown = store.items.filter {
-            ids.contains($0.id) && $0.kind != .link && !store.missingItemIDs.contains($0.id)
-        }
-        return shown.filter { $0.id == id } + shown.filter { $0.id != id }
+        let chosen = store.items.filter { ids.contains($0.id) && !store.missingItemIDs.contains($0.id) }
+        return chosen.filter { $0.id == id } + chosen.filter { $0.id != id }
     }
 
     /// The tile's "Remove" menu item: the whole selection if `id` is in it, otherwise

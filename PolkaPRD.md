@@ -24,7 +24,7 @@ v1 is a lean shelf for files and links. Everything else waits until the core fee
 
 | Bucket | Items |
 | --- | --- |
-| In v1 | Hover to expand, drag in, drag out, files, folders, links with their site's name and icon, text, pasting from the clipboard, screenshots straight to the shelf, temporary and permanent items, delete, open, Quick Look and Get Info, renaming a tile, converting a document to PDF, menu bar item, launch at login |
+| In v1 | Hover to expand, drag in, drag out, files, folders, links with their site's name and icon, text, pasting from the clipboard, screenshots straight to the shelf, temporary and permanent items, delete, open, Quick Look and Get Info, sharing with macOS's share menu, renaming a tile, converting a document to PDF, menu bar item, launch at login |
 | Later | Search, tags or groups, pin to top, keyboard shortcut to open |
 | Out of scope | Cloud sync, iPhone companion, sharing with others, AirDrop, music or calendar widgets, App Store release |
 
@@ -55,6 +55,8 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-19 | The panel's + menu has a Paste item, named after what's on the clipboard, that stores copied files, a picture, a link or plain text. Text becomes a text tile, which can also be dropped in, and drags out as text | P1 |
 | FR-20 | A Settings switch saves new screenshots and screen recordings to the shelf instead of the Desktop, as temporary items that go to the Trash when they expire or are removed. Turning it off puts back where they went before | P1 |
 | FR-21 | Any tile can be pinned from its right-click menu. Pinned tiles have the first row to themselves in every sort, marked with a pin, at most five of them; pinning a sixth says why it can't | P2 |
+| FR-22 | A Settings slider makes the open panel see-through glass, from solid black to a blurred view of what's behind it, like Finder's sidebar. The closed notch stays solid, and so does everything with Reduce Transparency on | P2 |
+| FR-23 | Every tile's right-click menu has Share, which opens macOS's share popover pointing at the tile, as Finder's Share does for a file: files and folders, links and text, or the whole selection, go to AirDrop, Mail, Messages, Notes and the rest | P2 |
 
 ## Interaction flow
 

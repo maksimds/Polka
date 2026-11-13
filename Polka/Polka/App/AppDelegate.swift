@@ -14,9 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// One switch shared by the menu bar menu and the Settings window, so they always agree.
     private(set) lazy var loginItem = LoginItem()
-    /// Shared by Settings, Quick Look and the Open dialog, the windows that take focus.
+    /// Shared by Settings, Quick Look, Share and the Open dialog, the windows that take focus.
     private lazy var focus = FocusReturner()
     private lazy var quickLook = QuickLookController(focus: focus)
+    private lazy var share = ShareController(focus: focus)
     private lazy var fileChooser = FileChooser(focus: focus)
 
     func showSettings() {
@@ -62,6 +63,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                               copies: copyKeeper,
                                               converter: pdfConverter,
                                               quickLook: quickLook,
+                                              share: share,
                                               fileChooser: fileChooser,
                                               openSettings: { [weak self] in self?.showSettings() })
         controller.start()

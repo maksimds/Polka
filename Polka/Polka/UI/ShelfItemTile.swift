@@ -55,6 +55,9 @@ struct ShelfItemTile: View {
     let onShowInfo: @MainActor () -> Void
     /// A text item's "Copy": its text onto the clipboard. This item alone.
     let onCopy: @MainActor () -> Void
+    /// "Share": this item, or the whole selection if this item is in it, with the
+    /// popover pointing at this tile (its drag layer, and the tile as drawn in it).
+    let onShare: @MainActor (NSView, NSRect) -> Void
     /// True while the name is a field being typed in ("Rename").
     let isRenaming: Bool
     /// The menu's "Rename": this item alone.
@@ -111,7 +114,9 @@ struct ShelfItemTile: View {
 
     /// Quick Look and Get Info for files and folders, and "Rename" for every tile,
     /// right after Get Info as in Finder. Text has no file to get info on, so it gets
-    /// Quick Look and "Copy". Then how Polka keeps the item: "Pin", which reads "Unpin"
+    /// Quick Look and "Copy". "Share" closes the group for every tile: macOS's share
+    /// popover takes files as Finder does, links as Safari does, and text as Notes
+    /// does. Then how Polka keeps the item: "Pin", which reads "Unpin"
     /// on a pinned tile as in Notes and Messages, "Temporary", checked while it has an
     /// expiry, and for files and folders "Keep a Copy", checked for a copy.
     /// Links and text have no file to show or copy, so they skip those. "Remove" comes
@@ -132,6 +137,11 @@ struct ShelfItemTile: View {
         }
         // Only the tile's label changes, so a missing file can be renamed too.
         entries.append(TileDragView.MenuEntry(title: "Rename", action: onRename))
+        // A file that can't be found has nothing to send. In a selection, missing
+        // files stay behind, as in a drag.
+        entries.append(TileDragView.MenuEntry(title: "Share",
+                                              isEnabled: !isFile || isAvailable,
+                                              pointingAtTile: onShare))
         // Always enabled: past the limit, choosing it says why nothing was pinned.
         entries.append(TileDragView.MenuEntry(title: item.isPinned ? "Unpin" : "Pin",
                                               startsGroup: true,
