@@ -71,13 +71,15 @@ struct SettingsView: View {
                     }
                 }
                 .disabled(reduceTransparency)
+                PanelColorSwatches()
+                PanelColorHexField()
             } header: {
                 Text("Appearance")
             } footer: {
                 // About as long either way, so the window keeps its height.
                 SettingsFootnote(text: reduceTransparency
-                    ? "Reduce Transparency is on in Accessibility settings, so the shelf stays solid."
-                    : "How much of what's behind the open shelf shows through, blurred, as in Finder.")
+                    ? "Reduce Transparency is on in Accessibility settings, so the shelf isn't see-through. A color becomes a deep, glassy gradient, so names stay readable."
+                    : "Transparency lets what's behind the open shelf show through, blurred, as in Finder. A color becomes a deep, glassy gradient, so names stay readable.")
             }
 
             Section {
@@ -152,6 +154,112 @@ private struct ScreenshotsSection: View {
                 """)
                 .padding(.bottom, 10)
         }
+    }
+}
+
+/// The panel's color (FR-24) as swatches, each drawn as the glass it makes, so a
+/// light color shows up deepened, as it will be. Only the gradient's lighter half, the
+/// panel's top left, fits in a swatch: the whole of it, dark end included, left
+/// neighbors such as Pink, Red and Orange hard to tell apart. The chosen one is ringed.
+/// Black is the panel as it always was.
+private struct PanelColorSwatches: View {
+    @AppStorage(ShelfSettings.panelColorKey) private var storedColor = ""
+
+    var body: some View {
+        let current = ShelfSettings.panelColor(stored: storedColor)
+        LabeledContent("Color") {
+            HStack(spacing: 4) {
+                ForEach(PanelColor.swatches) { swatch in
+                    Button {
+                        storedColor = ShelfSettings.storedValue(for: swatch.color)
+                    } label: {
+                        PanelSwatchView(color: swatch.color, isSelected: swatch.color == current)
+                    }
+                    .buttonStyle(.plain)
+                    .help(swatch.name)
+                    .accessibilityLabel(swatch.name)
+                    .accessibilityAddTraits(swatch.color == current ? .isSelected : [])
+                }
+            }
+        }
+    }
+}
+
+private struct PanelSwatchView: View {
+    let color: PanelColor?
+    let isSelected: Bool
+
+    var body: some View {
+        Circle()
+            .fill(fill)
+            // Dark swatches would melt into a dark window without an edge.
+            .overlay(Circle().strokeBorder(Color.primary.opacity(0.18), lineWidth: 0.5))
+            .frame(width: 18, height: 18)
+            .padding(3)
+            .overlay(Circle().strokeBorder(Color.accentColor, lineWidth: 2).opacity(isSelected ? 1 : 0))
+            .contentShape(Circle())
+    }
+
+    /// The gradient stretched to twice the swatch, so the swatch holds its first half.
+    private var fill: LinearGradient {
+        guard let gradient = color?.gradient else {
+            return LinearGradient(colors: [.black], startPoint: .top, endPoint: .bottom)
+        }
+        return LinearGradient(colors: [Color(gradient.start), Color(gradient.end)],
+                              startPoint: .topLeading, endPoint: UnitPoint(x: 2, y: 2))
+    }
+}
+
+/// The panel's color as a hex code: "#2881DB", "2881db" or "#28D". Return or a click
+/// elsewhere applies what's typed. A code Polka can't read turns red and changes
+/// nothing; an empty field goes back to the current code.
+private struct PanelColorHexField: View {
+    @AppStorage(ShelfSettings.panelColorKey) private var storedColor = ""
+    @State private var text = ""
+    @State private var isWrong = false
+    @FocusState private var isEditing: Bool
+
+    private var currentHex: String {
+        (ShelfSettings.panelColor(stored: storedColor) ?? .black).hex
+    }
+
+    var body: some View {
+        LabeledContent("Hex") {
+            TextField("Hex", text: $text, prompt: Text(currentHex))
+                .labelsHidden()
+                // A grouped form draws its fields without a border, which read as a label.
+                .textFieldStyle(.roundedBorder)
+                .monospacedDigit()
+                .foregroundStyle(isWrong ? Color.red : Color.primary)
+                .frame(width: 84)
+                .focused($isEditing)
+                .onSubmit(apply)
+        }
+        .onAppear { text = currentHex }
+        // A swatch was picked, or the field was applied.
+        .onChange(of: storedColor) {
+            guard !isEditing else { return }
+            text = currentHex
+        }
+        .onChange(of: isEditing) { _, editing in
+            if !editing { apply() }
+        }
+        .onChange(of: text) {
+            isWrong = false
+        }
+    }
+
+    private func apply() {
+        if text.trimmingCharacters(in: .whitespaces).isEmpty {
+            text = currentHex
+            return
+        }
+        guard let color = PanelColor(hex: text) else {
+            isWrong = true
+            return
+        }
+        storedColor = ShelfSettings.storedValue(for: color)
+        text = color.hex
     }
 }
 

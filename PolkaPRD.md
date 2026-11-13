@@ -56,6 +56,7 @@ P0 means v1 does not ship without it, P1 means v1 should have it, P2 means nice 
 | FR-20 | A Settings switch saves new screenshots and screen recordings to the shelf instead of the Desktop, as temporary items that go to the Trash when they expire or are removed. Turning it off puts back where they went before | P1 |
 | FR-21 | Any tile can be pinned from its right-click menu. Pinned tiles have the first row to themselves in every sort, marked with a pin, at most five of them; pinning a sixth says why it can't | P2 |
 | FR-22 | A Settings slider makes the open panel see-through glass, from solid black to a blurred view of what's behind it, like Finder's sidebar. The closed notch stays solid, and so does everything with Reduce Transparency on | P2 |
+| FR-24 | Settings offers a color for the open panel, by swatch or hex code. It's never drawn as the color itself but as a diagonal two-tone glass gradient made from it, deepened so the shelf's white names stay readable, and it works with the Transparency slider | P2 |
 
 ## Interaction flow
 
