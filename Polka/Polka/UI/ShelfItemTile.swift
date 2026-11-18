@@ -53,7 +53,12 @@ struct ShelfItemTile: View {
     let onQuickLook: @MainActor () -> Void
     /// This item, or the whole selection if this item is in it.
     let onShowInfo: @MainActor () -> Void
-    /// A text item's "Copy": its text onto the clipboard. This item alone.
+    /// How many selected tiles "Copy" would copy, for the menu's "Copy 3 Items".
+    let copyableSelectionCount: Int
+    /// Counts this tile's copies; each new one pulses its picture once.
+    let copyPulses: Int
+    /// "Copy": this item, or the whole selection if this item is in it, onto the
+    /// clipboard as a drag out would carry it.
     let onCopy: @MainActor () -> Void
     /// "Share": this item, or the whole selection if this item is in it, with the
     /// popover pointing at this tile (its drag layer, and the tile as drawn in it).
@@ -112,9 +117,9 @@ struct ShelfItemTile: View {
             .joined(separator: " · ")
     }
 
-    /// Quick Look and Get Info for files and folders, and "Rename" for every tile,
-    /// right after Get Info as in Finder. Text has no file to get info on, so it gets
-    /// Quick Look and "Copy". "Share" closes the group for every tile: macOS's share
+    /// Quick Look and Get Info for files and folders, and Quick Look for text, which has
+    /// no file to get info on. Then "Copy" and "Rename" for every tile, Rename right
+    /// after Get Info and Copy as in Finder. "Share" closes the group for every tile: macOS's share
     /// popover takes files as Finder does, links as Safari does, and text as Notes
     /// does. Then how Polka keeps the item: "Pin", which reads "Unpin"
     /// on a pinned tile as in Notes and Messages, "Temporary", checked while it has an
@@ -133,8 +138,14 @@ struct ShelfItemTile: View {
             entries.append(TileDragView.MenuEntry(title: "Get Info", isEnabled: isAvailable, action: onShowInfo))
         } else if item.kind == .text {
             entries.append(TileDragView.MenuEntry(title: "Quick Look", action: onQuickLook))
-            entries.append(TileDragView.MenuEntry(title: "Copy", action: onCopy))
         }
+        // A file that can't be found has nothing to copy; in a selection, it stays
+        // behind, as in a drag. The ⌘C says the same works over the shelf.
+        let copyCount = isSelected ? max(copyableSelectionCount, 1) : 1
+        entries.append(TileDragView.MenuEntry(title: copyCount > 1 ? "Copy \(copyCount) Items" : "Copy",
+                                              isEnabled: !isFile || isAvailable,
+                                              keyEquivalent: "c",
+                                              action: onCopy))
         // Only the tile's label changes, so a missing file can be renamed too.
         entries.append(TileDragView.MenuEntry(title: "Rename", action: onRename))
         // A file that can't be found has nothing to send. In a selection, missing
@@ -191,6 +202,8 @@ struct ShelfItemTile: View {
                 .animation(.easeOut(duration: 0.15), value: item.isPinned)
                 .saturation(isAvailable ? 1 : 0)
                 .opacity(isAvailable ? 1 : 0.35)
+                // Copied: a quick brighten, the one sign a copy worked.
+                .modifier(CopyPulse(trigger: isLive ? copyPulses : 0))
                 // Selected, as in Finder: a soft square behind the picture...
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -513,6 +526,34 @@ struct ShelfItemTile: View {
                     .strokeBorder(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 3)
                     .padding(-3)
             )
+    }
+}
+
+/// A copied tile's picture brightens for a moment and swells a touch, then settles,
+/// in about a third of a second. A keyframe animation, so it plays even when the copy
+/// came from the right-click menu as it closes. With Reduce Motion it only brightens.
+private struct CopyPulse: ViewModifier {
+    let trigger: Int
+
+    static let brightness = 0.22
+    static let swell = 0.06
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        let brightness = Self.brightness
+        let swell = reduceMotion ? 0 : Self.swell
+        return content.keyframeAnimator(initialValue: 0.0, trigger: trigger) { view, pulse in
+            view
+                .brightness(brightness * pulse)
+                .scaleEffect(1 + swell * pulse)
+        } keyframes: { _ in
+            KeyframeTrack(\.self) {
+                MoveKeyframe(0)
+                CubicKeyframe(1, duration: 0.1, startVelocity: 0, endVelocity: 0)
+                CubicKeyframe(0, duration: 0.25, startVelocity: 0, endVelocity: 0)
+            }
+        }
     }
 }
 

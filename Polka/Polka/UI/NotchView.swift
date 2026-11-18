@@ -225,6 +225,8 @@ struct NotchView: View {
                               onTogglePinned: { model.togglePinned($0) },
                               onToggleKeepCopy: keepCopyAction,
                               convertibleSelectionCount: model.convertibleSelectionCount,
+                              copyableSelectionCount: model.copyableSelectionCount,
+                              copyPulses: model.copyPulses,
                               onConvertToPDF: convertAction,
                               commands: commands,
                               renamingItemID: model.renamingItemID,

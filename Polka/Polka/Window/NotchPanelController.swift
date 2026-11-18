@@ -15,8 +15,8 @@ final class NotchPanelController {
     private let model: NotchViewModel
     private let dragMonitor = GlobalDragMonitor()
     private let dragSource: ShelfDragSource
-    /// Cmd-V over the open shelf, on only while the pointer is over it.
-    private let pasteShortcut = PasteShortcut()
+    /// Cmd-V and Cmd-C over the open shelf, on only while the pointer is over it.
+    private let shortcuts = ShelfShortcuts()
     /// Read on every use, so a change in Settings applies right away.
     private let settings = ShelfSettings()
     private var panel: NotchPanel?
@@ -161,15 +161,16 @@ final class NotchPanelController {
             .removeDuplicates()
             .sink { [weak panel] renaming in panel?.endsEditingOnClickElsewhere = renaming }
             .store(in: &cancellables)
-        // Cmd-V goes off the moment the shelf closes or the panel takes the keys, and
+        // Cmd-V and Cmd-C go off the moment the shelf closes or the panel takes the keys, and
         // on when the shelf opens under a pointer that's already over it. Pointer
         // moves keep it up to date in between (`pointerMoved`).
         model.$state.combineLatest(model.$renamingItemID)
             .sink { [weak self] state, renaming in
-                self?.updatePasteShortcut(state: state, isRenaming: renaming != nil)
+                self?.updateShortcuts(state: state, isRenaming: renaming != nil)
             }
             .store(in: &cancellables)
-        pasteShortcut.onPress = { [weak self] in self?.pasteFromShortcut() }
+        shortcuts.onPaste = { [weak self] in self?.pasteFromShortcut() }
+        shortcuts.onCopy = { [weak self] in self?.copyFromShortcut() }
 
         startMouseMonitors()
         startDragMonitor()
@@ -394,17 +395,27 @@ final class NotchPanelController {
         pasteFromPanel(contents)
     }
 
-    /// Turns Cmd-V on or off for where things stand now. `@Published` reports a change
+    /// Cmd-C over the open shelf: the selected tiles onto the clipboard. Nothing
+    /// selected, or only files that can't be found, gives the system beep, as an app
+    /// does when there's nothing to copy.
+    private func copyFromShortcut() {
+        guard model.state == .expanded else { return }
+        if !model.copySelection() {
+            NSSound.beep()
+        }
+    }
+
+    /// Turns Cmd-V and Cmd-C on or off for where things stand now. `@Published` reports a change
     /// before it's made, so the state and renaming come from the caller when known.
-    private func updatePasteShortcut(state: NotchState? = nil, isRenaming: Bool? = nil) {
+    private func updateShortcuts(state: NotchState? = nil, isRenaming: Bool? = nil) {
         let isOverPanel = geometry.map {
             $0.expandedRect(size: model.expandedSize).contains(NSEvent.mouseLocation)
         } ?? false
-        pasteShortcut.isOn = PasteShortcut.isWanted(state: state ?? model.state,
-                                                    isRenaming: isRenaming ?? (model.renamingItemID != nil),
-                                                    isMenuOpen: isMenuOpen,
-                                                    isSharing: share.isSharing,
-                                                    isPointerOverPanel: isOverPanel)
+        shortcuts.isOn = ShelfShortcuts.isWanted(state: state ?? model.state,
+                                                 isRenaming: isRenaming ?? (model.renamingItemID != nil),
+                                                 isMenuOpen: isMenuOpen,
+                                                 isSharing: share.isSharing,
+                                                 isPointerOverPanel: isOverPanel)
     }
 
     /// Screenshots that just arrived: the next time the panel opens, it shows them.
@@ -498,7 +509,7 @@ final class NotchPanelController {
         ShelfItemCommands(open: { [weak self] in self?.openItem($0) },
                           quickLook: { [weak self] in self?.quickLookItems(from: $0) },
                           showInfo: { [weak self] in self?.showInfoForItems(from: $0) },
-                          copy: { [weak self] in self?.model.copyText($0) },
+                          copy: { [weak self] in self?.model.copy(from: $0) },
                           share: { [weak self] in self?.shareItems(from: $0, pointingAt: $1, $2) })
     }
 
@@ -550,7 +561,7 @@ final class NotchPanelController {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.model.state == .expanded else { return }
             self.share.share(objects, from: view, at: area)
-            self.updatePasteShortcut()
+            self.updateShortcuts()
         }
     }
 
@@ -575,7 +586,7 @@ final class NotchPanelController {
     private func pointerMoved() {
         defer {
             updateMouseEvents()
-            updatePasteShortcut()
+            updateShortcuts()
         }
         followPointerIfSettled()
         guard let geometry else { return }
@@ -726,7 +737,7 @@ final class NotchPanelController {
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
                 MainActor.assumeIsolated {
                     self?.isMenuOpen = isOpen
-                    self?.updatePasteShortcut()
+                    self?.updateShortcuts()
                 }
             }
         }

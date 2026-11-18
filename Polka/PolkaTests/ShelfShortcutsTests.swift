@@ -1,15 +1,16 @@
 import Testing
 @testable import Polka
 
-/// When Cmd-V belongs to Polka. While it does, no other app gets it, so it must only
-/// be while the pointer is over the open shelf and nothing else on it wants the keys.
-struct PasteShortcutTests {
+/// When Cmd-V and Cmd-C belong to Polka. While they do, no other app gets them, so it
+/// must only be while the pointer is over the open shelf and nothing else on it wants
+/// the keys.
+struct ShelfShortcutsTests {
     private func wanted(state: NotchState = .expanded,
                         isRenaming: Bool = false,
                         isMenuOpen: Bool = false,
                         isSharing: Bool = false,
                         isPointerOverPanel: Bool = true) -> Bool {
-        PasteShortcut.isWanted(state: state,
+        ShelfShortcuts.isWanted(state: state,
                                isRenaming: isRenaming,
                                isMenuOpen: isMenuOpen,
                                isSharing: isSharing,

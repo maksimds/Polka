@@ -230,12 +230,47 @@ final class NotchViewModel: ObservableObject {
         }
     }
 
-    /// A text item's "Copy": its text onto the clipboard, ready to paste anywhere.
-    func copyText(_ id: ShelfItem.ID) {
-        guard let item = store.items.first(where: { $0.id == id }), case .text = item.source else { return }
-        let pasteboard = NSPasteboard.general
+    /// Each copied tile's count of copies, so its picture pulses once per copy: the
+    /// one sign a copy worked, since Polka isn't the app you're in.
+    @Published private(set) var copyPulses: [ShelfItem.ID: Int] = [:]
+
+    /// Cmd-C over the shelf: the selected tiles, as a drag out would carry them, onto
+    /// the clipboard. Only a selection is copied, as in Finder, never the tile under
+    /// the pointer alone. False when there's nothing to copy, so the caller can beep.
+    @discardableResult
+    func copySelection(to pasteboard: NSPasteboard = .general) -> Bool {
+        copy(itemsToCopy(selection), to: pasteboard)
+    }
+
+    /// The tile's "Copy": this item, or the whole selection if this item is in it.
+    func copy(from id: ShelfItem.ID, to pasteboard: NSPasteboard = .general) {
+        copy(itemsToCopy(selection.contains(id) ? selection : [id]), to: pasteboard)
+    }
+
+    /// How many selected tiles "Copy" would copy, for the menu's "Copy 3 Items".
+    var copyableSelectionCount: Int {
+        itemsToCopy(selection).count
+    }
+
+    /// In shelf order, without files that can't be found, which stay behind as in a drag.
+    private func itemsToCopy(_ ids: Set<ShelfItem.ID>) -> [ShelfItem] {
+        store.items.filter { ids.contains($0.id) && !store.missingItemIDs.contains($0.id) }
+    }
+
+    /// What lands on the clipboard is what a drag out drops (`pasteboardWriter`): the
+    /// file itself, so Finder pastes a copy and Mail attaches it; a link as its address;
+    /// text as plain text. Several at once go on as several items, which Finder takes
+    /// all of and a text field takes the first of.
+    @discardableResult
+    private func copy(_ items: [ShelfItem], to pasteboard: NSPasteboard) -> Bool {
+        guard !items.isEmpty else { return false }
         pasteboard.clearContents()
-        pasteboard.writeObjects([ShelfDragSource.pasteboardWriter(for: item)])
+        pasteboard.writeObjects(items.map(ShelfDragSource.pasteboardWriter(for:)))
+        for item in items {
+            copyPulses[item.id, default: 0] += 1
+        }
+        Log.drop.debug("Copied \(items.count, privacy: .public) items")
+        return true
     }
 
     nonisolated fileprivate static func isTooLong(_ text: String) -> Bool {

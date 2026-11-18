@@ -10,7 +10,7 @@ struct ShelfItemCommands {
     let quickLook: @MainActor (ShelfItem.ID) -> Void
     /// Right-click > Get Info.
     let showInfo: @MainActor (ShelfItem.ID) -> Void
-    /// A text item's right-click > Copy.
+    /// Right-click > Copy: the tile, or the whole selection if it's in it.
     let copy: @MainActor (ShelfItem.ID) -> Void
     /// Right-click > Share, with the view and area the popover points at. The shelf
     /// stays open under the popover, as it does under a menu.
@@ -73,6 +73,10 @@ struct ShelfGridView: View {
     let onToggleKeepCopy: (@MainActor (ShelfItem.ID) -> Void)?
     /// How many selected documents "Convert to PDF" would convert.
     let convertibleSelectionCount: Int
+    /// How many selected tiles "Copy" would copy.
+    let copyableSelectionCount: Int
+    /// Each copied tile's count of copies; its picture pulses once per copy.
+    let copyPulses: [ShelfItem.ID: Int]
     /// Nil when Polka has nowhere to make PDFs.
     let onConvertToPDF: (@MainActor (ShelfItem.ID) -> Void)?
     let commands: ShelfItemCommands
@@ -169,6 +173,8 @@ struct ShelfGridView: View {
                                           onOpen: { commands.open(item.id) },
                                           onQuickLook: { commands.quickLook(item.id) },
                                           onShowInfo: { commands.showInfo(item.id) },
+                                          copyableSelectionCount: copyableSelectionCount,
+                                          copyPulses: copyPulses[item.id] ?? 0,
                                           onCopy: { commands.copy(item.id) },
                                           onShare: { commands.share(item.id, $0, $1) },
                                           isRenaming: renamingItemID == item.id,

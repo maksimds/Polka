@@ -19,22 +19,27 @@ final class TileDragView: NSView {
         var isEnabled = true
         /// Puts a divider above this entry, to start a new group.
         var startsGroup = false
+        /// Shown at the item's right with Command, like "⌘C". Pressed while the menu is
+        /// open, it chooses the item.
+        var keyEquivalent = ""
         /// Handed this layer and the tile as drawn in it (`drawnArea`), for whatever
         /// shows next to the tile, like Share's popover. Most entries don't need them.
         let run: @MainActor (_ tile: NSView, _ drawnArea: NSRect) -> Void
 
         init(title: String, isChecked: Bool = false, isEnabled: Bool = true, startsGroup: Bool = false,
-             action: @escaping @MainActor () -> Void) {
+             keyEquivalent: String = "", action: @escaping @MainActor () -> Void) {
             self.init(title: title, isChecked: isChecked, isEnabled: isEnabled, startsGroup: startsGroup,
-                      pointingAtTile: { _, _ in action() })
+                      keyEquivalent: keyEquivalent, pointingAtTile: { _, _ in action() })
         }
 
         init(title: String, isChecked: Bool = false, isEnabled: Bool = true, startsGroup: Bool = false,
+             keyEquivalent: String = "",
              pointingAtTile action: @escaping @MainActor (_ tile: NSView, _ drawnArea: NSRect) -> Void) {
             self.title = title
             self.isChecked = isChecked
             self.isEnabled = isEnabled
             self.startsGroup = startsGroup
+            self.keyEquivalent = keyEquivalent
             run = action
         }
     }
@@ -233,7 +238,8 @@ final class TileDragView: NSView {
             if entry.startsGroup, index > 0 {
                 menu.addItem(.separator())
             }
-            let menuItem = NSMenuItem(title: entry.title, action: #selector(menuEntryChosen(_:)), keyEquivalent: "")
+            let menuItem = NSMenuItem(title: entry.title, action: #selector(menuEntryChosen(_:)),
+                                      keyEquivalent: entry.keyEquivalent)
             menuItem.target = self
             menuItem.tag = index
             menuItem.state = entry.isChecked ? .on : .off

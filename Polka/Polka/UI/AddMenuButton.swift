@@ -32,7 +32,7 @@ struct AddMenuButton: View {
         menu.addItem(.separator())
         // Named after what's on the clipboard ("Paste 3 Files", "Paste Image"), so you
         // know what you'll get. The ⌘V says the same works with the pointer over the
-        // shelf (`PasteShortcut`); pressed while this menu is open, it chooses this item.
+        // shelf (`ShelfShortcuts`); pressed while this menu is open, it chooses this item.
         let contents = pasteable()
         let pasteItem = NSMenuItem(title: contents?.menuTitle ?? "Paste") { [onPaste] in
             if let contents { onPaste(contents) }
