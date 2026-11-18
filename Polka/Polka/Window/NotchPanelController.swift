@@ -15,6 +15,8 @@ final class NotchPanelController {
     private let model: NotchViewModel
     private let dragMonitor = GlobalDragMonitor()
     private let dragSource: ShelfDragSource
+    /// Cmd-V over the open shelf, on only while the pointer is over it.
+    private let pasteShortcut = PasteShortcut()
     /// Read on every use, so a change in Settings applies right away.
     private let settings = ShelfSettings()
     private var panel: NotchPanel?
@@ -154,6 +156,15 @@ final class NotchPanelController {
             .removeDuplicates()
             .sink { [weak panel] renaming in panel?.endsEditingOnClickElsewhere = renaming }
             .store(in: &cancellables)
+        // Cmd-V goes off the moment the shelf closes or the panel takes the keys, and
+        // on when the shelf opens under a pointer that's already over it. Pointer
+        // moves keep it up to date in between (`pointerMoved`).
+        model.$state.combineLatest(model.$renamingItemID)
+            .sink { [weak self] state, renaming in
+                self?.updatePasteShortcut(state: state, isRenaming: renaming != nil)
+            }
+            .store(in: &cancellables)
+        pasteShortcut.onPress = { [weak self] in self?.pasteFromShortcut() }
 
         startMouseMonitors()
         startDragMonitor()
@@ -304,6 +315,32 @@ final class NotchPanelController {
         }
     }
 
+    /// Cmd-V over the open shelf: whatever the + menu's Paste would add. With nothing
+    /// Polka can keep on the clipboard, the system beep, as any app gives when there's
+    /// nothing to paste.
+    private func pasteFromShortcut() {
+        guard model.state == .expanded else { return }
+        guard let contents = PasteReader.contents(of: .general) else {
+            NSSound.beep()
+            return
+        }
+        Log.input.debug("Cmd-V over the shelf")
+        pasteFromPanel(contents)
+    }
+
+    /// Turns Cmd-V on or off for where things stand now. `@Published` reports a change
+    /// before it's made, so the state and renaming come from the caller when known.
+    private func updatePasteShortcut(state: NotchState? = nil, isRenaming: Bool? = nil) {
+        let isOverPanel = geometry.map {
+            $0.expandedRect(size: model.expandedSize).contains(NSEvent.mouseLocation)
+        } ?? false
+        pasteShortcut.isOn = PasteShortcut.isWanted(state: state ?? model.state,
+                                                    isRenaming: isRenaming ?? (model.renamingItemID != nil),
+                                                    isMenuOpen: isMenuOpen,
+                                                    isSharing: share.isSharing,
+                                                    isPointerOverPanel: isOverPanel)
+    }
+
     /// Screenshots that just arrived: the next time the panel opens, it shows them.
     /// The open shelf doesn't jump to them while you're using it.
     func reveal(_ ids: Set<ShelfItem.ID>) {
@@ -444,6 +481,7 @@ final class NotchPanelController {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.model.state == .expanded else { return }
             self.share.share(objects, from: view, at: area)
+            self.updatePasteShortcut()
         }
     }
 
@@ -466,6 +504,7 @@ final class NotchPanelController {
     }
 
     private func pointerMoved() {
+        defer { updatePasteShortcut() }
         followPointerIfSettled()
         guard let geometry else { return }
         let point = NSEvent.mouseLocation
@@ -595,7 +634,10 @@ final class NotchPanelController {
             // Run as it's posted, which is always on the main thread, so the flag is
             // set before the next mouse move is handled.
             NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
-                MainActor.assumeIsolated { self?.isMenuOpen = isOpen }
+                MainActor.assumeIsolated {
+                    self?.isMenuOpen = isOpen
+                    self?.updatePasteShortcut()
+                }
             }
         }
     }

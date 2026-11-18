@@ -27,12 +27,14 @@ struct AddMenuButton: View {
         menu.addItem(NSMenuItem(title: "File", action: onAddFiles))
         menu.addItem(.separator())
         // Named after what's on the clipboard ("Paste 3 Files", "Paste Image"), so you
-        // know what you'll get. It shows no ⌘V: the panel never takes the keys from the
-        // app you're in, so the shortcut couldn't reach it.
+        // know what you'll get. The ⌘V says the same works with the pointer over the
+        // shelf (`PasteShortcut`); pressed while this menu is open, it chooses this item.
         let contents = pasteable()
         let pasteItem = NSMenuItem(title: contents?.menuTitle ?? "Paste") { [onPaste] in
             if let contents { onPaste(contents) }
         }
+        pasteItem.keyEquivalent = "v"
+        pasteItem.keyEquivalentModifierMask = .command
         pasteItem.isEnabled = contents != nil
         menu.addItem(pasteItem)
         return menu
