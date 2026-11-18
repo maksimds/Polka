@@ -402,6 +402,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Polka-Info.plist";
 				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Polka saves the PDFs you convert next to their documents, and reads the files you keep on its shelf.";
 				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Polka saves the PDFs you convert next to their documents, and reads the files you keep on its shelf.";
 				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Polka saves the PDFs you convert next to their documents, and reads the files you keep on its shelf.";
@@ -433,6 +434,7 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Polka-Info.plist";
 				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Polka saves the PDFs you convert next to their documents, and reads the files you keep on its shelf.";
 				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Polka saves the PDFs you convert next to their documents, and reads the files you keep on its shelf.";
 				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Polka saves the PDFs you convert next to their documents, and reads the files you keep on its shelf.";

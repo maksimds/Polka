@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!--
+  Merged into the Info.plist Xcode generates (GENERATE_INFOPLIST_FILE). Only what
+  build settings can't hold lives here: NSBonjourServices is a list.
+-->
+<dict>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Polka looks for other Macs with Polka nearby, so you can send them items from your shelf.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_polka._tcp</string>
+	</array>
+</dict>
+</plist>

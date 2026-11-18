@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The contents of the Settings window.
+/// The Settings window's General tab.
 struct SettingsView: View {
     @ObservedObject var loginItem: LoginItem
     /// Nil when Polka has no folder of its own to save screenshots in.
@@ -157,6 +157,126 @@ private struct ScreenshotsSection: View {
                 """)
                 .padding(.bottom, 10)
         }
+    }
+}
+
+/// The Settings window's Nearby Sharing tab.
+struct NearbySettingsView: View {
+    @ObservedObject var nearby: NearbyService
+
+    var body: some View {
+        Form {
+            NearbySection(nearby: nearby)
+        }
+        .formStyle(.grouped)
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(width: SettingsView.width)
+    }
+}
+
+/// Nearby Sharing (NS-1 to NS-3): the switch, the name others see, who can send, and
+/// the Macs around. The list is one line, so the window keeps its height as Macs come
+/// and go; the Macs it names are looked for only while this tab is showing.
+private struct NearbySection: View {
+    @ObservedObject var nearby: NearbyService
+    @AppStorage(ShelfSettings.nearbySharingKey) private var isOn = false
+    @AppStorage(ShelfSettings.nearbyNameKey) private var storedName = ""
+    @AppStorage(ShelfSettings.nearbyReceiveFromKey) private var receiveFrom = NearbyReceiveFrom.everyone
+
+    private var displayName: String {
+        ShelfSettings.nearbyName(typed: storedName, macName: NearbyService.macName)
+    }
+
+    var body: some View {
+        Section {
+            Toggle("Share with Macs Nearby", isOn: $isOn)
+            NearbyNameField()
+            Picker("Receive From", selection: $receiveFrom) {
+                ForEach(NearbyReceiveFrom.allCases, id: \.self) { choice in
+                    Text(choice.title).tag(choice)
+                }
+            }
+            LabeledContent("Nearby Macs") {
+                Text(nearbyMacs)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(nearby.peers.map(\.name).joined(separator: "\n"))
+            }
+        } header: {
+            Text("Nearby Sharing")
+        } footer: {
+            SettingsFootnote(text: footnote)
+                .padding(.bottom, 10)
+        }
+    }
+
+    private var nearbyMacs: String {
+        guard isOn else { return "Off" }
+        switch nearby.status {
+        case .off, .starting: return "Starting…"
+        case .noLocalNetwork: return "No Local Network access"
+        case .failed: return "Not working"
+        case .on: return nearby.peers.isEmpty ? "None found yet" : nearby.peers.map(\.name).joined(separator: ", ")
+        }
+    }
+
+    /// About two lines in every case, so the window keeps its height.
+    private var footnote: String {
+        let wifi = "Wi-Fi has to be on, but the Macs don't need the same network."
+        guard isOn else {
+            return "Send items to Macs nearby that have Polka, and get items from them, without AirDrop. \(wifi)"
+        }
+        switch nearby.status {
+        case .noLocalNetwork:
+            return "Polka needs Local Network access to find Macs nearby. Turn it on in System Settings > Privacy & Security > Local Network."
+        case let .failed(reason):
+            return reason
+        default:
+            switch receiveFrom {
+            case .everyone: return "Anyone nearby with Polka can see you as \u{201C}\(displayName)\u{201D}. \(wifi)"
+            case .remembered: return "Only Macs you've remembered can see you. Others nearby don't get your name. \(wifi)"
+            }
+        }
+    }
+}
+
+/// The name others see. It shows the Mac's name until another is typed; Return or a
+/// click elsewhere applies it, and an emptied field goes back to the Mac's name.
+private struct NearbyNameField: View {
+    @AppStorage(ShelfSettings.nearbyNameKey) private var storedName = ""
+    @State private var text = ""
+    @FocusState private var isEditing: Bool
+
+    private var displayName: String {
+        ShelfSettings.nearbyName(typed: storedName, macName: NearbyService.macName)
+    }
+
+    var body: some View {
+        LabeledContent("Name") {
+            TextField("Name", text: $text, prompt: Text(NearbyService.macName))
+                .labelsHidden()
+                // A grouped form draws its fields without a border, which read as a label.
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 200)
+                .focused($isEditing)
+                .onSubmit(apply)
+        }
+        .onAppear { text = displayName }
+        .onChange(of: storedName) {
+            guard !isEditing else { return }
+            text = displayName
+        }
+        .onChange(of: isEditing) { _, editing in
+            if !editing { apply() }
+        }
+    }
+
+    private func apply() {
+        let name = NearbyName.clean(text)
+        // The Mac's own name is stored as nothing, so it follows a renamed Mac.
+        storedName = (name == nil || name == NearbyName.clean(NearbyService.macName)) ? "" : name!
+        text = displayName
     }
 }
 
