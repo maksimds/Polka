@@ -9,27 +9,41 @@ import SwiftUI
 /// the right, it would hang past the panel's edge, and the panel collapses once the
 /// pointer has been out there. Menus don't need their window to be key, so this
 /// works in the never-key panel, like the tiles' right-click menu.
-struct HeaderMenuButton: View {
-    let systemName: String
-    /// Colors the glass symbol instead of white.
-    var tint: Color?
-    /// The header's height, so the symbol is centered on it like the gear.
-    let height: CGFloat
+///
+/// The symbol is drawn by the caller, told whether the menu is open (the + turns into
+/// an × meanwhile) and whether to glow: under the pointer, or while its menu is open.
+struct HeaderMenuButton<Symbol: View>: View {
     /// What VoiceOver calls the button.
     let label: String
+    /// The shelf is open. Hover only counts then, since the header stays in place,
+    /// unseen, while the panel is closed.
+    let isActive: Bool
     /// Built each time the menu opens, so it always shows the current state.
     let makeMenu: @MainActor () -> NSMenu
+    /// Runs on each press, as the menu is about to open.
+    var onPress: @MainActor () -> Void = {}
+    @ViewBuilder let symbol: (_ isMenuOpen: Bool, _ isGlowing: Bool) -> Symbol
+
+    @State private var isHovered = false
+    @State private var isMenuOpen = false
 
     /// Like the gear: the frame is just the symbol, and the area you can click
     /// reaches this much further around it.
-    static let clickMargin = Glass.headerClickMargin
+    static var clickMargin: CGFloat { Glass.headerClickMargin }
 
     var body: some View {
-        GlassHeaderSymbol(systemName: systemName, tint: tint, height: height)
+        symbol(isMenuOpen, isActive && (isHovered || isMenuOpen))
             .accessibilityHidden(true)
             .overlay {
-                HeaderMenuArea(label: label, makeMenu: makeMenu)
+                HeaderHoverArea(isActive: isActive) { isHovered = $0 }
                     .padding(-Self.clickMargin)
+            }
+            .overlay {
+                HeaderMenuArea(label: label, makeMenu: makeMenu) { isOpen in
+                    if isOpen { onPress() }
+                    isMenuOpen = isOpen
+                }
+                .padding(-Self.clickMargin)
             }
     }
 }
@@ -37,6 +51,7 @@ struct HeaderMenuButton: View {
 private struct HeaderMenuArea: NSViewRepresentable {
     let label: String
     let makeMenu: @MainActor () -> NSMenu
+    let onMenuChange: @MainActor (Bool) -> Void
 
     func makeNSView(context: Context) -> HeaderMenuView {
         HeaderMenuView()
@@ -45,6 +60,7 @@ private struct HeaderMenuArea: NSViewRepresentable {
     func updateNSView(_ view: HeaderMenuView, context: Context) {
         view.label = label
         view.makeMenu = makeMenu
+        view.onMenuChange = onMenuChange
     }
 }
 
@@ -52,6 +68,9 @@ private struct HeaderMenuArea: NSViewRepresentable {
 final class HeaderMenuView: NSView {
     var label = ""
     var makeMenu: (@MainActor () -> NSMenu)?
+    /// True as the menu is about to open, false once it has closed.
+    var onMenuChange: (@MainActor (Bool) -> Void)?
+    private var isShowingMenu = false
 
     /// Measured from the top, so placing the menu below reads top to bottom.
     override var isFlipped: Bool { true }
@@ -72,11 +91,26 @@ final class HeaderMenuView: NSView {
     /// window's top is 5 pt above it, the room above the first item).
     private static let menuWindowTopInset: CGFloat = 5
 
+    /// The symbol hears first, then the menu opens a run-loop pass later, so SwiftUI
+    /// has drawn the start of the symbol's animation (the + turning) before AppKit
+    /// starts following the pointer for the menu.
     private func showMenu() {
+        guard !isShowingMenu else { return }
+        isShowingMenu = true
+        onMenuChange?(true)
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.popUpMenu()
+            self.isShowingMenu = false
+            self.onMenuChange?(false)
+        }
+    }
+
+    private func popUpMenu() {
         guard let menu = makeMenu?() else { return }
         // The symbol is the click area minus its margin. The menu's top left goes
         // where its right edge lines up with the symbol's, just under the header.
-        let margin = HeaderMenuButton.clickMargin
+        let margin = Glass.headerClickMargin
         let location = NSPoint(x: bounds.maxX - margin - menu.size.width,
                                y: bounds.maxY - margin + 4)
         // Returns once the menu has closed, after any choice has run.

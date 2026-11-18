@@ -17,6 +17,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var formHeight: CGFloat?
     /// Room kept between the window and the screen's edges when it has to shrink.
     private static let screenMargin: CGFloat = 8
+    /// Runs once the window has closed. The shelf stays open while Settings is, and
+    /// this lets it go.
+    var onClose: (@MainActor () -> Void)?
 
     init(loginItem: LoginItem, screenshots: ScreenshotCatcher?, focus: FocusReturner) {
         self.loginItem = loginItem
@@ -25,15 +28,22 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         super.init()
     }
 
-    func show() {
+    /// Opens on `screen` (the pointer's if nil), below `top` if given: the bottom of the
+    /// open shelf, which floats above normal windows and would cover Settings' top.
+    ///
+    /// From a full-screen app, macOS takes you to the desktop to show it, since a
+    /// full-screen Space only holds that app's windows. The window's Space behavior is
+    /// left as macOS sets it for that; joining the active Space would keep it there.
+    func show(on screen: NSScreen? = nil, below top: CGFloat? = nil) {
         focus.rememberFrontmostApp()
         let window = self.window ?? makeWindow()
         self.window = window
         let isOpening = !window.isVisible
         if isOpening {
-            let area = NotchGeometry.screen(containing: NSEvent.mouseLocation)?.visibleFrame
+            let screen = screen ?? NotchGeometry.screen(containing: NSEvent.mouseLocation)
+            let area = screen.map { Self.area(on: $0, below: top) }
             fit(window, in: area)
-            placeOnPointerScreen(window, area: area)
+            place(window, area: area)
         }
         loginItem.refresh()
         // The Screenshot toolbar may have picked another save location since.
@@ -59,6 +69,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// leaves Polka active with nothing to type into. Hand focus back instead.
     func windowWillClose(_ notification: Notification) {
         focus.handBack(after: "Settings")
+        // A tick later, once the window is off screen.
+        DispatchQueue.main.async { [weak self] in self?.onClose?() }
+    }
+
+    /// The screen's room for windows, with its top lowered to `top` if that's lower.
+    static func area(on screen: NSScreen, below top: CGFloat?) -> NSRect {
+        var area = screen.visibleFrame
+        if let top, top < area.maxY, top > area.minY {
+            area.size.height = top - area.minY
+        }
+        return area
     }
 
     // MARK: - Private
@@ -104,10 +125,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         return height
     }
 
-    /// Opens on the screen the pointer is on, a little above the middle like
-    /// `NSWindow.center()`, and never past the menu bar or the screen's bottom.
-    /// Reopened on the same screen, it stays where you left it.
-    private func placeOnPointerScreen(_ window: NSWindow, area: NSRect?) {
+    /// A little above the middle of the area like `NSWindow.center()`, and never past
+    /// its top (the menu bar or the shelf) or the screen's bottom. Reopened on the
+    /// same screen, it stays where you left it, moved down if the shelf would cover it.
+    private func place(_ window: NSWindow, area: NSRect?) {
         let frame = window.frame
         guard let area else {
             if !hasBeenPlaced { window.center() }
@@ -115,8 +136,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             return
         }
         if hasBeenPlaced, area.contains(CGPoint(x: frame.midX, y: frame.midY)) {
-            // Back where you left it, though it may have grown since.
-            if frame.minY < area.minY {
+            // Back where you left it, though it may have grown since, or been left
+            // where the shelf now is.
+            if frame.maxY > area.maxY - Self.screenMargin {
+                window.setFrameOrigin(CGPoint(x: frame.minX, y: area.maxY - Self.screenMargin - frame.height))
+            } else if frame.minY < area.minY {
                 window.setFrameOrigin(CGPoint(x: frame.minX, y: area.minY + Self.screenMargin))
             }
             return

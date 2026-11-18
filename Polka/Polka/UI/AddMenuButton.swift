@@ -6,6 +6,8 @@ import SwiftUI
 struct AddMenuButton: View {
     /// The header's height, so the symbol is centered on it like the gear.
     let height: CGFloat
+    /// The shelf is open, so hover counts.
+    let isActive: Bool
     let onAddLink: @MainActor () -> Void
     let onAddFiles: @MainActor () -> Void
     /// What "Paste" would add, read as the menu opens. Nil greys the item out.
@@ -13,10 +15,12 @@ struct AddMenuButton: View {
     let onPaste: @MainActor (Pasteable) -> Void
 
     var body: some View {
-        HeaderMenuButton(systemName: "plus",
-                         height: height,
-                         label: "Add New",
-                         makeMenu: makeMenu)
+        // The + turns into an × while its menu is open.
+        HeaderMenuButton(label: "Add New", isActive: isActive, makeMenu: makeMenu) { isOpen, isGlowing in
+            GlassHeaderGlyph(height: height, isGlowing: isGlowing) {
+                PlusCrossGlyph(isCross: isOpen)
+            }
+        }
     }
 
     private func makeMenu() -> NSMenu {

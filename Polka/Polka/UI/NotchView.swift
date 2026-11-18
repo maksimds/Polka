@@ -26,6 +26,9 @@ struct NotchView: View {
     @AppStorage(ShelfSettings.panelColorKey) private var storedColor = ""
     /// Goes up each time a drag arrives over the drop zone, to bounce its icon once.
     @State private var dropArrivals = 0
+    /// Each press of the gear spins it once.
+    @State private var gearPresses = 0
+    @State private var isGearHovered = false
 
     /// How much the closed notch swells just before it opens.
     private static let hoverGrowth = CGSize(width: 14, height: 4)
@@ -258,11 +261,14 @@ struct NotchView: View {
             // Glass symbols, 16 pt apart, so their 8 pt click margins meet without overlapping.
             HStack(spacing: Glass.headerSymbolSpacing) {
                 AddMenuButton(height: model.notchSize.height,
+                              isActive: model.state == .expanded,
                               onAddLink: addLink,
                               onAddFiles: addFiles,
                               pasteable: pasteable,
                               onPaste: paste)
-                SortMenuButton(sort: store.sort, height: model.notchSize.height) { model.chooseSort($0) }
+                SortMenuButton(sort: store.sort,
+                               height: model.notchSize.height,
+                               isActive: model.state == .expanded) { model.chooseSort($0) }
                 settingsButton
             }
             .fixedSize()
@@ -281,15 +287,25 @@ struct NotchView: View {
             .allowsHitTesting(false)
     }
 
-    /// Opens Settings. The gear's own frame is just the symbol, so its edge is what
-    /// lines up with the tiles; the area you can click reaches 8 pt further around it.
+    /// Opens Settings, with a spin of the gear; the shelf stays open while Settings
+    /// is. The gear's own frame is just the symbol, so its edge is what lines up with
+    /// the tiles; the area you can click reaches 8 pt further around it.
     private var settingsButton: some View {
-        Button(action: openSettings) {
-            GlassHeaderSymbol(systemName: "gearshape.fill", height: model.notchSize.height)
+        Button {
+            gearPresses += 1
+            openSettings()
+        } label: {
+            GearSymbol(presses: gearPresses,
+                       height: model.notchSize.height,
+                       isGlowing: isGearHovered && model.state == .expanded)
                 .contentShape(Rectangle().inset(by: -Glass.headerClickMargin))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Settings")
+        .overlay {
+            HeaderHoverArea(isActive: model.state == .expanded) { isGearHovered = $0 }
+                .padding(-Glass.headerClickMargin)
+        }
     }
 
     // MARK: - Drop zone

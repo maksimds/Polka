@@ -20,12 +20,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var share = ShareController(focus: focus)
     private lazy var fileChooser = FileChooser(focus: focus)
 
+    /// Settings opens on the built-in screen, below the shelf, which opens with it and
+    /// stays open until Settings closes, so changes to its look show as they're made.
     func showSettings() {
         let controller = settingsWindow ?? SettingsWindowController(loginItem: loginItem,
                                                                     screenshots: screenshotCatcher,
                                                                     focus: focus)
+        controller.onClose = { [weak self] in self?.notchController?.settingsClosed() }
         settingsWindow = controller
-        controller.show()
+        let screen = NotchGeometry.settingsScreen()
+        let shelfBottom = notchController?.openForSettings(on: screen)
+        controller.show(on: screen, below: shelfBottom)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

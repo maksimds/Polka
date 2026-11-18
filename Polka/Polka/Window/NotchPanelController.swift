@@ -30,6 +30,11 @@ final class NotchPanelController {
     /// menu. The shelf stays open meanwhile, wherever the pointer goes, so the menu
     /// is never left floating over a collapsed notch.
     private var isMenuOpen = false
+    /// Settings is open. The shelf stays open meanwhile, wherever the pointer goes, so
+    /// changes to its look show as they're made (`openForSettings`).
+    private var isSettingsOpen = false
+    /// Moves the shelf to the Settings screen once it has finished shrinking.
+    private var settingsMoveTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
     private var hoverTask: Task<Void, Never>?
     private var delayedCollapseTask: Task<Void, Never>?
@@ -223,17 +228,24 @@ final class NotchPanelController {
         model.notchSize = geometry.notchRect.size
         model.hasNotch = geometry.hasNotch
 
-        // The panel is fixed at the largest size; SwiftUI animates the shape inside it.
-        let size = CGSize(width: model.expandedSize.width + 80,
-                          height: model.expandedSize.height + 40)
-        let origin = CGPoint(x: geometry.notchRect.midX - size.width / 2,
-                             y: screen.frame.maxY - size.height)
-        panel.setFrame(CGRect(origin: origin, size: size), display: true)
+        panel.setFrame(panelFrame(for: geometry), display: true)
 
         Log.window.info("""
             Panel placed. Notch: \(String(describing: geometry.notchRect), privacy: .public), \
             hasNotch: \(geometry.hasNotch), screen: \(screen.localizedName, privacy: .public)
             """)
+    }
+
+    /// The panel is fixed at the largest size; SwiftUI animates the shape inside it.
+    /// It's bigger than the open shelf, with room for the shadow, and while the shelf
+    /// is open all of it takes clicks, the clear part too.
+    private func panelFrame(for geometry: NotchGeometry) -> CGRect {
+        let size = CGSize(width: model.expandedSize.width + 80,
+                          height: model.expandedSize.height + 40)
+        return CGRect(x: geometry.notchRect.midX - size.width / 2,
+                      y: geometry.screen.frame.maxY - size.height,
+                      width: size.width,
+                      height: size.height)
     }
 
     private func observeScreenChanges() {
@@ -253,7 +265,7 @@ final class NotchPanelController {
 
     private func apply(_ state: NotchState) {
         // Only take mouse and drag events when there is something to interact with.
-        panel?.ignoresMouseEvents = state.isAtNotchSize
+        updateMouseEvents(state: state)
         if state == .collapsed { collapsedAt = .now }
         if state != .collapsed { cancelHover() }
         if state != .expanded { cancelDelayedCollapse() }
@@ -269,10 +281,64 @@ final class NotchPanelController {
         store.refreshReferences()
     }
 
-    /// The gear in the panel: the shelf gets out of the way, then Settings opens.
+    /// The gear in the panel. The shelf stays open, and Settings opens below it.
     private func openSettingsFromPanel() {
-        model.state = .collapsed
         openSettings()
+    }
+
+    // MARK: - Settings
+
+    /// Settings is opening on `screen`: the shelf opens there too and stays open until
+    /// Settings closes. Returns where the panel's bottom will be, in screen points, so
+    /// Settings can sit below it. The panel's window, not the shelf: its clear room
+    /// under the shelf takes clicks too, and covered Settings' title bar, close button
+    /// and all.
+    ///
+    /// A shelf open on another display closes there first, and opens on this one once
+    /// it has shrunk, as the panel only ever moves while closed.
+    func openForSettings(on screen: NSScreen?) -> CGFloat? {
+        isSettingsOpen = true
+        cancelHover()
+        settingsMoveTask?.cancel()
+        settingsMoveTask = nil
+        guard let target = screen ?? geometry?.screen else { return nil }
+        if let geometry, geometry.screen.frame != target.frame {
+            switch model.state {
+            case .collapsed:
+                place(on: target)
+                expandForSettings()
+            case .expanded:
+                model.state = .collapsed
+                settingsMoveTask = Task { [weak self, collapseSettleTime] in
+                    try? await Task.sleep(for: collapseSettleTime)
+                    guard !Task.isCancelled, let self, self.isSettingsOpen,
+                          self.model.state == .collapsed else { return }
+                    self.settingsMoveTask = nil
+                    self.place(on: target)
+                    self.expandForSettings()
+                }
+            case .dropReady, .draggingOut, .addingLink:
+                // Busy with something else; it stays where it is.
+                break
+            }
+        } else {
+            expandForSettings()
+        }
+        return panelFrame(for: NotchGeometry(screen: target)).minY
+    }
+
+    private func expandForSettings() {
+        guard model.state == .collapsed else { return }
+        prepareToOpen()
+        model.state = .expanded
+    }
+
+    /// Settings closed: the shelf collapses as usual, unless the pointer is over it.
+    func settingsClosed() {
+        isSettingsOpen = false
+        settingsMoveTask?.cancel()
+        settingsMoveTask = nil
+        pointerMoved()
     }
 
     // MARK: - Adding from the + menu
@@ -412,12 +478,15 @@ final class NotchPanelController {
     private func panelLostKeyboard() {
         // Not when the panel is giving the keys back itself.
         guard let panel, panel.acceptsKeyboard else { return }
+        // With Settings open, the shelf stays open: the field closes, or the name is
+        // kept, and the shelf is back as it was.
+        let afterwards: NotchState = isSettingsOpen ? .expanded : .collapsed
         if model.state == .addingLink {
-            model.state = .collapsed
+            model.state = afterwards
         } else if model.renamingItemID != nil {
             // Ending the edit is what hands the typed name to the tile.
             panel.makeFirstResponder(nil)
-            model.state = .collapsed
+            model.state = afterwards
         }
     }
 
@@ -504,7 +573,10 @@ final class NotchPanelController {
     }
 
     private func pointerMoved() {
-        defer { updatePasteShortcut() }
+        defer {
+            updateMouseEvents()
+            updatePasteShortcut()
+        }
         followPointerIfSettled()
         guard let geometry else { return }
         let point = NSEvent.mouseLocation
@@ -517,12 +589,12 @@ final class NotchPanelController {
                 cancelHover()
             }
         case .expanded:
-            if model.renamingItemID != nil || isMenuOpen || share.isSharing {
+            if model.renamingItemID != nil || isMenuOpen || share.isSharing || isSettingsOpen {
                 // The shelf stays open while you type a name, wherever the pointer
                 // goes, as the link field does. Return, Esc or a click ends it.
                 // Likewise while a menu is open: choosing or dismissing it ends that,
                 // and the next move away collapses the shelf as usual. And while the
-                // share popover, or the service picked from it, is up.
+                // share popover, or the service picked from it, is up, or Settings.
                 cancelDelayedCollapse()
             } else if isPointerNearPanel(geometry) {
                 cancelDelayedCollapse()
@@ -591,6 +663,23 @@ final class NotchPanelController {
         }
     }
 
+    /// The panel takes clicks only while the shelf is bigger than the notch. And while
+    /// Settings holds the shelf open with the pointer away, not even then: the panel's
+    /// clear room around the shelf would swallow clicks meant for the windows under it.
+    /// The pointer coming back near the shelf turns clicks on again before it can get
+    /// there, since leaving and nearing are both mouse moves.
+    private func updateMouseEvents(state: NotchState? = nil) {
+        guard let panel else { return }
+        let state = state ?? model.state
+        var ignores = state.isAtNotchSize
+        if !ignores, state == .expanded, isSettingsOpen, let geometry, !isPointerNearPanel(geometry) {
+            ignores = true
+        }
+        if panel.ignoresMouseEvents != ignores {
+            panel.ignoresMouseEvents = ignores
+        }
+    }
+
     // MARK: - Leaving while a message is showing
 
     private func isPointerNearPanel(_ geometry: NotchGeometry) -> Bool {
@@ -613,7 +702,8 @@ final class NotchPanelController {
     private func collapseIfStillAway() {
         delayedCollapseTask = nil
         guard let geometry, model.state == .expanded, model.renamingItemID == nil,
-              !isMenuOpen, !share.isSharing, !isPointerNearPanel(geometry) else { return }
+              !isMenuOpen, !share.isSharing, !isSettingsOpen,
+              !isPointerNearPanel(geometry) else { return }
         model.state = .collapsed
     }
 
@@ -723,6 +813,10 @@ final class NotchPanelController {
             // A drop on the shelf has already moved the tiles by now.
             self?.model.endTileMove()
             self?.model.dragOutEnded()
+            // A drag out shrinks the shelf; with Settings open, it opens again.
+            if self?.isSettingsOpen == true, self?.model.state == .collapsed {
+                self?.model.state = .expanded
+            }
             // No mouse-moved events arrive during a drag, so check where the pointer ended up.
             self?.pointerMoved()
         }
@@ -733,6 +827,7 @@ final class NotchPanelController {
     private func finishDrag() {
         guard model.state == .dropReady, let geometry else { return }
         let area = geometry.expandedRect(size: model.expandedSize)
-        model.state = area.contains(NSEvent.mouseLocation) ? .expanded : .collapsed
+        // With Settings open, the shelf stays open after the drag too.
+        model.state = isSettingsOpen || area.contains(NSEvent.mouseLocation) ? .expanded : .collapsed
     }
 }
