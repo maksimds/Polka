@@ -158,12 +158,12 @@ final class ShelfItemImages {
     /// How a link's tile shows its site's icon, or nil when the link has no icon of
     /// its own. Worked out once per icon.
     func siteIconStyle(for item: ShelfItem) -> SiteIconStyle? {
-        guard let name = item.linkPreview?.iconFileName, let icon = siteIcon(for: item) else { return nil }
-        if let known = siteIconStyles[name] { return known }
+        guard let key = Self.siteIconKey(for: item), let icon = siteIcon(for: item) else { return nil }
+        if let known = siteIconStyles[key] { return known }
         let isLarge = Self.isLargeSiteIcon(icon)
         let style = icon.cgImage(forProposedRect: nil, context: nil, hints: nil)
             .map { Self.style(of: $0, isLarge: isLarge) } ?? (isLarge ? .tile : .logo)
-        siteIconStyles[name] = style
+        siteIconStyles[key] = style
         return style
     }
 
@@ -216,11 +216,19 @@ final class ShelfItemImages {
     }
 
     private func siteIcon(for item: ShelfItem) -> NSImage? {
-        guard let name = item.linkPreview?.iconFileName, let previewsFolder else { return nil }
-        if let cached = siteIcons.object(forKey: name as NSString) { return cached }
+        guard let preview = item.linkPreview, let name = preview.iconFileName,
+              let key = Self.siteIconKey(for: item), let previewsFolder else { return nil }
+        if let cached = siteIcons.object(forKey: key as NSString) { return cached }
         guard let image = NSImage(contentsOf: previewsFolder.appendingPathComponent(name)) else { return nil }
-        siteIcons.setObject(image, forKey: name as NSString)
+        siteIcons.setObject(image, forKey: key as NSString)
         return image
+    }
+
+    /// An icon file keeps its name when "Edit Address" points the link at another
+    /// site, so the icon is remembered by its name and when it was fetched.
+    private static func siteIconKey(for item: ShelfItem) -> String? {
+        guard let preview = item.linkPreview, let name = preview.iconFileName else { return nil }
+        return "\(name) \(preview.fetchedAt.timeIntervalSinceReferenceDate)"
     }
 
     private func makeIcon(for item: ShelfItem) -> NSImage {

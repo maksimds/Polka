@@ -30,10 +30,17 @@ final class LinkPreviewFetcher {
     private let previewsFolder: URL
     private let fetch: Fetch
     private let fileManager = FileManager.default
-    private var inFlight = Set<ShelfItem.ID>()
+    /// A link and the address being looked up for it. An address changed with "Edit
+    /// Address" is a new lookup, even while the old one is still running.
+    private struct Lookup: Hashable {
+        let id: ShelfItem.ID
+        let url: URL
+    }
+
+    private var inFlight = Set<Lookup>()
     /// Links whose site couldn't be reached this session, for example while offline.
     /// They are tried again at the next launch rather than after every change.
-    private var failed = Set<ShelfItem.ID>()
+    private var failed = Set<Lookup>()
     private var watcher: AnyCancellable?
 
     init(store: ShelfStore, previewsFolder: URL, fetch: @escaping Fetch = LinkPreviewFetcher.fetchFromWeb) {
@@ -55,27 +62,32 @@ final class LinkPreviewFetcher {
         for item in items {
             guard case .link(let url) = item.source,
                   Self.mayLookUp(url),
-                  item.linkPreview?.isCurrent != true,
-                  !inFlight.contains(item.id),
-                  !failed.contains(item.id) else { continue }
-            inFlight.insert(item.id)
+                  item.linkPreview?.isCurrent != true else { continue }
+            let lookup = Lookup(id: item.id, url: url)
+            guard !inFlight.contains(lookup), !failed.contains(lookup) else { continue }
+            inFlight.insert(lookup)
             Task { await self.fetchPreview(for: item.id, url: url) }
         }
     }
 
     private func fetchPreview(for id: ShelfItem.ID, url: URL) async {
-        defer { inFlight.remove(id) }
+        let lookup = Lookup(id: id, url: url)
+        defer { inFlight.remove(lookup) }
         let preview: Preview
         do {
             preview = try await fetch(url)
         } catch {
-            failed.insert(id)
+            failed.insert(lookup)
             Log.app.info("""
                 Couldn't reach \(url.host ?? "a link", privacy: .private) for its preview: \
                 \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)
                 """)
             return
         }
+
+        // The address changed while this one was looked up ("Edit Address"), or the
+        // link is gone: what was found belongs to no tile.
+        guard store.items.contains(where: { $0.id == id && $0.source == .link(url) }) else { return }
 
         var iconFileName: String?
         if let icon = preview.icon {

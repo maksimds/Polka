@@ -79,8 +79,10 @@ struct ShelfItemTile: View {
     let onStopSending: @MainActor () -> Void
     /// True while the name is a field being typed in ("Rename").
     let isRenaming: Bool
-    /// The menu's "Rename": this item alone.
-    let onRename: @MainActor () -> Void
+    /// What the field edits while `isRenaming`: the label, the file name or the address.
+    let renameKind: RenameKind
+    /// A choice from the menu's "Rename": this item alone.
+    let onRename: @MainActor (RenameKind) -> Void
     /// The edit ended keeping what's typed: Return, Tab or a click elsewhere.
     let onRenameFinished: @MainActor (String) -> Void
     /// Esc, or the tile went away mid-edit: the name stays as it was.
@@ -162,8 +164,7 @@ struct ShelfItemTile: View {
                                               isEnabled: !isFile || isAvailable,
                                               keyEquivalent: "c",
                                               action: onCopy))
-        // Only the tile's label changes, so a missing file can be renamed too.
-        entries.append(TileDragView.MenuEntry(title: "Rename", action: onRename))
+        entries.append(renameEntry)
         // A file that can't be found has nothing to send. In a selection, missing
         // files stay behind, as in a drag.
         entries.append(TileDragView.MenuEntry(title: "Share",
@@ -218,6 +219,31 @@ struct ShelfItemTile: View {
                                               startsGroup: true,
                                               action: onRemoveFromMenu))
         return entries
+    }
+
+    /// "Rename", a submenu like "Send To" for a file, folder or link: "Rename Label"
+    /// changes only the tile's name, so a missing file can have one too; "Rename File"
+    /// (or "Rename Folder") changes the name on disk, and "Edit Address" the link's web
+    /// address. A file that can't be found, or is being copied or converted, can't be
+    /// renamed on disk. Text has nothing underneath, so its "Rename" is the label alone,
+    /// with no submenu.
+    private var renameEntry: TileDragView.MenuEntry {
+        let onRename = onRename
+        let underneath: TileDragView.MenuEntry
+        switch item.kind {
+        case .file, .folder:
+            underneath = TileDragView.MenuEntry(title: item.kind == .folder ? "Rename Folder" : "Rename File",
+                                                isEnabled: isAvailable && !isCopying && !isConverting,
+                                                action: { onRename(.file) })
+        case .link:
+            underneath = TileDragView.MenuEntry(title: "Edit Address", action: { onRename(.address) })
+        case .text:
+            return TileDragView.MenuEntry(title: "Rename", action: { onRename(.label) })
+        }
+        let label = TileDragView.MenuEntry(title: "Rename Label", action: { onRename(.label) })
+        var entry = TileDragView.MenuEntry(title: "Rename", action: {})
+        entry.submenu = { [label, underneath] }
+        return entry
     }
 
     /// What's drawn of the tile: its picture, name and type line. The tile itself also
@@ -541,14 +567,31 @@ struct ShelfItemTile: View {
     /// The field the name turns into, like Finder's: a dark box with a focus ring,
     /// as wide as what's typed, and at most as wide as the tile, ring included, so
     /// the grid's edge never cuts the ring off. A longer name scrolls inside it.
+    /// What the rename field starts with: the tile's label, the file's name on disk
+    /// (the original's, for a kept copy), or the link's address.
+    private var renameStartText: String {
+        switch renameKind {
+        case .label: return item.displayName
+        case .file: return item.urlToOpen().lastPathComponent
+        case .address: return item.url.absoluteString
+        }
+    }
+
+    /// Left out of the first selection: a file's extension, for its label or its name.
+    /// An address is selected whole.
+    private var renameExtension: String? {
+        guard item.kind == .file, renameKind != .address else { return nil }
+        return item.url.pathExtension
+    }
+
     private var renameField: some View {
-        let text = typedName ?? item.displayName
+        let text = typedName ?? renameStartText
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: Self.nameFont]).width)
         // A little extra for the caret at the end, and never so narrow it's hard to click.
         let width = min(max(textWidth + 4 + Self.renameInset.width * 2, 32), max(tileWidth - 8, 32))
         let shape = RoundedRectangle(cornerRadius: 4, style: .continuous)
-        return TileNameEditor(name: item.displayName,
-                              fileExtension: item.kind == .file ? item.url.pathExtension : nil,
+        return TileNameEditor(name: renameStartText,
+                              fileExtension: renameExtension,
                               font: Self.nameFont,
                               onTextChange: { typedName = $0 },
                               onFinish: onRenameFinished,

@@ -193,8 +193,8 @@ struct NotchView: View {
     /// "Rename" starts a tick later, since it's chosen as the menu closes, and the
     /// panel shouldn't take the keys while the menu still tracks the pointer.
     private var renameActions: ShelfRenameActions {
-        ShelfRenameActions(begin: { [model] id in
-                               DispatchQueue.main.async { model.beginRenaming(id) }
+        ShelfRenameActions(begin: { [model] id, kind in
+                               DispatchQueue.main.async { model.beginRenaming(id, kind) }
                            },
                            finish: { [model] id, name in model.finishRenaming(id, as: name) },
                            cancel: { [model] id in model.cancelRenaming(id) })
@@ -243,6 +243,7 @@ struct NotchView: View {
                               onConvertToPDF: convertAction,
                               commands: commands,
                               renamingItemID: model.renamingItemID,
+                              renameKind: model.renameKind,
                               rename: renameActions,
                               onMarqueeBegan: { model.beginMarquee($0) },
                               onMarqueeChanged: { model.updateMarquee(touching: $0) })
