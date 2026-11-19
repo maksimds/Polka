@@ -73,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                               quickLook: quickLook,
                                               share: share,
                                               fileChooser: fileChooser,
+                                              nearby: nearby,
                                               openSettings: { [weak self] in self?.showSettings() })
         controller.start()
         notchController = controller

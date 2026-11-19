@@ -247,43 +247,10 @@ struct NearbyIdentityTests {
 /// throwaway Keychain key.
 @MainActor
 struct NearbyDiscoveryTests {
-    @MainActor
-    private struct Side {
-        let suite: String
-        let defaults: UserDefaults
-        let tag: String
-        let service: NearbyService
-
-        var settings: ShelfSettings { ShelfSettings(defaults: defaults) }
-
-        init() throws {
-            suite = "PolkaTests-\(UUID().uuidString)"
-            defaults = try #require(UserDefaults(suiteName: suite))
-            tag = "com.maksimds.Polka.tests.nearby.\(UUID().uuidString)"
-            service = NearbyService(settings: ShelfSettings(defaults: defaults), identityTag: tag)
-        }
-
-        func cleanUp() {
-            service.stop()
-            NearbyIdentity.delete(tag: tag)
-            defaults.removePersistentDomain(forName: suite)
-        }
-    }
-
-    /// Waits up to `seconds` for `condition`, checking every tenth of a second.
-    private func eventually(_ seconds: Double, _ condition: () -> Bool) async throws -> Bool {
-        let deadline = Date().addingTimeInterval(seconds)
-        while Date() < deadline {
-            if condition() { return true }
-            try await Task.sleep(for: .milliseconds(100))
-        }
-        return condition()
-    }
-
     @Test(.timeLimit(.minutes(1)))
     func aMacNearbyIsFoundByItsNameAndHidesItWhenItReceivesOnlyFromRemembered() async throws {
-        let shown = try Side()
-        let looking = try Side()
+        let shown = try NearbyTestSide()
+        let looking = try NearbyTestSide()
         defer {
             shown.cleanUp()
             looking.cleanUp()
@@ -301,14 +268,14 @@ struct NearbyDiscoveryTests {
         #expect(!looking.service.peers.contains { $0.name == name })
 
         shown.settings.nearbySharingEnabled = true
-        let found = try await eventually(20) { looking.service.peers.contains { $0.name == name } }
+        let found = try await nearbyEventually(20) { looking.service.peers.contains { $0.name == name } }
         #expect(found)
         #expect(looking.service.peers.first { $0.name == name }?.fingerprint != nil)
         #expect(shown.service.status == .on)
 
         // Remembered Macs only: it advertises anew and answers without its name.
         shown.settings.nearbyReceiveFrom = .remembered
-        let hidden = try await eventually(20) { !looking.service.peers.contains { $0.name == name } }
+        let hidden = try await nearbyEventually(20) { !looking.service.peers.contains { $0.name == name } }
         #expect(hidden)
     }
 }

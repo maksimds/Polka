@@ -3,12 +3,15 @@ import Network
 import Security
 import SystemConfiguration
 
-/// Nearby Sharing's discovery (N1: NS-1 to NS-3). While the Settings switch is on,
-/// Polka advertises `_polka._tcp` under a random name and listens for TLS
-/// connections. It browses for other Polkas only while something needs the list (in
-/// N1, the Settings window), since browsing keeps the Wi-Fi radio hopping to the
-/// peer-to-peer channel, which costs battery. Each Polka found is asked its name in a
-/// short `hello` exchange.
+/// Nearby Sharing (N1: NS-1 to NS-3, N2: links and text). While the Settings switch is
+/// on, Polka advertises `_polka._tcp` under a random name and listens for TLS
+/// connections. It browses for other Polkas only while something needs the list (the
+/// Settings window, the open shelf), since browsing keeps the Wi-Fi radio hopping to
+/// the peer-to-peer channel, which costs battery. Each Polka found is asked its name in
+/// a short `hello` exchange.
+///
+/// Offers that arrive wait in `offers` for the panel to show them, in the order and at
+/// the pace `NearbyOfferLine` allows; `send` makes an offer to a Mac found nearby.
 ///
 /// Follows the settings by itself: UserDefaults says when any of them changes.
 @MainActor
@@ -30,16 +33,34 @@ final class NearbyService: ObservableObject {
         let name: String
         let fingerprint: String?
         let isPeerToPeer: Bool
+        /// Its protocol version: below `NearbyProtocol.offerVersion`, it can't be sent to.
+        var version = NearbyProtocol.version
+
+        var takesOffers: Bool { version >= NearbyProtocol.offerVersion }
     }
 
     @Published private(set) var status: Status = .off
     @Published private(set) var peers: [Peer] = []
+    /// When the current look for Macs nearby began, or nil while not looking. Send To
+    /// says "Looking for Macs…" at first, and "No Macs Nearby" once it's had a while.
+    @Published private(set) var browsingSince: Date?
+    /// Offers waiting for an answer, in the order they arrived.
+    @Published private(set) var offers: [NearbyIncomingOffer] = []
+
+    /// What an accepted offer brought, once it has all arrived and checked out, with
+    /// the name the sender gave.
+    var onReceived: ((_ items: [NearbyReceivedItem], _ senderName: String) -> Void)?
+    /// An accepted offer that never fully arrived, with the name the sender gave.
+    var onReceiveFailed: ((_ senderName: String) -> Void)?
 
     /// The Mac's name, as in System Settings > General > Sharing, which is what AirDrop
     /// shows too.
     static var macName: String {
         (SCDynamicStoreCopyComputerName(nil, nil) as String?).flatMap(NearbyName.clean) ?? "Mac"
     }
+
+    /// The Settings switch.
+    var isEnabled: Bool { settings.nearbySharingEnabled }
 
     /// The name others see right now.
     var displayName: String {
@@ -60,20 +81,46 @@ final class NearbyService: ObservableObject {
     private var browser: NWBrowser?
     private var browseRequests = 0
     private var exchanges: [ObjectIdentifier: NearbyHelloExchange] = [:]
+    private var incoming: [UUID: NearbyIncomingSession] = [:]
+    private var outgoing: [ObjectIdentifier: NearbyOutgoingSession] = [:]
+    /// Accepted offers still arriving.
+    private var accepted: Set<UUID> = []
+    private var line = NearbyOfferLine()
+    /// Where each Mac found nearby can be reached, by its Bonjour name.
+    private var endpoints: [String: NWEndpoint] = [:]
+    private let answerTimeout: TimeInterval
+    /// Lists this Mac among the Macs nearby, so one Mac can send to itself. Only in
+    /// the test build (`listsThisMacForTesting`) and in tests.
+    private let listsThisMac: Bool
     /// Bonjour names asked for their name since browsing started.
     private var asked: Set<String> = []
+    /// How many times each Bonjour name was asked without an answer.
+    private var unanswered: [String: Int] = [:]
     private var serviceName = NearbyService.randomServiceName()
     private var defaultsObserver: NSObjectProtocol?
 
     private static let maxIncoming = 4
     private static let maxOutgoing = 8
+    /// How many times a Polka is asked its name before it's left alone.
+    private static let maxAsks = 6
     /// What Bonjour reports when Local Network access is turned down
     /// (`kDNSServiceErr_PolicyDenied`).
     private static let policyDenied: Int32 = -65570
 
-    init(settings: ShelfSettings = ShelfSettings(), identityTag: String = NearbyIdentity.standardTag) {
+    init(settings: ShelfSettings = ShelfSettings(), identityTag: String = NearbyIdentity.standardTag,
+         answerTimeout: TimeInterval = NearbyOfferLine.answerTimeout,
+         listsThisMac: Bool = NearbyService.listsThisMacForTesting) {
         self.settings = settings
         self.identityTag = identityTag
+        self.answerTimeout = answerTimeout
+        self.listsThisMac = listsThisMac
+    }
+
+    /// The test build's `-NearbyListThisMac YES` launch argument. Ignored by every other
+    /// build, the daily Polka included. Remove before merging, with the test build.
+    nonisolated static var listsThisMacForTesting: Bool {
+        Bundle.main.bundleIdentifier == "com.maksimds.Polka.NearbyTest"
+            && UserDefaults.standard.bool(forKey: "NearbyListThisMac")
     }
 
     func start() {
@@ -156,6 +203,9 @@ final class NearbyService: ObservableObject {
         advertised = nil
         stopBrowser()
         endExchanges { _ in true }
+        endIncoming()
+        outgoing.values.forEach { $0.cancel() }
+        outgoing = [:]
         identityFailed = false
         status = .off
         Log.nearby.info("Nearby Sharing is off")
@@ -196,8 +246,10 @@ final class NearbyService: ObservableObject {
         // A new Bonjour name with every change, so Macs browsing see a new service and
         // ask again, and learn the new name.
         serviceName = Self.randomServiceName()
+        // Connections already made stay up through a change of name. Not through
+        // turning to Remembered Macs Only, which shuts everyone else out at once.
+        if advertised?.receiveFrom != wanted.receiveFrom { endIncoming() }
         advertised = wanted
-        endExchanges { $0.isIncoming }
         do {
             let listener = try NWListener(using: Self.parameters(identity))
             listener.service = NWListener.Service(name: serviceName, type: NearbyProtocol.serviceType)
@@ -234,7 +286,7 @@ final class NearbyService: ObservableObject {
     }
 
     private func accept(_ connection: NWConnection) {
-        guard exchanges.values.filter(\.isIncoming).count < Self.maxIncoming else {
+        guard incoming.count < Self.maxIncoming else {
             connection.cancel()
             Log.nearby.info("Turned a connection away: too many at once")
             return
@@ -244,7 +296,131 @@ final class NearbyService: ObservableObject {
         let hello = advertised?.receiveFrom == .everyone
             ? NearbyHello(version: NearbyProtocol.version, name: advertised?.name)
             : nil
-        run(NearbyHelloExchange(connection: connection, isIncoming: true, hello: hello, serviceName: nil))
+        let session = NearbyIncomingSession(connection: connection, hello: hello)
+        incoming[session.id] = session
+        session.onOffer = { [weak self] in self?.offered($0) }
+        session.onReceived = { [weak self, weak session] items in
+            guard let self, let session else { return }
+            self.received(items, by: session)
+        }
+        session.onEnd = { [weak self] in self?.incomingEnded($0) }
+        session.start()
+    }
+
+    private func endIncoming() {
+        incoming.values.forEach { $0.end(because: nil) }
+    }
+
+    // MARK: - Offers to this Mac
+
+    /// The waiting offer the panel may show now, if none is on screen. Otherwise nil,
+    /// with when to ask again, if an offer is waiting for its Mac's minute to pass.
+    func nextOfferToShow() -> (id: UUID?, checkAgainAt: Date?) {
+        line.next(at: Date())
+    }
+
+    /// The panel is showing this offer.
+    func showingOffer(_ id: UUID) {
+        line.show(id, at: Date())
+    }
+
+    /// Accept: the offer leaves the line, and its items arrive through `onReceived`.
+    func accept(_ id: UUID) {
+        guard offers.contains(where: { $0.id == id }), let session = incoming[id] else { return }
+        removeOffer(id)
+        accepted.insert(id)
+        session.answer(accept: true)
+        Log.nearby.info("Accepted an offer")
+    }
+
+    /// Decline, or Decline and Block, which turns away that Mac's offers until Polka quits.
+    func decline(_ id: UUID, block: Bool = false) {
+        guard let offer = offers.first(where: { $0.id == id }) else { return }
+        if block { line.block(offer.fingerprint) }
+        removeOffer(id)
+        incoming[id]?.answer(accept: false)
+        Log.nearby.info("Declined an offer\(block ? " and blocked its Mac" : "", privacy: .public)")
+    }
+
+    private func offered(_ session: NearbyIncomingSession) {
+        guard let fingerprint = session.fingerprint, let name = session.senderName,
+              let offer = session.offer else {
+            session.end(because: "offer without a sender")
+            return
+        }
+        let admission = line.admit(id: session.id, fingerprint: fingerprint)
+        guard admission == .admitted else {
+            session.answer(accept: false)
+            Log.nearby.info("Turned an offer away: \(String(describing: admission), privacy: .public)")
+            return
+        }
+        offers.append(NearbyIncomingOffer(id: session.id, senderName: name, fingerprint: fingerprint, offer: offer))
+        Log.nearby.info("""
+            Offer of \(offer.items.count, privacy: .public) item(s) from \(name, privacy: .private), \
+            \(self.offers.count, privacy: .public) waiting
+            """)
+        let id = session.id
+        DispatchQueue.main.asyncAfter(deadline: .now() + answerTimeout) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.offers.contains(where: { $0.id == id }) else { return }
+                Log.nearby.info("An offer wasn't answered in time")
+                self.decline(id)
+            }
+        }
+    }
+
+    private func received(_ items: [NearbyReceivedItem], by session: NearbyIncomingSession) {
+        accepted.remove(session.id)
+        Log.nearby.info("Received \(items.count, privacy: .public) item(s)")
+        onReceived?(items, session.senderName ?? "")
+    }
+
+    private func incomingEnded(_ session: NearbyIncomingSession) {
+        incoming[session.id] = nil
+        // Withdrawn: the other Mac went away before an answer.
+        if offers.contains(where: { $0.id == session.id }) {
+            removeOffer(session.id)
+            Log.nearby.info("An offer was withdrawn")
+        }
+        if accepted.remove(session.id) != nil {
+            Log.nearby.error("An accepted offer didn't fully arrive")
+            onReceiveFailed?(session.senderName ?? "")
+        }
+    }
+
+    private func removeOffer(_ id: UUID) {
+        line.remove(id)
+        offers.removeAll { $0.id == id }
+    }
+
+    // MARK: - Offers from this Mac
+
+    /// Offers these tiles to a Mac found nearby, leaving out any that can't be sent.
+    /// False if nothing could be sent or the Mac is no longer there; otherwise
+    /// `onStatus` follows the transfer to its end.
+    @discardableResult
+    func send(_ items: [ShelfItem], to peerID: String,
+              onStatus: @escaping (NearbyOutgoingSession.Status) -> Void) -> Bool {
+        guard let identity, let peer = peers.first(where: { $0.id == peerID }), peer.takesOffers,
+              let endpoint = endpoints[peerID],
+              let transfer = NearbyOutgoingTransfer(items: items) else { return false }
+        // A Mac that wants to share says who it is, even while it keeps its name from
+        // everyone else (Remembered Macs Only): it chose to show it to this one.
+        let hello = NearbyHello(version: NearbyProtocol.version, name: displayName)
+        let session = NearbyOutgoingSession(connection: NWConnection(to: endpoint, using: Self.parameters(identity)),
+                                            hello: hello, transfer: transfer,
+                                            expectedFingerprint: peer.fingerprint)
+        let key = ObjectIdentifier(session)
+        outgoing[key] = session
+        session.onStatus = { [weak self] status in
+            if status.isFinished { self?.outgoing[key] = nil }
+            Log.nearby.info("Sending: \(String(describing: status), privacy: .public)")
+            onStatus(status)
+        }
+        onStatus(.connecting)
+        session.start()
+        Log.nearby.info("Offering \(transfer.offer.items.count, privacy: .public) item(s) to \(peer.name, privacy: .private)")
+        return true
     }
 
     // MARK: - Browser
@@ -270,36 +446,49 @@ final class NearbyService: ObservableObject {
         }
         browser.start(queue: .main)
         self.browser = browser
+        browsingSince = Date()
         Log.nearby.info("Looking for Macs nearby")
     }
 
     private func stopBrowser() {
         browser?.cancel()
         browser = nil
+        browsingSince = nil
         asked = []
+        unanswered = [:]
         peers = []
-        endExchanges { !$0.isIncoming }
+        endpoints = [:]
+        endExchanges { _ in true }
     }
 
     private func found(_ results: Set<NWBrowser.Result>) {
         var present: [String: NWEndpoint] = [:]
         for result in results {
-            guard case let .service(name, _, _, _) = result.endpoint, name != serviceName else { continue }
+            guard case let .service(name, _, _, _) = result.endpoint,
+                  name != serviceName || listsThisMac else { continue }
             present[name] = result.endpoint
         }
         peers.removeAll { present[$0.id] == nil }
+        endpoints = present
         asked.formIntersection(present.keys)
-        guard let identity else { return }
+        askNames()
+        Log.nearby.info("\(present.count, privacy: .public) Polka(s) nearby, \(self.peers.count, privacy: .public) named")
+    }
+
+    /// Asks each Polka found and not yet asked for its name, `maxOutgoing` at a time.
+    /// Called again as each exchange ends, so with more Polkas around than that, the
+    /// rest are asked in turn rather than only when the browse results next change.
+    private func askNames() {
+        guard browser != nil, let identity else { return }
         // A Mac that only shares with remembered Macs asks without telling its name.
         let hello = NearbyHello(version: NearbyProtocol.version,
                                 name: settings.nearbyReceiveFrom == .everyone ? displayName : nil)
-        for (name, endpoint) in present.sorted(by: { $0.key < $1.key }) where !asked.contains(name) {
-            guard exchanges.values.filter({ !$0.isIncoming }).count < Self.maxOutgoing else { break }
+        for (name, endpoint) in endpoints.sorted(by: { $0.key < $1.key }) where !asked.contains(name) {
+            guard exchanges.count < Self.maxOutgoing else { break }
             asked.insert(name)
             let connection = NWConnection(to: endpoint, using: Self.parameters(identity))
-            run(NearbyHelloExchange(connection: connection, isIncoming: false, hello: hello, serviceName: name))
+            run(NearbyHelloExchange(connection: connection, hello: hello, serviceName: name))
         }
-        Log.nearby.info("\(present.count, privacy: .public) Polka(s) nearby, \(self.peers.count, privacy: .public) named")
     }
 
     // MARK: - Exchanges
@@ -307,19 +496,25 @@ final class NearbyService: ObservableObject {
     private func run(_ exchange: NearbyHelloExchange) {
         let id = ObjectIdentifier(exchange)
         exchanges[id] = exchange
-        exchange.onEnd = { [weak self] in self?.exchanges[id] = nil }
+        let name = exchange.serviceName
+        exchange.onEnd = { [weak self] answered, closedByThem in
+            guard let self else { return }
+            self.exchanges[id] = nil
+            if !answered && !closedByThem { self.askAgainLater(name) }
+            self.askNames()
+        }
         exchange.onAnswer = { [weak self, weak exchange] answer in
-            guard let self, let exchange, !exchange.isIncoming else { return }
+            guard let self, let exchange else { return }
             self.answered(answer, by: exchange.serviceName)
         }
         exchange.start()
     }
 
-    private func answered(_ answer: NearbyHelloExchange.Answer, by serviceName: String?) {
+    private func answered(_ answer: NearbyHelloExchange.Answer, by serviceName: String) {
         // Gone from the list while it was being asked, or nameless.
-        guard let serviceName, asked.contains(serviceName), let name = answer.hello.name else { return }
+        guard asked.contains(serviceName), let name = answer.hello.name else { return }
         let peer = Peer(id: serviceName, name: name, fingerprint: answer.fingerprint,
-                        isPeerToPeer: answer.isPeerToPeer)
+                        isPeerToPeer: answer.isPeerToPeer, version: answer.hello.version)
         peers.removeAll { $0.id == serviceName }
         peers.append(peer)
         peers.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
@@ -327,6 +522,26 @@ final class NearbyService: ObservableObject {
             Found \(name, privacy: .private), key \(answer.fingerprint ?? "none", privacy: .private), \
             \(answer.isPeerToPeer ? "peer-to-peer" : "shared network", privacy: .public)
             """)
+    }
+
+    /// A Polka that didn't answer is asked again a little later, a few times, each
+    /// pause about twice the last: it may have turned the question away because many
+    /// Macs asked at once, which happens when several shelves open together, or been
+    /// too busy to answer in time. The pause is random so they don't all ask again at
+    /// the same moment. One that closed the connection without a word isn't asked
+    /// again: it receives only from remembered Macs.
+    private func askAgainLater(_ name: String) {
+        let attempts = (unanswered[name] ?? 0) + 1
+        unanswered[name] = attempts
+        guard attempts < Self.maxAsks else { return }
+        let pause = min(Double.random(in: 0.3...1.2) * pow(2, Double(attempts - 1)), 8)
+        DispatchQueue.main.asyncAfter(deadline: .now() + pause) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.endpoints[name] != nil else { return }
+                self.asked.remove(name)
+                self.askNames()
+            }
+        }
     }
 
     private func endExchanges(where shouldEnd: (NearbyHelloExchange) -> Bool) {
@@ -363,9 +578,11 @@ final class NearbyService: ObservableObject {
         // Self-signed, so no authority vouches for the other side's certificate. Any
         // key is let through here, since all N1 learns is a name marked "Not verified";
         // remembering (N4) checks the key against the one it pinned.
-        sec_protocol_options_set_verify_block(options, { _, _, complete in complete(true) }, .main)
+        // Off the main thread: it only says yes, and shouldn't wait behind other work.
+        sec_protocol_options_set_verify_block(options, { _, _, complete in complete(true) },
+                                              DispatchQueue.global(qos: .userInitiated))
         let tcp = NWProtocolTCP.Options()
-        tcp.connectionTimeout = Int(NearbyHelloExchange.timeout)
+        tcp.connectionTimeout = Int(NearbyConnection.handshakeTimeout)
         let parameters = NWParameters(tls: tls, tcp: tcp)
         parameters.includePeerToPeer = true
         return parameters

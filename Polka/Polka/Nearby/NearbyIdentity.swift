@@ -107,8 +107,17 @@ struct NearbyIdentity {
                 kSecAttrLabel as String: "Polka Nearby Sharing",
             ] as [String: Any],
         ]
-        guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, nil) else { throw Failure.key }
-        return key
+        // The login keychain is one file. Another process writing to it at the same
+        // moment (two Polkas starting together, or tests running side by side) can make
+        // a write fail, so it's tried again a moment later.
+        var code = 0
+        for attempt in 1...3 {
+            var error: Unmanaged<CFError>?
+            if let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error) { return key }
+            code = error.map { CFErrorGetCode($0.takeRetainedValue()) } ?? 0
+            Thread.sleep(forTimeInterval: 0.1 * Double(attempt))
+        }
+        throw Failure.keychain(OSStatus(truncatingIfNeeded: code))
     }
 
     // MARK: - Self-signed certificate

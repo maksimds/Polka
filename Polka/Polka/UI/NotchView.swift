@@ -155,11 +155,20 @@ struct NotchView: View {
                     .frame(width: model.linkEntrySize.width, height: model.linkEntrySize.height)
                     .transition(dropZoneTransition)
             }
+            if model.state == .offer, let offer = model.shownOffer {
+                NearbyOfferView(offer: offer,
+                                images: images,
+                                headerHeight: model.notchSize.height,
+                                pointer: pointer,
+                                onAnswer: { model.answerOffer($0) })
+                    .frame(width: model.expandedSize.width, height: model.expandedSize.height)
+                    .transition(dropZoneTransition)
+            }
         }
     }
 
-    /// The drop zone and the link field are light enough to build when they're
-    /// needed. Each arrives as the shape changes and leaves quickly.
+    /// The drop zone, the link field and an offer are light enough to build when
+    /// they're needed. Each arrives as the shape changes and leaves quickly.
     private var dropZoneTransition: AnyTransition {
         let arrival: AnyTransition = reduceMotion
             ? .opacity
@@ -203,6 +212,8 @@ struct NotchView: View {
                               missingItemIDs: store.missingItemIDs,
                               copyingItemIDs: store.copyingItemIDs,
                               convertingItemIDs: store.convertingItemIDs,
+                              sendingLabels: model.sendingLabels,
+                              sendableSelectionCount: model.sendableSelectionCount,
                               selection: model.selection,
                               hiddenItemIDs: model.hiddenItemIDs,
                               isMovingTiles: model.tileMove != nil,
