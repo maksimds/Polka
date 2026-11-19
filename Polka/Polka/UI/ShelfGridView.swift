@@ -17,10 +17,10 @@ struct ShelfItemCommands {
     let share: @MainActor (ShelfItem.ID, NSView, NSRect) -> Void
 }
 
-/// Right-click > Rename: the tile's name turns into a field, and the edit ends by
-/// keeping what's typed or, with Esc, the old name.
+/// Right-click > Rename: the tile's label, file name or address turns into a field,
+/// and the edit ends by keeping what's typed or, with Esc, what was there.
 struct ShelfRenameActions {
-    let begin: @MainActor (ShelfItem.ID) -> Void
+    let begin: @MainActor (ShelfItem.ID, RenameKind) -> Void
     let finish: @MainActor (ShelfItem.ID, String) -> Void
     let cancel: @MainActor (ShelfItem.ID) -> Void
 }
@@ -82,6 +82,8 @@ struct ShelfGridView: View {
     let commands: ShelfItemCommands
     /// The tile whose name is being edited, if any.
     let renamingItemID: ShelfItem.ID?
+    /// What that tile's field edits.
+    let renameKind: RenameKind
     let rename: ShelfRenameActions
     /// A selection rectangle starts, with the keys held: Shift adds, Command flips.
     let onMarqueeBegan: @MainActor (SelectionClick) -> Void
@@ -178,7 +180,8 @@ struct ShelfGridView: View {
                                           onCopy: { commands.copy(item.id) },
                                           onShare: { commands.share(item.id, $0, $1) },
                                           isRenaming: renamingItemID == item.id,
-                                          onRename: { rename.begin(item.id) },
+                                          renameKind: renameKind,
+                                          onRename: { rename.begin(item.id, $0) },
                                           onRenameFinished: { rename.finish(item.id, $0) },
                                           onRenameCancelled: { rename.cancel(item.id) },
                                           onPressAreaMoved: { pressAreas.frames[item.id] = $0 },

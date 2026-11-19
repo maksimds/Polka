@@ -17,6 +17,16 @@ enum NotchState: Equatable {
     }
 }
 
+/// What a tile's Rename submenu changes.
+enum RenameKind: Equatable {
+    /// "Rename Label": only the tile's name (FR-17). Every tile has it.
+    case label
+    /// "Rename File" or "Rename Folder": the name on disk.
+    case file
+    /// "Edit Address": the link's web address.
+    case address
+}
+
 /// How a click on a tile changes the selection, from the keys held during the click.
 enum SelectionClick: Equatable {
     /// A plain click: just this item.
@@ -63,6 +73,8 @@ final class NotchViewModel: ObservableObject {
     /// The tile whose name is being edited ("Rename"). The panel takes the keys while
     /// it's set, as it does for the link field.
     @Published private(set) var renamingItemID: ShelfItem.ID?
+    /// What the field being edited changes: the label, the file, or the address.
+    @Published private(set) var renameKind: RenameKind = .label
     /// Where a Shift-click range starts: the last item clicked without Shift.
     private var selectionAnchor: ShelfItem.ID?
     @Published var notchSize = CGSize(width: 200, height: 32)
@@ -455,20 +467,74 @@ final class NotchViewModel: ObservableObject {
 
     // MARK: - Renaming
 
-    /// The tile's "Rename" menu item: its name turns into a field, with the name
-    /// selected. As in Finder, the tile being renamed is the only one selected.
-    func beginRenaming(_ id: ShelfItem.ID) {
-        guard state == .expanded, tileMove == nil, store.items.contains(where: { $0.id == id }) else { return }
+    /// One of the tile's Rename choices: its name turns into a field, with the name
+    /// selected. As in Finder, the tile being renamed is the only one selected. A file
+    /// that can't be found, or is being copied or converted, can't be renamed on disk.
+    func beginRenaming(_ id: ShelfItem.ID, _ kind: RenameKind = .label) {
+        guard state == .expanded, tileMove == nil,
+              let item = store.items.first(where: { $0.id == id }) else { return }
+        switch kind {
+        case .label:
+            break
+        case .file:
+            guard item.kind == .file || item.kind == .folder,
+                  !store.missingItemIDs.contains(id),
+                  !store.copyingItemIDs.contains(id),
+                  !store.convertingItemIDs.contains(id) else { return }
+        case .address:
+            guard item.kind == .link else { return }
+        }
         click(id, .only)
+        // Before the ID, so whatever watches the ID finds the kind already set.
+        renameKind = kind
         renamingItemID = id
     }
 
-    /// Return, Tab, or a click anywhere else: the tile keeps the name typed. An empty
-    /// name brings back the automatic one. An edit that has already ended is ignored.
+    /// Return, Tab, or a click anywhere else: the edit keeps what's typed. For the
+    /// label, an empty name brings back the automatic one; for a file or an address,
+    /// nothing typed leaves it as it was. An edit that has already ended is ignored.
     func finishRenaming(_ id: ShelfItem.ID, as name: String) {
         guard renamingItemID == id else { return }
         renamingItemID = nil
-        store.rename(id: id, to: name)
+        switch renameKind {
+        case .label:
+            store.rename(id: id, to: name)
+        case .file:
+            renameFile(id, to: name)
+        case .address:
+            changeAddress(id, to: name)
+        }
+    }
+
+    /// Renames the file on disk, in the background. The tile shows the new name once
+    /// the file has it; a refused name leaves the file alone and says why.
+    private func renameFile(_ id: ShelfItem.ID, to name: String) {
+        guard let item = store.items.first(where: { $0.id == id }),
+              let plan = FileRenamer.Plan(item: item) else { return }
+        Task {
+            switch await FileRenamer.rename(plan, to: name) {
+            case .unchanged:
+                break
+            case .refused(let message):
+                notice = message
+            case .renamed(let newName, let path, let originalPath):
+                store.fileRenamed(id: id, to: newName, path: path, originalPath: originalPath)
+            }
+        }
+    }
+
+    /// Reads what was typed the way the link field does (`LinkInput`), so
+    /// "example.com" works and only web addresses are kept.
+    private func changeAddress(_ id: ShelfItem.ID, to typed: String) {
+        let trimmed = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard let url = LinkInput.url(from: trimmed) else {
+            notice = "That isn't a web address, so the link didn't change"
+            return
+        }
+        if store.changeAddress(id: id, to: url) == .duplicate {
+            notice = "That link is already on the shelf, so this one didn't change"
+        }
     }
 
     /// Esc: the tile keeps the name it had.

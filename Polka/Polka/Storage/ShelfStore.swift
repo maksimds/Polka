@@ -186,6 +186,53 @@ final class ShelfStore: ObservableObject {
         update(id) { $0.customName = customName }
     }
 
+    /// "Rename File" or "Rename Folder" renamed the file on disk: the item points at
+    /// where its file is now (`path`), and a kept copy at where its original is now
+    /// (`originalPath`), either nil if it didn't move. The tile goes back to its
+    /// automatic name, the new one, since a label left over would hide the change.
+    func fileRenamed(id: ShelfItem.ID, to name: String, path: String?, originalPath: String?) {
+        guard let item = items.first(where: { $0.id == id }), case .file = item.source else { return }
+        update(id) { item in
+            if let path {
+                item.source = .file(path: path, bookmark: FileReference.bookmark(for: URL(fileURLWithPath: path)))
+            }
+            if let originalPath {
+                item.original = ShelfItem.Original(path: originalPath,
+                                                   bookmark: FileReference.bookmark(for: URL(fileURLWithPath: originalPath)))
+            }
+            item.title = name
+            item.customName = nil
+        }
+    }
+
+    enum AddressChange: Equatable {
+        case changed
+        /// The link already had this address.
+        case unchanged
+        /// Another tile has this link, and the shelf holds each link once.
+        case duplicate
+    }
+
+    /// "Edit Address": the link points at `url` instead, named from its address until
+    /// the new site's name and icon arrive (the old ones are dropped, so they're fetched
+    /// again). A label given with "Rename Label" stays, since it names the tile, not
+    /// the address. `url` must already be a web address (`LinkInput`).
+    @discardableResult
+    func changeAddress(id: ShelfItem.ID, to url: URL) -> AddressChange {
+        guard let item = items.first(where: { $0.id == id }), case .link(let oldURL) = item.source else {
+            return .unchanged
+        }
+        guard url != oldURL else { return .unchanged }
+        let key = ShelfItem.Source.link(url).dedupeKey
+        guard !items.contains(where: { $0.id != id && $0.dedupeKeys.contains(key) }) else { return .duplicate }
+        update(id) { item in
+            item.source = .link(url)
+            item.title = LinkNaming.title(for: url, siteName: nil)
+            item.linkPreview = nil
+        }
+        return .changed
+    }
+
     /// Removes temporary items whose time is up and returns them.
     @discardableResult
     func removeExpired() -> [ShelfItem] {
