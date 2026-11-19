@@ -197,6 +197,16 @@ final class NotchViewModel: ObservableObject {
         onOfferAnswered?(offer, answer)
     }
 
+    /// Accepted offers whose files are still arriving, as the shelf's message line
+    /// shows them. Links and text arrive at once, so they never show here.
+    @Published var nearbyReceiving: [NearbyReceiving] = []
+    var onCancelReceiving: ((UUID) -> Void)?
+
+    /// The receiving message's ×.
+    func cancelReceiving(_ id: UUID) {
+        onCancelReceiving?(id)
+    }
+
     /// What an accepted offer brought: new tiles at the top, marked with who sent them,
     /// with the usual duplicate check and message. The shelf scrolls to them.
     func receiveNearby(_ items: [NearbyReceivedItem], from senderName: String) {
@@ -210,21 +220,39 @@ final class NotchViewModel: ObservableObject {
     /// Which Send To each label belongs to, so an older one clearing late doesn't wipe
     /// out a newer one.
     private var sendingTransfers: [ShelfItem.ID: UUID] = [:]
+    /// The Send To each tile is in while it hasn't finished, for Stop Sending.
+    @Published private(set) var activeSends: [ShelfItem.ID: UUID] = [:]
+    /// Stop Sending, with the Send To it belongs to.
+    var onStopSending: ((UUID) -> Void)?
     /// How long a finished Send To's last word ("Sent", "Declined") stays.
     static let sendingLabelDuration: Duration = .seconds(4)
 
     /// What a right-click "Send To" on `id` offers: the tile, or the whole selection if
-    /// the tile is in it, the tile first, then in shelf order. Only links and text go
-    /// in N2; anything else stays behind.
+    /// the tile is in it, the tile first, then in shelf order. Files, links and text go;
+    /// folders and files that can't be found stay behind.
     func itemsToSend(from id: ShelfItem.ID) -> [ShelfItem] {
         let ids = selection.contains(id) ? selection : [id]
-        let chosen = store.items.filter { ids.contains($0.id) && ($0.kind == .link || $0.kind == .text) }
+        let chosen = store.items.filter { ids.contains($0.id) && isSendable($0) }
         return chosen.filter { $0.id == id } + chosen.filter { $0.id != id }
     }
 
     /// How many selected tiles "Send To" would offer, for "Send 3 Items To".
     var sendableSelectionCount: Int {
-        store.items.filter { selection.contains($0.id) && ($0.kind == .link || $0.kind == .text) }.count
+        store.items.filter { selection.contains($0.id) && isSendable($0) }.count
+    }
+
+    private func isSendable(_ item: ShelfItem) -> Bool {
+        switch item.kind {
+        case .link, .text: return true
+        case .file: return !store.missingItemIDs.contains(item.id)
+        case .folder: return false
+        }
+    }
+
+    /// Right-click > Stop Sending on `id`: stops the Send To it's in.
+    func stopSending(_ id: ShelfItem.ID) {
+        guard let transfer = activeSends[id] else { return }
+        onStopSending?(transfer)
     }
 
     /// Shows how a Send To is going on its tiles. A finished one's last word fades
@@ -233,6 +261,11 @@ final class NotchViewModel: ObservableObject {
         for id in ids {
             sendingTransfers[id] = transfer
             sendingLabels[id] = label
+            if isFinished {
+                if activeSends[id] == transfer { activeSends[id] = nil }
+            } else if activeSends[id] != transfer {
+                activeSends[id] = transfer
+            }
         }
         guard isFinished else { return }
         Task { [weak self] in
@@ -246,8 +279,10 @@ final class NotchViewModel: ObservableObject {
     }
 
     /// An accepted offer that stopped arriving partway: nothing from it was added.
-    func receiveNearbyFailed(from senderName: String) {
-        notice = "Couldn't receive what \(senderName) shared"
+    func receiveNearbyFailed(from senderName: String, cancelledByThem: Bool = false) {
+        notice = cancelledByThem
+            ? "\(senderName) stopped sending"
+            : "Couldn't receive what \(senderName) shared"
     }
 
     /// Promised files aren't in `items` as drafts: they're added by

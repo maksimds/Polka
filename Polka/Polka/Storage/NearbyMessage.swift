@@ -6,13 +6,16 @@ import Foundation
 /// hostile until it has passed these checks.
 enum NearbyProtocol {
     /// This Polka's protocol version, sent in `hello`. 1 was N1's, which only said hello;
-    /// 2 adds offers.
-    static let version = 2
+    /// 2 adds offers of links and text; 3 adds files and pictures.
+    static let version = 3
     /// The oldest version this Polka talks to. There's no older, weaker one to fall back to.
     static let minimumVersion = 1
     /// The oldest version that takes offers. A Mac on version 1 is found, but can't be
     /// sent to.
     static let offerVersion = 2
+    /// The oldest version that takes files, previews, data pieces and `cancel`. A Mac on
+    /// version 2 is only ever sent links and text, with no pictures.
+    static let fileVersion = 3
     /// The Bonjour service type. It's also listed under `NSBonjourServices` in
     /// `Polka-Info.plist`, without which macOS doesn't let Polka use it.
     static let serviceType = "_polka._tcp"
@@ -21,6 +24,8 @@ enum NearbyProtocol {
     static let applicationProtocol = "polka/1"
     /// The largest message, checked from its length before any memory is set aside.
     static let maxMessageBytes = 1_000_000
+    /// The largest piece of a file, sent as raw bytes rather than JSON.
+    static let maxPieceBytes = 262_144
 }
 
 /// One message between two Polkas, sent as a JSON object with a `type`.
@@ -33,11 +38,19 @@ enum NearbyMessage: Equatable {
     /// The answer to an offer, from the Mac it was made to.
     case accept
     case decline
+    /// From the Mac sharing, right after the offer: one item's picture, as the offer
+    /// announced it would send.
+    case preview(NearbyPreview)
     /// From the Mac sharing, after Accept: one text item's whole text.
     case text(NearbyText)
+    /// From the Mac sharing, after a file's last piece: its SHA-256, worked out as it
+    /// was read, for the other Mac to check what it wrote against.
+    case fileEnd(NearbyFileEnd)
     /// From the Mac sharing: everything has been sent. From the Mac receiving: it's all
     /// on the shelf.
     case done
+    /// From either side, once the offer is made: the person there stopped it.
+    case cancel
 
     enum Failure: Error, Equatable {
         /// Not JSON, or not the shape Polka writes.
@@ -52,6 +65,8 @@ enum NearbyMessage: Equatable {
         case badOffer
         /// A text message for an item that can't exist.
         case badText
+        /// A preview or file end for an item that can't exist, or that's malformed.
+        case badItem
     }
 
     /// The message as it goes on the wire: its length in 4 bytes, most significant
@@ -90,8 +105,20 @@ enum NearbyMessage: Equatable {
             guard let text = envelope.text else { throw Failure.unreadable }
             guard (0..<NearbyOffer.maxItems).contains(text.index) else { throw Failure.badText }
             return .text(text)
+        case Envelope.previewType:
+            guard let preview = envelope.preview else { throw Failure.unreadable }
+            guard (0..<NearbyOffer.maxItems).contains(preview.index),
+                  NearbyPreviewImage.isAcceptable(preview.png) else { throw Failure.badItem }
+            return .preview(preview)
+        case Envelope.fileEndType:
+            guard let end = envelope.fileEnd else { throw Failure.unreadable }
+            guard (0..<NearbyOffer.maxItems).contains(end.index),
+                  end.sha256.count == NearbyFileEnd.hashBytes else { throw Failure.badItem }
+            return .fileEnd(end)
         case Envelope.doneType:
             return .done
+        case Envelope.cancelType:
+            return .cancel
         default:
             throw Failure.unknownType
         }
@@ -103,12 +130,17 @@ enum NearbyMessage: Equatable {
         static let acceptType = "accept"
         static let declineType = "decline"
         static let textType = "text"
+        static let previewType = "preview"
+        static let fileEndType = "fileEnd"
         static let doneType = "done"
+        static let cancelType = "cancel"
 
         var type: String
         var hello: NearbyHello?
         var offer: NearbyOffer.Wire?
         var text: NearbyText?
+        var preview: NearbyPreview?
+        var fileEnd: NearbyFileEnd?
 
         init(_ message: NearbyMessage) {
             switch message {
@@ -125,19 +157,30 @@ enum NearbyMessage: Equatable {
             case let .text(text):
                 type = Self.textType
                 self.text = text
+            case let .preview(preview):
+                type = Self.previewType
+                self.preview = preview
+            case let .fileEnd(end):
+                type = Self.fileEndType
+                fileEnd = end
             case .done:
                 type = Self.doneType
+            case .cancel:
+                type = Self.cancelType
             }
         }
     }
 }
 
-/// What a Mac wants to share: links and text in N2, files from N3. A link is just its
-/// web address, and a text item only its start and length until the offer is accepted.
-/// Nothing a tile was renamed to is sent: the receiving Mac names everything itself, as
-/// Polka does for anything new.
+/// What a Mac wants to share: links, text and files. A link is just its web address, a
+/// text item only its start and length until the offer is accepted, and a file its name
+/// and size. Nothing a tile was renamed to is sent: the receiving Mac names everything
+/// itself, as Polka does for anything new.
 struct NearbyOffer: Equatable {
     static let maxItems = 50
+    /// The most one offer may hold, all files together (NS-5), in bytes as Finder
+    /// counts them.
+    static let maxTotalBytes: Int64 = 1_000_000_000
     /// The longest web address, in UTF-8 bytes. Browsers take longer ones, but a link
     /// someone means to share is far shorter.
     static let maxLinkBytes = 8_192
@@ -149,12 +192,31 @@ struct NearbyOffer: Equatable {
         /// The text's first `maxExcerptLength` characters, or all of it if it's shorter,
         /// and its whole length in UTF-16 units, as `ShelfItem.maxTextLength` counts.
         case text(excerpt: String, length: Int)
+        /// A file's name, cleaned by `NearbyFileName.clean` on arrival, and its size in
+        /// bytes, which is exactly how many will be sent.
+        case file(name: String, size: Int64)
     }
 
     var items: [Item]
+    /// The places of the items whose picture follows the offer, each in a `preview`
+    /// message. Only files and links have one.
+    var previews: Set<Int> = []
 
-    /// What a tile becomes in an offer, or nil for one that can't be sent (files and
-    /// folders until N3, and links that aren't web addresses, saved before the rule).
+    /// What the files add up to.
+    var totalFileBytes: Int64 {
+        items.reduce(0) { total, item in
+            if case let .file(_, size) = item { return total + size }
+            return total
+        }
+    }
+
+    var hasFiles: Bool {
+        items.contains { if case .file = $0 { return true } else { return false } }
+    }
+
+    /// What a link or text tile becomes in an offer, or nil for one that can't be sent
+    /// this way: files, which `NearbyOutgoingItem.prepare` reads from disk, folders, and
+    /// links that aren't web addresses, saved before the rule.
     static func item(for shelfItem: ShelfItem) -> Item? {
         switch shelfItem.source {
         case let .link(url):
@@ -187,14 +249,19 @@ struct NearbyOffer: Equatable {
         struct Item: Codable {
             static let linkKind = "link"
             static let textKind = "text"
+            static let fileKind = "file"
 
             var kind: String
             var url: String?
             var excerpt: String?
             var length: Int?
+            var name: String?
+            var size: Int64?
         }
 
         var items: [Item]
+        /// Missing from version 2's offers, which have no pictures.
+        var previews: [Int]?
     }
 
     var wire: Wire {
@@ -204,14 +271,18 @@ struct NearbyOffer: Equatable {
                 return Wire.Item(kind: Wire.Item.linkKind, url: url.absoluteString)
             case let .text(excerpt, length):
                 return Wire.Item(kind: Wire.Item.textKind, excerpt: excerpt, length: length)
+            case let .file(name, size):
+                return Wire.Item(kind: Wire.Item.fileKind, name: name, size: size)
             }
-        })
+        }, previews: previews.isEmpty ? nil : previews.sorted())
     }
 
     /// The offer from what arrived, if it keeps every rule: 1 to `maxItems` items, each
     /// a kind this version knows; links web addresses only and at most `maxLinkBytes`;
     /// text items at most `ShelfItem.maxTextLength` long, with an excerpt that fits
-    /// that length and is the whole text when it's shorter than `maxExcerptLength`.
+    /// that length and is the whole text when it's shorter than `maxExcerptLength`;
+    /// files named (the name is cleaned here) and all together at most `maxTotalBytes`;
+    /// pictures announced only for files and links, each once.
     static func validated(_ wire: Wire) throws -> NearbyOffer {
         guard (1...maxItems).contains(wire.items.count) else { throw NearbyMessage.Failure.badOffer }
         let items = try wire.items.map { item -> Item in
@@ -231,11 +302,25 @@ struct NearbyOffer: Equatable {
                     throw NearbyMessage.Failure.badOffer
                 }
                 return .text(excerpt: excerpt, length: length)
+            case Wire.Item.fileKind:
+                guard let name = item.name, let size = item.size,
+                      (0...maxTotalBytes).contains(size) else {
+                    throw NearbyMessage.Failure.badOffer
+                }
+                return .file(name: NearbyFileName.clean(name), size: size)
             default:
                 throw NearbyMessage.Failure.badOffer
             }
         }
-        return NearbyOffer(items: items)
+        var offer = NearbyOffer(items: items)
+        guard offer.totalFileBytes <= maxTotalBytes else { throw NearbyMessage.Failure.badOffer }
+        let previews = wire.previews ?? []
+        guard Set(previews).count == previews.count,
+              previews.allSatisfy({ items.indices.contains($0) && !items[$0].isText }) else {
+            throw NearbyMessage.Failure.badOffer
+        }
+        offer.previews = Set(previews)
+        return offer
     }
 }
 
@@ -248,6 +333,21 @@ struct NearbyText: Codable, Equatable {
     var data: Data
 }
 
+/// One item's picture, sent right after the offer: a PNG of at most 256 × 256 px and
+/// 128 KB (`NearbyPreviewImage`), checked by its bytes on arrival but not decoded.
+struct NearbyPreview: Codable, Equatable {
+    var index: Int
+    var png: Data
+}
+
+/// The end of one file: the SHA-256 of the bytes sent for it.
+struct NearbyFileEnd: Codable, Equatable {
+    static let hashBytes = 32
+
+    var index: Int
+    var sha256: Data
+}
+
 struct NearbyHello: Codable, Equatable {
     var version: Int
     /// The name the other Mac shows. Nil when it doesn't share one: a Polka that only
@@ -256,31 +356,78 @@ struct NearbyHello: Codable, Equatable {
     var name: String?
 }
 
-/// Cuts what arrives into whole messages: a 4-byte length, then that many bytes.
+/// What arrives, cut into whole frames.
+enum NearbyFrame: Equatable {
+    /// A message's JSON, for `NearbyMessage.decode`.
+    case message(Data)
+    /// A piece of the file being sent, as raw bytes.
+    case piece(Data)
+
+    /// The first length byte's top bit marks a piece. A message is never longer than
+    /// `NearbyProtocol.maxMessageBytes`, so its length never sets that bit, and a
+    /// version 2 Polka, which is never sent a piece, would refuse one as too long.
+    static let pieceFlag: UInt32 = 0x8000_0000
+
+    /// A message's JSON, or nil for a piece.
+    var message: Data? {
+        if case let .message(payload) = self { return payload }
+        return nil
+    }
+
+    /// A piece as it goes on the wire: its length with the top bit set, then the bytes.
+    static func pieceFrame(_ bytes: Data) -> Data {
+        let count = UInt32(bytes.count) | pieceFlag
+        var frame = Data([UInt8(count >> 24 & 0xFF), UInt8(count >> 16 & 0xFF),
+                          UInt8(count >> 8 & 0xFF), UInt8(count & 0xFF)])
+        frame.append(bytes)
+        return frame
+    }
+}
+
+/// Cuts what arrives into whole frames: a 4-byte length, then that many bytes. A
+/// message is JSON; a length with its top bit set is a piece of a file.
 struct NearbyFrameReader {
     enum Failure: Error, Equatable {
-        /// A length over `NearbyProtocol.maxMessageBytes`. The connection should close.
+        /// A length over `NearbyProtocol.maxMessageBytes` (or, for a piece,
+        /// `maxPieceBytes`). The connection should close.
         case tooLarge(Int)
     }
 
     private var buffer = Data()
+    /// Where the unread bytes start in `buffer`, so each frame taken doesn't copy
+    /// everything after it.
+    private var start = 0
 
-    /// Adds bytes as they arrive and returns every message now complete, in order.
-    /// Bytes of a message still arriving stay until the rest comes.
-    mutating func append(_ data: Data) throws -> [Data] {
+    /// Adds bytes as they arrive and returns every frame now complete, in order.
+    /// Bytes of a frame still arriving stay until the rest comes.
+    mutating func append(_ data: Data) throws -> [NearbyFrame] {
         buffer.append(data)
-        var payloads: [Data] = []
-        while buffer.count >= 4 {
-            let length = buffer.prefix(4).reduce(0) { $0 << 8 | Int($1) }
-            guard length <= NearbyProtocol.maxMessageBytes else {
+        var frames: [NearbyFrame] = []
+        while buffer.count - start >= 4 {
+            let header = buffer[buffer.startIndex + start ..< buffer.startIndex + start + 4]
+            let raw = header.reduce(UInt32(0)) { $0 << 8 | UInt32($1) }
+            let isPiece = raw & NearbyFrame.pieceFlag != 0
+            let length = Int(raw & ~NearbyFrame.pieceFlag)
+            let limit = isPiece ? NearbyProtocol.maxPieceBytes : NearbyProtocol.maxMessageBytes
+            guard length <= limit else {
                 buffer = Data()
-                throw Failure.tooLarge(length)
+                start = 0
+                throw Failure.tooLarge(isPiece ? Int(raw) : length)
             }
-            guard buffer.count >= 4 + length else { break }
-            payloads.append(Data(buffer.dropFirst(4).prefix(length)))
-            buffer = Data(buffer.dropFirst(4 + length))
+            guard buffer.count - start >= 4 + length else { break }
+            let bodyStart = buffer.startIndex + start + 4
+            let body = Data(buffer[bodyStart ..< bodyStart + length])
+            frames.append(isPiece ? .piece(body) : .message(body))
+            start += 4 + length
         }
-        return payloads
+        if start == buffer.count {
+            buffer = Data()
+            start = 0
+        } else if start > 1_048_576 {
+            buffer = Data(buffer[(buffer.startIndex + start)...])
+            start = 0
+        }
+        return frames
     }
 }
 

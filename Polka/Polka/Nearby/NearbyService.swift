@@ -3,7 +3,7 @@ import Network
 import Security
 import SystemConfiguration
 
-/// Nearby Sharing (N1: NS-1 to NS-3, N2: links and text). While the Settings switch is
+/// Nearby Sharing (N1: NS-1 to NS-3, N2: links and text, N3: files). While the Settings switch is
 /// on, Polka advertises `_polka._tcp` under a random name and listens for TLS
 /// connections. It browses for other Polkas only while something needs the list (the
 /// Settings window, the open shelf), since browsing keeps the Wi-Fi radio hopping to
@@ -46,12 +46,32 @@ final class NearbyService: ObservableObject {
     @Published private(set) var browsingSince: Date?
     /// Offers waiting for an answer, in the order they arrived.
     @Published private(set) var offers: [NearbyIncomingOffer] = []
+    /// Accepted offers still arriving, in the order they were accepted.
+    @Published private(set) var receiving: [NearbyReceiving] = []
 
     /// What an accepted offer brought, once it has all arrived and checked out, with
     /// the name the sender gave.
     var onReceived: ((_ items: [NearbyReceivedItem], _ senderName: String) -> Void)?
-    /// An accepted offer that never fully arrived, with the name the sender gave.
-    var onReceiveFailed: ((_ senderName: String) -> Void)?
+    /// An accepted offer that never fully arrived, with the name the sender gave and
+    /// why: the sender stopped it, or something went wrong. Nothing from it was kept.
+    /// Not called when the person here cancelled.
+    var onReceiveFailed: ((_ senderName: String, _ cancelledByThem: Bool) -> Void)?
+
+    /// Where received files are written. Without it, offers of files are declined.
+    var copies: ShelfCopies?
+    /// Where link icons are saved, for the pictures an offer of links brings.
+    var previewsFolder: URL?
+
+    /// What Accept needs free on the disk beyond the files themselves.
+    static let spareSpace: Int64 = 2_000_000_000
+
+    enum AcceptResult: Equatable {
+        case accepted
+        /// The files plus `spareSpace` don't fit on the disk. The offer is declined.
+        case notEnoughSpace
+        /// The offer is no longer waiting.
+        case gone
+    }
 
     /// The Mac's name, as in System Settings > General > Sharing, which is what AirDrop
     /// shows too.
@@ -82,7 +102,11 @@ final class NearbyService: ObservableObject {
     private var browseRequests = 0
     private var exchanges: [ObjectIdentifier: NearbyHelloExchange] = [:]
     private var incoming: [UUID: NearbyIncomingSession] = [:]
-    private var outgoing: [ObjectIdentifier: NearbyOutgoingSession] = [:]
+    private var outgoing: [UUID: NearbyOutgoingSession] = [:]
+    /// Sends whose files and pictures are still being got ready.
+    private var preparing: Set<UUID> = []
+    /// The free space on the disk that holds `url`; tests pass their own.
+    private let freeSpace: (URL) -> Int64?
     /// Accepted offers still arriving.
     private var accepted: Set<UUID> = []
     private var line = NearbyOfferLine()
@@ -109,11 +133,25 @@ final class NearbyService: ObservableObject {
 
     init(settings: ShelfSettings = ShelfSettings(), identityTag: String = NearbyIdentity.standardTag,
          answerTimeout: TimeInterval = NearbyOfferLine.answerTimeout,
-         listsThisMac: Bool = NearbyService.listsThisMacForTesting) {
+         listsThisMac: Bool = NearbyService.listsThisMacForTesting,
+         freeSpace: @escaping (URL) -> Int64? = NearbyService.freeSpace(at:)) {
         self.settings = settings
         self.identityTag = identityTag
         self.answerTimeout = answerTimeout
         self.listsThisMac = listsThisMac
+        self.freeSpace = freeSpace
+    }
+
+    /// What the disk holding `url` has free for files the person wants, as Finder
+    /// counts it.
+    nonisolated static func freeSpace(at url: URL) -> Int64? {
+        var folder = url
+        // The copies folder may not exist yet; its parent does.
+        while !FileManager.default.fileExists(atPath: folder.path), folder.pathComponents.count > 1 {
+            folder = folder.deletingLastPathComponent()
+        }
+        return (try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
+            .volumeAvailableCapacityForImportantUsage
     }
 
     /// The test build's `-NearbyListThisMac YES` launch argument. Ignored by every other
@@ -206,6 +244,7 @@ final class NearbyService: ObservableObject {
         endIncoming()
         outgoing.values.forEach { $0.cancel() }
         outgoing = [:]
+        preparing = []
         identityFailed = false
         status = .off
         Log.nearby.info("Nearby Sharing is off")
@@ -287,6 +326,10 @@ final class NearbyService: ObservableObject {
 
     private func accept(_ connection: NWConnection) {
         guard incoming.count < Self.maxIncoming else {
+            // Started only to be closed, so the other Mac hears at once that it was turned
+            // away (its handshake fails) and asks again later, rather than waiting out its
+            // handshake timeout for a connection nobody will ever answer.
+            connection.start(queue: .main)
             connection.cancel()
             Log.nearby.info("Turned a connection away: too many at once")
             return
@@ -302,6 +345,11 @@ final class NearbyService: ObservableObject {
         session.onReceived = { [weak self, weak session] items in
             guard let self, let session else { return }
             self.received(items, by: session)
+        }
+        session.onProgress = { [weak self, weak session] done, total in
+            guard let self, let session, let index = self.receiving.firstIndex(where: { $0.id == session.id }) else { return }
+            self.receiving[index].receivedBytes = done
+            self.receiving[index].totalBytes = total
         }
         session.onEnd = { [weak self] in self?.incomingEnded($0) }
         session.start()
@@ -324,13 +372,34 @@ final class NearbyService: ObservableObject {
         line.show(id, at: Date())
     }
 
-    /// Accept: the offer leaves the line, and its items arrive through `onReceived`.
-    func accept(_ id: UUID) {
-        guard offers.contains(where: { $0.id == id }), let session = incoming[id] else { return }
+    /// Accept: the offer leaves the line, and its items arrive through `onReceived`,
+    /// following `receiving` meanwhile. Declined instead if its files don't fit on the
+    /// disk with `spareSpace` to spare.
+    @discardableResult
+    func accept(_ id: UUID) -> AcceptResult {
+        guard let offer = offers.first(where: { $0.id == id }), let session = incoming[id] else { return .gone }
+        let total = offer.offer.totalFileBytes
+        if offer.offer.hasFiles {
+            guard let copies, let free = freeSpace(copies.folder), free >= total + Self.spareSpace else {
+                decline(id)
+                Log.nearby.info("Declined an offer: not enough space")
+                return .notEnoughSpace
+            }
+        }
         removeOffer(id)
         accepted.insert(id)
-        session.answer(accept: true)
-        Log.nearby.info("Accepted an offer")
+        receiving.append(NearbyReceiving(id: id, senderName: offer.senderName, itemCount: offer.offer.items.count,
+                                         receivedBytes: 0, totalBytes: total))
+        session.answer(accept: true, copies: copies)
+        Log.nearby.info("Accepted an offer of \(total, privacy: .public) bytes of files")
+        return .accepted
+    }
+
+    /// Stops an accepted offer that's still arriving. Nothing from it is kept.
+    func cancelReceiving(_ id: UUID) {
+        guard accepted.contains(id), let session = incoming[id] else { return }
+        session.cancel()
+        Log.nearby.info("Stopped receiving")
     }
 
     /// Decline, or Decline and Block, which turns away that Mac's offers until Polka quits.
@@ -338,7 +407,7 @@ final class NearbyService: ObservableObject {
         guard let offer = offers.first(where: { $0.id == id }) else { return }
         if block { line.block(offer.fingerprint) }
         removeOffer(id)
-        incoming[id]?.answer(accept: false)
+        incoming[id]?.answer(accept: false, copies: nil)
         Log.nearby.info("Declined an offer\(block ? " and blocked its Mac" : "", privacy: .public)")
     }
 
@@ -350,11 +419,12 @@ final class NearbyService: ObservableObject {
         }
         let admission = line.admit(id: session.id, fingerprint: fingerprint)
         guard admission == .admitted else {
-            session.answer(accept: false)
+            session.answer(accept: false, copies: nil)
             Log.nearby.info("Turned an offer away: \(String(describing: admission), privacy: .public)")
             return
         }
-        offers.append(NearbyIncomingOffer(id: session.id, senderName: name, fingerprint: fingerprint, offer: offer))
+        offers.append(NearbyIncomingOffer(id: session.id, senderName: name, fingerprint: fingerprint,
+                                          offer: offer, pictures: session.previews))
         Log.nearby.info("""
             Offer of \(offer.items.count, privacy: .public) item(s) from \(name, privacy: .private), \
             \(self.offers.count, privacy: .public) waiting
@@ -371,6 +441,7 @@ final class NearbyService: ObservableObject {
 
     private func received(_ items: [NearbyReceivedItem], by session: NearbyIncomingSession) {
         accepted.remove(session.id)
+        receiving.removeAll { $0.id == session.id }
         Log.nearby.info("Received \(items.count, privacy: .public) item(s)")
         onReceived?(items, session.senderName ?? "")
     }
@@ -382,9 +453,18 @@ final class NearbyService: ObservableObject {
             removeOffer(session.id)
             Log.nearby.info("An offer was withdrawn")
         }
+        receiving.removeAll { $0.id == session.id }
         if accepted.remove(session.id) != nil {
-            Log.nearby.error("An accepted offer didn't fully arrive")
-            onReceiveFailed?(session.senderName ?? "")
+            switch session.ending {
+            case .cancelledHere:
+                break
+            case .cancelledByThem:
+                Log.nearby.info("The sender stopped an accepted offer")
+                onReceiveFailed?(session.senderName ?? "", true)
+            case .finished, .failed:
+                Log.nearby.error("An accepted offer didn't fully arrive")
+                onReceiveFailed?(session.senderName ?? "", false)
+            }
         }
     }
 
@@ -396,31 +476,118 @@ final class NearbyService: ObservableObject {
     // MARK: - Offers from this Mac
 
     /// Offers these tiles to a Mac found nearby, leaving out any that can't be sent.
-    /// False if nothing could be sent or the Mac is no longer there; otherwise
-    /// `onStatus` follows the transfer to its end.
+    /// Nil if the Mac is no longer there; otherwise the send's id, for
+    /// `cancelSending`, and `onStatus` follows it to its end. Files are measured and
+    /// pictures made in the background first, so a selection that's too large, or
+    /// holds nothing that can go, fails through `onStatus`.
     @discardableResult
     func send(_ items: [ShelfItem], to peerID: String,
-              onStatus: @escaping (NearbyOutgoingSession.Status) -> Void) -> Bool {
+              onStatus: @escaping (NearbyOutgoingSession.Status) -> Void) -> UUID? {
         guard let identity, let peer = peers.first(where: { $0.id == peerID }), peer.takesOffers,
-              let endpoint = endpoints[peerID],
-              let transfer = NearbyOutgoingTransfer(items: items) else { return false }
+              let endpoint = endpoints[peerID] else { return nil }
+        let id = UUID()
+        preparing.insert(id)
+        onStatus(.connecting)
+        let previewsFolder = self.previewsFolder
+        // Holds the service until it's done, a moment at most.
+        Task.detached(priority: .userInitiated) {
+            let result = Result { try NearbyOutgoingItem.prepare(items) }
+            let previews: [Int: Data]
+            if case let .success(pairs) = result {
+                previews = await NearbyPreviewMaker.previews(for: pairs, previewsFolder: previewsFolder)
+            } else {
+                previews = [:]
+            }
+            let prepared = result.map { $0.map(\.item) }
+            await self.prepared(id, prepared, previews: previews, to: peer, at: endpoint,
+                                identity: identity, onStatus: onStatus)
+        }
+        return id
+    }
+
+    /// Stops a send, whether it's still being got ready, waiting for an answer, or
+    /// sending.
+    func cancelSending(_ id: UUID) {
+        if preparing.remove(id) != nil {
+            Log.nearby.info("Stopped a send before it went")
+        }
+        outgoing[id]?.cancel()
+    }
+
+    private func prepared(_ id: UUID, _ result: Result<[NearbyOutgoingItem], Error>, previews: [Int: Data],
+                          to peer: Peer, at endpoint: NWEndpoint, identity: NearbyIdentity,
+                          onStatus: @escaping (NearbyOutgoingSession.Status) -> Void) {
+        // Cancelled, or Nearby Sharing turned off, meanwhile.
+        guard preparing.remove(id) != nil else {
+            onStatus(.cancelled)
+            return
+        }
+        let items: [NearbyOutgoingItem]
+        switch result {
+        case let .success(prepared):
+            items = prepared
+        case .failure(NearbyOutgoingItem.Failure.tooLarge):
+            onStatus(.failed(.tooLarge))
+            return
+        case .failure:
+            onStatus(.failed(.nothingToSend))
+            return
+        }
+        let transfer = NearbyOutgoingTransfer(items: items, previews: previews)
+        if !transfer.files.isEmpty && peer.version < NearbyProtocol.fileVersion {
+            onStatus(.failed(.tooOld))
+            return
+        }
+        Log.nearby.info("""
+            Offering \(items.count, privacy: .public) item(s), \(transfer.totalBytes, privacy: .public) bytes \
+            of files, \(previews.count, privacy: .public) picture(s), to \(peer.name, privacy: .private)
+            """)
+        connect(id, transfer, to: peer, at: endpoint, identity: identity, attempt: 1, onStatus: onStatus)
+    }
+
+    /// How many times an offer is tried when the other Mac turns the connection away
+    /// before saying anything, as it does while it's busy with other Macs.
+    private static let maxOfferAttempts = 4
+
+    private func connect(_ id: UUID, _ transfer: NearbyOutgoingTransfer, to peer: Peer, at endpoint: NWEndpoint,
+                         identity: NearbyIdentity, attempt: Int,
+                         onStatus: @escaping (NearbyOutgoingSession.Status) -> Void) {
         // A Mac that wants to share says who it is, even while it keeps its name from
         // everyone else (Remembered Macs Only): it chose to show it to this one.
         let hello = NearbyHello(version: NearbyProtocol.version, name: displayName)
         let session = NearbyOutgoingSession(connection: NWConnection(to: endpoint, using: Self.parameters(identity)),
                                             hello: hello, transfer: transfer,
                                             expectedFingerprint: peer.fingerprint)
-        let key = ObjectIdentifier(session)
-        outgoing[key] = session
-        session.onStatus = { [weak self] status in
-            if status.isFinished { self?.outgoing[key] = nil }
-            Log.nearby.info("Sending: \(String(describing: status), privacy: .public)")
+        outgoing[id] = session
+        session.onStatus = { [weak self, weak session] status in
+            guard let self, let session, self.outgoing[id] === session else { return }
+            if status == .failed(.unreachable), session.wasTurnedAway, attempt < Self.maxOfferAttempts {
+                // Turned away: try again in a moment, the pause doubling each time.
+                Log.nearby.info("An offer was turned away; trying again")
+                self.outgoing[id] = nil
+                self.preparing.insert(id)
+                let pause = 0.4 * pow(2, Double(attempt - 1)) * Double.random(in: 0.8...1.2)
+                DispatchQueue.main.asyncAfter(deadline: .now() + pause) { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        // Stopped between two tries.
+                        guard self.preparing.remove(id) != nil else {
+                            onStatus(.cancelled)
+                            return
+                        }
+                        self.connect(id, transfer, to: peer, at: endpoint, identity: identity,
+                                     attempt: attempt + 1, onStatus: onStatus)
+                    }
+                }
+                return
+            }
+            if status.isFinished { self.outgoing[id] = nil }
+            if case .sending = status {} else {
+                Log.nearby.info("Sending: \(String(describing: status), privacy: .public)")
+            }
             onStatus(status)
         }
-        onStatus(.connecting)
         session.start()
-        Log.nearby.info("Offering \(transfer.offer.items.count, privacy: .public) item(s) to \(peer.name, privacy: .private)")
-        return true
     }
 
     // MARK: - Browser

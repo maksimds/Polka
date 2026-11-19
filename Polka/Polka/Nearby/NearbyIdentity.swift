@@ -42,6 +42,27 @@ struct NearbyIdentity {
     /// certificate and identity. Can wait on a Keychain prompt, so it runs off the main
     /// thread.
     static func loadOrCreate(tag: String) throws -> NearbyIdentity {
+        // Finding the key for the certificate reads the keychain too, which can fail
+        // the same way a write can (see `newKey`), so the whole thing is tried again.
+        var lastError: Error = Failure.key
+        for attempt in 0..<3 {
+            do {
+                return try makeIdentity(tag: tag)
+            } catch Failure.identity(let status) {
+                lastError = Failure.identity(status)
+                Thread.sleep(forTimeInterval: keychainPause(attempt))
+            }
+        }
+        throw lastError
+    }
+
+    /// Doubling from 0.1 s, a little random so processes waiting on each other don't
+    /// try again at the same moment.
+    private static func keychainPause(_ attempt: Int) -> TimeInterval {
+        0.1 * pow(2, Double(attempt)) * Double.random(in: 0.7...1.3)
+    }
+
+    private static func makeIdentity(tag: String) throws -> NearbyIdentity {
         let privateKey = try existingKey(tag: tag) ?? newKey(tag: tag)
         guard let publicKey = SecKeyCopyPublicKey(privateKey),
               let publicData = SecKeyCopyExternalRepresentation(publicKey, nil) as Data? else {
@@ -109,13 +130,16 @@ struct NearbyIdentity {
         ]
         // The login keychain is one file. Another process writing to it at the same
         // moment (two Polkas starting together, or tests running side by side) can make
-        // a write fail, so it's tried again a moment later.
+        // a write fail (often as errSecItemNotFound), so it's tried again, waiting a
+        // little longer each time: about 3 s in all.
         var code = 0
-        for attempt in 1...3 {
+        for attempt in 0..<6 {
             var error: Unmanaged<CFError>?
             if let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error) { return key }
             code = error.map { CFErrorGetCode($0.takeRetainedValue()) } ?? 0
-            Thread.sleep(forTimeInterval: 0.1 * Double(attempt))
+            // A key written by an attempt that reported failure is used, not doubled.
+            if let key = try? existingKey(tag: tag) { return key }
+            Thread.sleep(forTimeInterval: keychainPause(attempt))
         }
         throw Failure.keychain(OSStatus(truncatingIfNeeded: code))
     }

@@ -15,12 +15,14 @@ struct ShelfItemCommands {
     /// Right-click > Share, with the view and area the popover points at. The shelf
     /// stays open under the popover, as it does under a menu.
     let share: @MainActor (ShelfItem.ID, NSView, NSRect) -> Void
-    /// What Right-click > Send To lists, read as it opens, or nil while Nearby Sharing
-    /// is off, which leaves Send To out of the menu.
-    var sendTargets: @MainActor () -> [NearbySendTarget]? = { nil }
-    /// Right-click > Send To > a Mac: the tile, or the links and text in the selection
-    /// if the tile is in it, offered to that Mac (its Bonjour name).
+    /// What Right-click > Send To on a tile lists, read as it opens, or nil while
+    /// Nearby Sharing is off, which leaves Send To out of the menu.
+    var sendTargets: @MainActor (ShelfItem.ID) -> [NearbySendTarget]? = { _ in nil }
+    /// Right-click > Send To > a Mac: the tile, or what can be sent of the selection if
+    /// the tile is in it, offered to that Mac (its Bonjour name).
     var send: @MainActor (ShelfItem.ID, String) -> Void = { _, _ in }
+    /// Right-click > Stop Sending, on a tile that's being sent.
+    var stopSending: @MainActor (ShelfItem.ID) -> Void = { _ in }
 }
 
 /// One line in the Send To submenu: a Mac nearby, or a note that can't be chosen,
@@ -57,6 +59,8 @@ struct ShelfGridView: View {
     let convertingItemIDs: Set<ShelfItem.ID>
     /// How a Send To is going, for the sending tiles' detail lines.
     var sendingLabels: [ShelfItem.ID: String] = [:]
+    /// Tiles in a Send To that hasn't finished, which offer Stop Sending instead.
+    var sendingItemIDs: Set<ShelfItem.ID> = []
     /// How many selected tiles Send To would offer, for "Send 3 Items To".
     var sendableSelectionCount = 0
     let selection: Set<ShelfItem.ID>
@@ -198,8 +202,10 @@ struct ShelfGridView: View {
                                           onShare: { commands.share(item.id, $0, $1) },
                                           sendingLabel: sendingLabels[item.id],
                                           sendableSelectionCount: sendableSelectionCount,
-                                          sendTargets: commands.sendTargets,
+                                          sendTargets: { commands.sendTargets(item.id) },
                                           onSend: { commands.send(item.id, $0) },
+                                          isSending: sendingItemIDs.contains(item.id),
+                                          onStopSending: { commands.stopSending(item.id) },
                                           isRenaming: renamingItemID == item.id,
                                           onRename: { rename.begin(item.id) },
                                           onRenameFinished: { rename.finish(item.id, $0) },

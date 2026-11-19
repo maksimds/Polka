@@ -50,6 +50,9 @@ final class NotchPanelController {
     private var nextOfferNotBefore = ContinuousClock.now
     /// True while the open shelf has asked Nearby Sharing to look for Macs, for Send To.
     private var isBrowsingForShelf = false
+    /// Each Send To still running, by the id its tiles know it by, with the id
+    /// `NearbyService` knows it by, for Stop Sending.
+    private var sendIDs: [UUID: UUID] = [:]
     private var collapsedAt = ContinuousClock.now
 
     /// How long the pointer can be away before the panel collapses while a message is showing.
@@ -532,8 +535,9 @@ final class NotchPanelController {
                           showInfo: { [weak self] in self?.showInfoForItems(from: $0) },
                           copy: { [weak self] in self?.model.copy(from: $0) },
                           share: { [weak self] in self?.shareItems(from: $0, pointingAt: $1, $2) },
-                          sendTargets: { [weak self] in self?.sendTargets() },
-                          send: { [weak self] in self?.send(from: $0, to: $1) })
+                          sendTargets: { [weak self] in self?.sendTargets(for: $0) },
+                          send: { [weak self] in self?.send(from: $0, to: $1) },
+                          stopSending: { [weak self] in self?.model.stopSending($0) })
     }
 
     /// Double-click. A file that can't be found does nothing, as it can't be dragged.
@@ -884,9 +888,20 @@ final class NotchPanelController {
         nearby.onReceived = { [weak self] items, senderName in
             self?.model.receiveNearby(items, from: senderName)
         }
-        nearby.onReceiveFailed = { [weak self] senderName in
-            self?.model.receiveNearbyFailed(from: senderName)
+        nearby.onReceiveFailed = { [weak self] senderName, cancelledByThem in
+            self?.model.receiveNearbyFailed(from: senderName, cancelledByThem: cancelledByThem)
         }
+        model.onStopSending = { [weak self] transfer in
+            self?.stopSending(transfer)
+        }
+        model.onCancelReceiving = { [weak self] id in
+            self?.nearby?.cancelReceiving(id)
+        }
+        nearby.$receiving
+            .map { $0.filter { $0.totalBytes > 0 } }
+            .removeDuplicates()
+            .sink { [weak self] receiving in self?.model.nearbyReceiving = receiving }
+            .store(in: &cancellables)
         // `@Published` reports a change before it's made, so the list is read a tick later.
         nearby.$offers
             .sink { [weak self] _ in
@@ -955,7 +970,9 @@ final class NotchPanelController {
         nextOfferNotBefore = .now + offerPause
         switch answer {
         case .accept:
-            nearby?.accept(offer.id)
+            if nearby?.accept(offer.id) == .notEnoughSpace {
+                model.showNotice("There isn't enough space on this Mac for what \(offer.senderName) shared")
+            }
             // The view grows back into the shelf, where the items land as they arrive.
             model.state = .expanded
         case .decline:
@@ -983,9 +1000,11 @@ final class NotchPanelController {
         }
     }
 
-    /// What Send To lists as it opens: the Macs found nearby that told their names,
-    /// or a note saying why there are none. Nil while Nearby Sharing is off.
-    private func sendTargets() -> [NearbySendTarget]? {
+    /// What Send To on `id` lists as it opens: the Macs found nearby that told their
+    /// names, or a note saying why there are none. Nil while Nearby Sharing is off. A
+    /// Mac on an older Polka is listed but can't be chosen when it can't take what's
+    /// being sent: anything at all on N1's, files on N2's.
+    private func sendTargets(for id: ShelfItem.ID) -> [NearbySendTarget]? {
         guard let nearby, nearby.isEnabled else { return nil }
         switch nearby.status {
         case .noLocalNetwork:
@@ -1000,9 +1019,10 @@ final class NotchPanelController {
             let isStillLooking = nearby.browsingSince.map { -$0.timeIntervalSinceNow < 5 } ?? true
             return [NearbySendTarget(peerID: nil, title: isStillLooking ? "Looking for Macs…" : "No Macs Nearby")]
         }
+        let hasFiles = model.itemsToSend(from: id).contains { $0.kind == .file }
         return peers.map { peer in
-            // A Mac on N1's Polka is found but can't take offers.
-            peer.takesOffers
+            let takesThese = peer.takesOffers && (!hasFiles || peer.version >= NearbyProtocol.fileVersion)
+            return takesThese
                 ? NearbySendTarget(peerID: peer.id, title: peer.name)
                 : NearbySendTarget(peerID: nil, title: "\(peer.name) (Needs a Newer Polka)")
         }
@@ -1021,23 +1041,46 @@ final class NotchPanelController {
         let ids = items.map(\.id)
         let transfer = UUID()
         let started = nearby.send(items, to: peerID) { [weak self] status in
-            self?.model.showSending(Self.sendingLabel(status, to: peer.name), isFinished: status.isFinished,
-                                    on: ids, transfer: transfer)
+            guard let self else { return }
+            self.model.showSending(Self.sendingLabel(status, to: peer.name), isFinished: status.isFinished,
+                                   on: ids, transfer: transfer)
+            if status.isFinished { self.sendIDs[transfer] = nil }
+            switch status {
+            case .failed(.tooLarge):
+                self.model.showNotice("That's more than 1 GB, too much to send at once")
+            case .failed(.unreadable):
+                self.model.showNotice("A file couldn't be read, so nothing more was sent")
+            default:
+                break
+            }
         }
-        if !started {
+        if let started {
+            // Unless it finished already, before `send` returned.
+            if model.activeSends.values.contains(transfer) { sendIDs[transfer] = started }
+        } else {
             model.showNotice("Couldn't send to \(peer.name)")
         }
+    }
+
+    /// Stop Sending: the Send To a tile is in.
+    private func stopSending(_ transfer: UUID) {
+        guard let id = sendIDs[transfer] else { return }
+        nearby?.cancelSending(id)
     }
 
     /// What a sending tile's detail line says.
     private static func sendingLabel(_ status: NearbyOutgoingSession.Status, to name: String) -> String {
         switch status {
         case .connecting, .waiting: return "Waiting for \(name)…"
-        case .sending: return "Sending…"
+        case let .sending(fraction): return "Sending \(Int(fraction * 100))%"
         case .sent: return "Sent"
         case .declined: return "Declined"
+        case .cancelled: return "Cancelled"
         case .failed(.tooOld): return "\(name) needs a newer Polka"
         case .failed(.unreachable), .failed(.wrongMac): return "Couldn't reach \(name)"
+        case .failed(.tooLarge): return "Over 1 GB"
+        case .failed(.unreadable): return "Couldn't read the file"
+        case .failed(.nothingToSend): return "Nothing to send"
         }
     }
 

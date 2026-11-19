@@ -11,6 +11,9 @@ final class NearbyConnection {
     var onReady: (() -> Void)?
     /// A message arrived. Throwing refuses it, which ends the connection.
     var onMessage: ((NearbyMessage) throws -> Void)?
+    /// A piece of a file arrived. Throwing refuses it, as for a message. With no
+    /// handler, any piece is refused.
+    var onPiece: ((Data) throws -> Void)?
     /// It ended, with why if it went wrong. Nil when the other side closed, or this
     /// side ended it without a reason.
     var onEnd: ((String?) -> Void)?
@@ -19,6 +22,8 @@ final class NearbyConnection {
     private var reader = NearbyFrameReader()
     private var hasEnded = false
     private var deadline: DispatchWorkItem?
+    /// It ended because nothing came in time.
+    private(set) var timedOut = false
 
     /// Long enough for a slow handshake over the air, short enough that a connection
     /// that never speaks can't hold a place.
@@ -41,7 +46,11 @@ final class NearbyConnection {
     func setTimeout(_ seconds: TimeInterval) {
         deadline?.cancel()
         let item = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.end(because: "it timed out") }
+            MainActor.assumeIsolated {
+                guard let self, !self.hasEnded else { return }
+                self.timedOut = true
+                self.end(because: "it timed out")
+            }
         }
         deadline = item
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: item)
@@ -65,6 +74,20 @@ final class NearbyConnection {
             end(because: "a message couldn't be written")
             return
         }
+        write(data, completion: completion)
+    }
+
+    /// Sends one piece of a file, after whatever was sent before it.
+    func sendPiece(_ bytes: Data, completion: (() -> Void)? = nil) {
+        guard !hasEnded else { return }
+        guard !bytes.isEmpty, bytes.count <= NearbyProtocol.maxPieceBytes else {
+            end(because: "a piece was too large to send")
+            return
+        }
+        write(NearbyFrame.pieceFrame(bytes), completion: completion)
+    }
+
+    private func write(_ data: Data, completion: (() -> Void)?) {
         connection.send(content: data, completion: .contentProcessed { [weak self] error in
             MainActor.assumeIsolated {
                 guard let self, !self.hasEnded else { return }
@@ -90,6 +113,7 @@ final class NearbyConnection {
         onEnd?(reason)
         onEnd = nil
         onMessage = nil
+        onPiece = nil
         onReady = nil
     }
 
@@ -131,14 +155,19 @@ final class NearbyConnection {
     }
 
     private func receive() {
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65_536) { [weak self] data, _, isComplete, error in
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 1_048_576) { [weak self] data, _, isComplete, error in
             MainActor.assumeIsolated {
                 guard let self, !self.hasEnded else { return }
                 if let data, !data.isEmpty {
                     do {
-                        for payload in try self.reader.append(data) {
-                            let message = try NearbyMessage.decode(payload)
-                            try self.onMessage?(message)
+                        for frame in try self.reader.append(data) {
+                            switch frame {
+                            case let .message(payload):
+                                try self.onMessage?(try NearbyMessage.decode(payload))
+                            case let .piece(bytes):
+                                guard let onPiece = self.onPiece else { throw NearbyMessage.Failure.unreadable }
+                                try onPiece(bytes)
+                            }
                             // The message may have ended the connection.
                             guard !self.hasEnded else { return }
                         }

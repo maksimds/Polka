@@ -19,25 +19,25 @@ struct NearbyMessageTests {
         var reader = NearbyFrameReader()
         let payloads = try reader.append(try hello.frame())
         #expect(payloads.count == 1)
-        #expect(try NearbyMessage.decode(payloads[0]) == hello)
+        #expect(try NearbyMessage.decode(try #require(payloads[0].message)) == hello)
     }
 
     @Test func aHelloWithoutANameIsAllowed() throws {
         let hello = NearbyMessage.hello(NearbyHello(version: 1, name: nil))
         var reader = NearbyFrameReader()
         let payloads = try reader.append(try hello.frame())
-        #expect(try NearbyMessage.decode(payloads[0]) == hello)
+        #expect(try NearbyMessage.decode(try #require(payloads[0].message)) == hello)
     }
 
     @Test func aMessageArrivingAByteAtATimeIsReadOnceWhole() throws {
         let data = try NearbyMessage.hello(NearbyHello(version: 1, name: "Sam")).frame()
         var reader = NearbyFrameReader()
-        var payloads: [Data] = []
+        var payloads: [NearbyFrame] = []
         for byte in data {
             payloads += try reader.append(Data([byte]))
         }
         #expect(payloads.count == 1)
-        #expect(try NearbyMessage.decode(payloads[0]) == .hello(NearbyHello(version: 1, name: "Sam")))
+        #expect(try NearbyMessage.decode(try #require(payloads[0].message)) == .hello(NearbyHello(version: 1, name: "Sam")))
     }
 
     @Test func twoMessagesInOneChunkAreBothRead() throws {
@@ -106,7 +106,7 @@ struct NearbyMessageTests {
     @Test func framesFromAnotherWriterAreReadTheSame() throws {
         var reader = NearbyFrameReader()
         let payloads = try reader.append(frame(#"{"type":"hello","hello":{"version":1,"name":"Kim"}}"#))
-        #expect(try NearbyMessage.decode(payloads[0]) == .hello(NearbyHello(version: 1, name: "Kim")))
+        #expect(try NearbyMessage.decode(try #require(payloads[0].message)) == .hello(NearbyHello(version: 1, name: "Kim")))
     }
 }
 

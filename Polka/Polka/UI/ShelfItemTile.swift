@@ -70,9 +70,13 @@ struct ShelfItemTile: View {
     let sendableSelectionCount: Int
     /// The Macs "Send To" lists, read as it opens; nil leaves it out (Nearby Sharing off).
     let sendTargets: @MainActor () -> [NearbySendTarget]?
-    /// "Send To" > a Mac: this item, or the links and text in the selection if this
-    /// item is in it.
+    /// "Send To" > a Mac: this item, or what can be sent of the selection if this item
+    /// is in it.
     let onSend: @MainActor (String) -> Void
+    /// True while a Send To of this tile hasn't finished: "Stop Sending" takes Send
+    /// To's place.
+    let isSending: Bool
+    let onStopSending: @MainActor () -> Void
     /// True while the name is a field being typed in ("Rename").
     let isRenaming: Bool
     /// The menu's "Rename": this item alone.
@@ -132,7 +136,8 @@ struct ShelfItemTile: View {
     /// no file to get info on. Then "Copy" and "Rename" for every tile, Rename right
     /// after Get Info and Copy as in Finder. "Share": macOS's share popover takes files as
     /// Finder does, links as Safari does, and text as Notes does. "Send To" (Nearby
-    /// Sharing) right after it, for links and text, closes the group. Then how Polka keeps the item: "Pin", which reads "Unpin"
+    /// Sharing) right after it, for files, links and text but not folders, closes the
+    /// group; while the tile is being sent, "Stop Sending" is there instead. Then how Polka keeps the item: "Pin", which reads "Unpin"
     /// on a pinned tile as in Notes and Messages, "Temporary", checked while it has an
     /// expiry, and for files and folders "Keep a Copy", checked for a copy.
     /// Links and text have no file to show or copy, so they skip those. "Remove" comes
@@ -164,11 +169,14 @@ struct ShelfItemTile: View {
         entries.append(TileDragView.MenuEntry(title: "Share",
                                               isEnabled: !isFile || isAvailable,
                                               pointingAtTile: onShare))
-        // Nearby Sharing: links and text in N2, files from N3. In a selection, what
+        // Nearby Sharing: files, links and text, not folders. In a selection, what
         // can't be sent stays behind. Left out while Nearby Sharing is off.
-        if item.kind == .link || item.kind == .text {
+        if isSending {
+            entries.append(TileDragView.MenuEntry(title: "Stop Sending", action: onStopSending))
+        } else if item.kind != .folder {
             let sendCount = isSelected ? max(sendableSelectionCount, 1) : 1
             var sendTo = TileDragView.MenuEntry(title: sendCount > 1 ? "Send \(sendCount) Items To" : "Send To",
+                                                isEnabled: item.kind != .file || isAvailable,
                                                 action: {})
             let targets = sendTargets
             let send = onSend

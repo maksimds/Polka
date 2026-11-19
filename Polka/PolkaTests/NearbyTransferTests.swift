@@ -2,7 +2,8 @@ import Foundation
 import Testing
 @testable import Polka
 
-/// Nearby Sharing, N2: offers of links and text, the answer, and what arrives. In real
+/// Nearby Sharing, N2: offers of links and text, the answer, and what arrives. Files
+/// (N3) are in `NearbyFileTransferTests`. In real
 /// use everything here comes from another Mac, so most tests send what a hostile one
 /// might: messages out of turn, offers that break the rules, texts that aren't what the
 /// offer showed.
@@ -33,14 +34,14 @@ struct NearbyOfferTests {
         ]))
         var reader = NearbyFrameReader()
         let payloads = try reader.append(try offer.frame())
-        #expect(try NearbyMessage.decode(payloads[0]) == offer)
+        #expect(try NearbyMessage.decode(try #require(payloads[0].message)) == offer)
     }
 
     @Test func answersTextsAndDoneSurviveTheWire() throws {
         for message in [NearbyMessage.accept, .decline, .done,
                         .text(NearbyText(index: 3, data: Data("hi".utf8)))] {
             var reader = NearbyFrameReader()
-            #expect(try NearbyMessage.decode(try reader.append(try message.frame())[0]) == message)
+            #expect(try NearbyMessage.decode(try #require(try reader.append(try message.frame())[0].message)) == message)
         }
     }
 
@@ -76,7 +77,7 @@ struct NearbyOfferTests {
 
     @Test func aKindThisVersionDoesntKnowIsRefused() {
         #expect(throws: NearbyMessage.Failure.badOffer) {
-            _ = try decode(#"{"type":"offer","offer":{"items":[{"kind":"file","url":"/etc/passwd"}]}}"#)
+            _ = try decode(#"{"type":"offer","offer":{"items":[{"kind":"folder","url":"/etc"}]}}"#)
         }
     }
 
@@ -125,7 +126,7 @@ struct NearbyOfferTests {
         }
     }
 
-    @Test func filesAndFoldersArentOfferedYet() {
+    @Test func filesAreLeftToPrepareAndOldLinksArentOffered() {
         #expect(NearbyOffer.item(for: shelfItem(.file(path: "/tmp/a.pdf", bookmark: nil))) == nil)
         #expect(NearbyOffer.item(for: shelfItem(.link(URL(string: "smb://server/share")!))) == nil)
     }
@@ -176,7 +177,7 @@ struct NearbyIncomingTransferTests {
         #expect(rules.senderName == "Alex")
         #expect(rules.answer(accept: true) == .accept)
         #expect(try rules.read(.text(NearbyText(index: 1, data: Data(text.utf8)))) == .nothing)
-        #expect(try rules.read(.done) == .received([.link(example), .text(text)]))
+        #expect(try rules.read(.done) == .complete(links: [0: example], texts: [1: text]))
         #expect(rules.stage == .finished)
     }
 
@@ -294,54 +295,55 @@ struct NearbyIncomingTransferTests {
 }
 
 struct NearbyOutgoingTransferTests {
-    @Test func onlyLinksAndTextAreSent() throws {
-        let transfer = try #require(NearbyOutgoingTransfer(items: [
-            shelfItem(.file(path: "/tmp/a.pdf", bookmark: nil)),
+    @Test func missingFilesStayBehind() throws {
+        let prepared = try NearbyOutgoingItem.prepare([
+            shelfItem(.file(path: "/tmp/polka-never-there-\(UUID().uuidString).pdf", bookmark: nil)),
             shelfItem(.link(example)),
             shelfItem(.text("Hi")),
-        ]))
-        #expect(transfer.offer.items == [.link(example), .text(excerpt: "Hi", length: 2)])
-        #expect(transfer.texts == [1: "Hi"])
+        ])
+        #expect(prepared.map(\.item) == [.link(example), .text("Hi")])
     }
 
     @Test func nothingSendableMeansNoTransfer() {
-        #expect(NearbyOutgoingTransfer(items: [shelfItem(.file(path: "/tmp/a.pdf", bookmark: nil))]) == nil)
-        #expect(NearbyOutgoingTransfer(items: []) == nil)
+        #expect(throws: NearbyOutgoingItem.Failure.nothing) {
+            _ = try NearbyOutgoingItem.prepare([shelfItem(.file(path: "/tmp/polka-never-there.pdf", bookmark: nil))])
+        }
+        #expect(throws: NearbyOutgoingItem.Failure.nothing) { _ = try NearbyOutgoingItem.prepare([]) }
     }
 
     @Test func atMost50ItemsGo() throws {
         let items = (0..<60).map { shelfItem(.text("Text \($0)")) }
-        let transfer = try #require(NearbyOutgoingTransfer(items: items))
-        #expect(transfer.offer.items.count == NearbyOffer.maxItems)
+        #expect(try NearbyOutgoingItem.prepare(items).count == NearbyOffer.maxItems)
     }
 
     @Test func theOfferGoesAfterTheirHelloAndTheTextsAfterAccept() throws {
-        var transfer = try #require(NearbyOutgoingTransfer(items: [shelfItem(.link(example)), shelfItem(.text("Hi"))]))
+        var transfer = NearbyOutgoingTransfer(items: [.link(example), .text("Hi")])
         let first = try transfer.read(.hello(NearbyHello(version: NearbyProtocol.version, name: "Sam")))
         #expect(first.event == .offered)
-        #expect(first.send == [.offer(transfer.offer)])
+        #expect(first.send == [.offer(NearbyOffer(items: [.link(example), .text(excerpt: "Hi", length: 2)]))])
         let second = try transfer.read(.accept)
         #expect(second.event == .accepted)
-        #expect(second.send == [.text(NearbyText(index: 1, data: Data("Hi".utf8))), .done])
+        // `done` follows once the files, if any, have gone.
+        #expect(second.send == [.text(NearbyText(index: 1, data: Data("Hi".utf8)))])
         #expect(try transfer.read(.done).event == .delivered)
     }
 
     @Test func aDeclineEndsIt() throws {
-        var transfer = try #require(NearbyOutgoingTransfer(items: [shelfItem(.link(example))]))
+        var transfer = NearbyOutgoingTransfer(items: [.link(example)])
         _ = try transfer.read(.hello(NearbyHello(version: NearbyProtocol.version, name: "Sam")))
         #expect(try transfer.read(.decline).event == .declined)
         #expect(throws: NearbyOutgoingTransfer.Failure.outOfTurn) { _ = try transfer.read(.accept) }
     }
 
     @Test func aMacTooOldForOffersGetsNone() throws {
-        var transfer = try #require(NearbyOutgoingTransfer(items: [shelfItem(.link(example))]))
+        var transfer = NearbyOutgoingTransfer(items: [.link(example)])
         #expect(throws: NearbyOutgoingTransfer.Failure.tooOld) {
             _ = try transfer.read(.hello(NearbyHello(version: 1, name: "Old")))
         }
     }
 
     @Test func anAcceptBeforeTheOfferIsRefused() throws {
-        var transfer = try #require(NearbyOutgoingTransfer(items: [shelfItem(.link(example))]))
+        var transfer = NearbyOutgoingTransfer(items: [.link(example)])
         #expect(throws: NearbyOutgoingTransfer.Failure.outOfTurn) { _ = try transfer.read(.accept) }
     }
 }
@@ -424,21 +426,29 @@ struct NearbyTestSide {
     let defaults: UserDefaults
     let tag: String
     let service: NearbyService
+    /// Its own Copies folder, where received files go.
+    let copies: ShelfCopies
 
     var settings: ShelfSettings { ShelfSettings(defaults: defaults) }
 
-    init(answerTimeout: TimeInterval = NearbyOfferLine.answerTimeout, listsThisMac: Bool = false) throws {
+    init(answerTimeout: TimeInterval = NearbyOfferLine.answerTimeout, listsThisMac: Bool = false,
+         freeSpace: @escaping (URL) -> Int64? = { _ in 500_000_000_000 }) throws {
         suite = "PolkaTests-\(UUID().uuidString)"
         defaults = try #require(UserDefaults(suiteName: suite))
         tag = "com.maksimds.Polka.tests.nearby.\(UUID().uuidString)"
+        copies = ShelfCopies(folder: FileManager.default.temporaryDirectory
+            .appendingPathComponent("PolkaNearbyTests-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("Copies", isDirectory: true))
         service = NearbyService(settings: ShelfSettings(defaults: defaults), identityTag: tag,
-                                answerTimeout: answerTimeout, listsThisMac: listsThisMac)
+                                answerTimeout: answerTimeout, listsThisMac: listsThisMac, freeSpace: freeSpace)
+        service.copies = copies
     }
 
     func cleanUp() {
         service.stop()
         NearbyIdentity.delete(tag: tag)
         defaults.removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: copies.folder.deletingLastPathComponent())
     }
 }
 
@@ -487,7 +497,7 @@ struct NearbySendingTests {
         var statuses: [NearbyOutgoingSession.Status] = []
         let items = [shelfItem(.link(example)), shelfItem(.text(longText)),
                      shelfItem(.file(path: "/tmp/never-sent.pdf", bookmark: nil))]
-        #expect(sender.service.send(items, to: peerID) { statuses.append($0) })
+        #expect(sender.service.send(items, to: peerID) { statuses.append($0) } != nil)
         #expect(try await nearbyEventually(10) { !receiver.service.offers.isEmpty })
         let offer = try #require(receiver.service.offers.first)
         #expect(offer.senderName == sender.settings.nearbyName)
@@ -504,14 +514,14 @@ struct NearbySendingTests {
 
         // Declined and blocked.
         statuses = []
-        #expect(sender.service.send([shelfItem(.text("Again"))], to: peerID) { statuses.append($0) })
+        #expect(sender.service.send([shelfItem(.text("Again"))], to: peerID) { statuses.append($0) } != nil)
         #expect(try await nearbyEventually(10) { !receiver.service.offers.isEmpty })
         receiver.service.decline(try #require(receiver.service.offers.first).id, block: true)
         #expect(try await nearbyEventually(10) { statuses.last == .declined })
 
         // Turned away at once from now on, without reaching the line.
         statuses = []
-        #expect(sender.service.send([shelfItem(.text("Once more"))], to: peerID) { statuses.append($0) })
+        #expect(sender.service.send([shelfItem(.text("Once more"))], to: peerID) { statuses.append($0) } != nil)
         #expect(try await nearbyEventually(10) { statuses.last == .declined })
         #expect(receiver.service.offers.isEmpty)
         #expect(received.count == 1)
@@ -531,7 +541,7 @@ struct NearbySendingTests {
         let peerID = try #require(side.service.peers.first { $0.name == name }).id
 
         var statuses: [NearbyOutgoingSession.Status] = []
-        #expect(side.service.send([shelfItem(.link(example))], to: peerID) { statuses.append($0) })
+        #expect(side.service.send([shelfItem(.link(example))], to: peerID) { statuses.append($0) } != nil)
         #expect(try await nearbyEventually(10) { !side.service.offers.isEmpty })
         #expect(try await nearbyEventually(10) { statuses.last == .declined })
         #expect(side.service.offers.isEmpty)
@@ -551,7 +561,7 @@ struct NearbySendingTests {
         // closes without a word.
         try await Task.sleep(for: .seconds(1))
         var statuses: [NearbyOutgoingSession.Status] = []
-        if sender.service.send([shelfItem(.text("Hi"))], to: peerID, onStatus: { statuses.append($0) }) {
+        if sender.service.send([shelfItem(.text("Hi"))], to: peerID, onStatus: { statuses.append($0) }) != nil {
             #expect(try await nearbyEventually(15) { statuses.last == .failed(.unreachable) })
         }
         #expect(receiver.service.offers.isEmpty)
@@ -642,14 +652,46 @@ struct NearbySendToTests {
         #expect(model.itemsToSend(from: ids[2]).map(\.id) == [ids[2]])
     }
 
-    @Test func aSelectionSendsItsLinksAndTextWithTheTileFirst() {
+    @Test func aSelectionSendsItsFilesLinksAndTextWithTheTileFirst() {
         let (model, _, ids) = shelf()
         model.click(ids[0], .only)
         model.click(ids[1], .toggle)
         model.click(ids[2], .toggle)
-        #expect(model.sendableSelectionCount == 2)
-        // The file stays behind until N3.
-        #expect(model.itemsToSend(from: ids[2]).map(\.id) == [ids[2], ids[0]])
+        #expect(model.sendableSelectionCount == 3)
+        #expect(model.itemsToSend(from: ids[2]).map(\.id) == [ids[2], ids[0], ids[1]])
+    }
+
+    @Test func foldersAndMissingFilesStayBehind() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("PolkaSendTo-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = ShelfStore()
+        store.add([ShelfItem.Draft(text: "Note"),
+                   ShelfItem.Draft(fileURL: folder),
+                   ShelfItem.Draft(fileURL: URL(fileURLWithPath: "/tmp/polka-gone-\(UUID().uuidString).pdf"))])
+        store.refreshReferences()
+        let model = NotchViewModel(store: store)
+        let ids = store.items.map(\.id)
+        ids.forEach { model.click($0, .toggle) }
+        #expect(model.sendableSelectionCount == 1)
+        #expect(model.itemsToSend(from: ids[0]).map(\.kind) == [.text])
+    }
+
+    @Test func stopSendingStopsTheSendItsTileIsIn() {
+        let (model, _, ids) = shelf()
+        var stopped: [UUID] = []
+        model.onStopSending = { stopped.append($0) }
+        let transfer = UUID()
+        model.showSending("Sending 40%", isFinished: false, on: [ids[0], ids[1]], transfer: transfer)
+        #expect(model.activeSends == [ids[0]: transfer, ids[1]: transfer])
+        model.stopSending(ids[1])
+        #expect(stopped == [transfer])
+        // Once it's finished, there's nothing to stop.
+        model.showSending("Cancelled", isFinished: true, on: [ids[0], ids[1]], transfer: transfer)
+        #expect(model.activeSends.isEmpty)
+        #expect(model.sendingLabels[ids[0]] == "Cancelled")
+        model.stopSending(ids[0])
+        #expect(stopped == [transfer])
     }
 
     @Test func aTileOutsideTheSelectionIsSentAlone() {

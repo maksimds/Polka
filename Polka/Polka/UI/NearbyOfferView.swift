@@ -1,12 +1,15 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// What the panel shows when another Mac wants to share something (NS-6, NS-7): the
 /// drop zone's eyes under the notch, who's sharing and how much, every item as the
 /// tile it would be on the shelf, and the answers.
 ///
-/// N2 sends no pictures: a link shows the generic link icon and a text its page, drawn
-/// here from the start of the text, so nothing from the other Mac is ever decoded as
-/// an image. Pictures, blurred until Show Preview, come with files in N3.
+/// Until Show Preview, nothing from the other Mac is decoded as an image: a file shows
+/// the icon macOS has for its type, a link the generic link icon, and a text its page,
+/// drawn here from the start of the text. Image decoders have been the way into real
+/// zero-click attacks, and an offer opens the panel by itself. Show Preview, once for
+/// the whole offer, swaps in the pictures the other Mac sent.
 struct NearbyOfferView: View {
     let offer: NearbyIncomingOffer
     let images: ShelfItemImages
@@ -21,6 +24,8 @@ struct NearbyOfferView: View {
     static let acceptDelay: Duration = .milliseconds(700)
 
     @State private var acceptsClicks = false
+    /// The other Mac's pictures, decoded once Show Preview is clicked.
+    @State private var shownPictures: [ShelfItem.ID: NSImage]?
 
     private static let eyesTopGap: CGFloat = 6
     private static let eyesBottomGap: CGFloat = 8
@@ -43,6 +48,7 @@ struct NearbyOfferView: View {
         .padding(.bottom, 12)
         // Each offer is its own view, so the wait starts again for the next one.
         .task(id: offer.id) {
+            shownPictures = nil
             acceptsClicks = false
             try? await Task.sleep(for: Self.acceptDelay)
             acceptsClicks = true
@@ -59,6 +65,11 @@ struct NearbyOfferView: View {
                 .truncationMode(.tail)
             Text("wants to share \(itemCount)")
                 .fixedSize()
+            if offer.offer.hasFiles {
+                Text(Self.size(offer.offer.totalFileBytes))
+                    .foregroundStyle(.white.opacity(0.6))
+                    .fixedSize()
+            }
             Text("Not verified")
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.white.opacity(0.6))
@@ -76,13 +87,18 @@ struct NearbyOfferView: View {
         offer.previews.count == 1 ? "1 item" : "\(offer.previews.count) items"
     }
 
+    /// "24 MB", as Finder counts.
+    static func size(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
     /// On the shelf's own grid, so each tile sits where it would on the shelf. One row
     /// shows; more scroll.
     private var tiles: some View {
         ScrollView(.vertical) {
             LazyVGrid(columns: ShelfGridView.columns, spacing: ShelfGridLayout.spacing) {
                 ForEach(offer.previews) { item in
-                    NearbyOfferTile(item: item, images: images)
+                    NearbyOfferTile(item: item, images: images, picture: shownPictures?[item.id])
                 }
             }
         }
@@ -101,9 +117,10 @@ struct NearbyOfferView: View {
                 .foregroundStyle(.white.opacity(0.55))
                 .fixedSize()
                 .frame(width: ShelfItemTile.imageSide, alignment: .leading)
-            ForEach(0..<3, id: \.self) { _ in
-                Color.clear
-            }
+            Color.clear
+            showPreviewButton
+                .frame(width: ShelfItemTile.imageSide)
+            Color.clear
             HStack(spacing: 8) {
                 glassButton("Decline", tint: nil) { onAnswer(.decline) }
                 glassButton("Accept", tint: SortMenuButton.activeColor) { onAnswer(.accept) }
@@ -115,6 +132,31 @@ struct NearbyOfferView: View {
             .frame(width: ShelfItemTile.imageSide, alignment: .trailing)
         }
         .frame(height: Self.buttonHeight)
+    }
+
+    /// Only for an offer that brought pictures, until they show.
+    @ViewBuilder private var showPreviewButton: some View {
+        if !offer.pictures.isEmpty && shownPictures == nil {
+            Button("Show Preview") { showPictures() }
+                .buttonStyle(.plain)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.white.opacity(0.55))
+                .fixedSize()
+        } else {
+            Color.clear
+        }
+    }
+
+    /// Decodes the pictures, each checked again as a small PNG first. One that doesn't
+    /// pass keeps its icon.
+    private func showPictures() {
+        var pictures: [ShelfItem.ID: NSImage] = [:]
+        for (id, data) in offer.pictures {
+            guard let image = NearbyPreviewImage.decode(data) else { continue }
+            // Drawn at half its pixels, like a Retina thumbnail.
+            pictures[id] = NSImage(cgImage: image, size: NSSize(width: image.width / 2, height: image.height / 2))
+        }
+        withAnimation(.easeOut(duration: 0.2)) { shownPictures = pictures }
     }
 
     /// Glass, like the link field's Add button.
@@ -133,17 +175,35 @@ struct NearbyOfferView: View {
 }
 
 /// An offered item drawn as its tile would be on the shelf: its picture, name and
-/// type line, at the shelf's sizes. Only looked at, never pressed or dragged.
+/// type line, at the shelf's sizes. Only looked at, never pressed or dragged. A file
+/// that can run something when opened (an app, a script, an installer) gets a warning
+/// mark on its picture.
 private struct NearbyOfferTile: View {
     let item: ShelfItem
     let images: ShelfItemImages
+    /// The other Mac's picture, once Show Preview was clicked.
+    let picture: NSImage?
+
+    /// The mark's yellow, the system's warning color on a dark background.
+    static let warningColor = Color(red: 1, green: 0.8, blue: 0)
 
     var body: some View {
         VStack(spacing: 2) {
-            Image(nsImage: images.image(for: item))
+            Image(nsImage: picture ?? icon)
                 .resizable()
                 .scaledToFit()
                 .frame(width: ShelfItemTile.imageSide, height: ShelfItemTile.imageSide)
+                .overlay(alignment: .topLeading) {
+                    if mayRun {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 13, weight: .semibold))
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(.black, Self.warningColor)
+                            .shadow(color: .black.opacity(0.5), radius: 1.5)
+                            .offset(x: -4, y: -4)
+                            .accessibilityLabel("Can run code when opened")
+                    }
+                }
                 .padding(.bottom, 4)
             Text(item.displayName)
                 .font(Font(ShelfItemTile.nameFont))
@@ -154,10 +214,23 @@ private struct NearbyOfferTile: View {
                 .padding(.vertical, 1)
             Text(item.typeLabel)
                 .font(.system(size: 10))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(mayRun ? Self.warningColor : .white.opacity(0.55))
                 .lineLimit(1)
         }
         .frame(maxWidth: .infinity)
         .frame(height: ShelfItemTile.height)
+    }
+
+    private var mayRun: Bool {
+        item.kind == .file && NearbyFileName.mayRun(item.title)
+    }
+
+    /// A file's is the icon macOS has for its type, worked out here from the name's
+    /// extension, never from the file, which isn't here yet. Links and text are
+    /// drawn as on the shelf.
+    private var icon: NSImage {
+        guard item.kind == .file else { return images.image(for: item) }
+        let ext = (item.title as NSString).pathExtension
+        return NSWorkspace.shared.icon(for: UTType(filenameExtension: ext) ?? .data)
     }
 }

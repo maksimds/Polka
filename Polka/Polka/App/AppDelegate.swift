@@ -65,6 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             linkPreviewFetcher = fetcher
         }
 
+        if let locations {
+            nearby.copies = ShelfCopies(folder: locations.copiesFolder)
+            nearby.previewsFolder = locations.previewsFolder
+        }
+
         let images = ShelfItemImages(previewsFolder: locations?.previewsFolder)
         let controller = NotchPanelController(store: store,
                                               images: images,
