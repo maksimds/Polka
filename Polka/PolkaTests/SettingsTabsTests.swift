@@ -6,7 +6,7 @@ import Testing
 /// window its own height.
 @MainActor
 struct SettingsTabsTests {
-    @Test func eachTabGivesTheWindowItsHeightAndTheTopStaysPut() throws {
+    @Test func eachTabGivesTheWindowItsHeightAndTheTopStaysPut() async throws {
         let suite = "PolkaTests-\(UUID().uuidString)"
         let defaults = try #require(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -22,20 +22,21 @@ struct SettingsTabsTests {
         let room = screen.visibleFrame.height - (window.frame.height - contentHeight()) - 16
 
         #expect(controller.selectedTab == .general)
-        #expect(window.title == "General")
-        #expect(window.toolbar?.items.count == 2)
+        #expect(window.titleVisibility == .hidden)
         let general = controller.measuredFormHeight(for: .general)
         #expect(abs(contentHeight() - min(general, room)) < 1)
         let top = window.frame.maxY
 
         controller.select(.nearby)
-        #expect(window.title == "Nearby Sharing")
+        // The window grows or shrinks over a quarter of a second.
+        try await Task.sleep(for: .milliseconds(600))
         let nearby = controller.measuredFormHeight(for: .nearby)
         #expect(nearby < general)
         #expect(abs(contentHeight() - min(nearby, room)) < 1)
         #expect(abs(window.frame.maxY - top) < 1)
 
         controller.select(.general)
+        try await Task.sleep(for: .milliseconds(600))
         #expect(abs(contentHeight() - min(general, room)) < 1)
         #expect(abs(window.frame.maxY - top) < 1)
     }

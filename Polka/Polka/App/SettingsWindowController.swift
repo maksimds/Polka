@@ -4,29 +4,12 @@ import SwiftUI
 /// The Settings window, opened from the menu bar menu or the gear in the panel.
 ///
 /// It's a plain AppKit window rather than a SwiftUI `Settings` scene so that Polka
-/// controls how it comes forward and goes away. Its tabs are the toolbar buttons
-/// macOS apps use for settings (`NSTabViewController` in toolbar style), each holding
-/// a SwiftUI form, and the window takes each tab's height.
+/// controls how it comes forward and goes away. Its tabs are a SwiftUI capsule bar at
+/// the top (`SettingsTabBar`), under a title bar that shows no title, and the window
+/// takes each tab's height.
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
-    enum Tab: Int, CaseIterable {
-        case general
-        case nearby
-
-        var title: String {
-            switch self {
-            case .general: return "General"
-            case .nearby: return "Nearby Sharing"
-            }
-        }
-
-        var symbol: String {
-            switch self {
-            case .general: return "gearshape"
-            case .nearby: return "person.2.wave.2"
-            }
-        }
-    }
+    typealias Tab = SettingsTab
 
     private let loginItem: LoginItem
     private let screenshots: ScreenshotCatcher?
@@ -36,7 +19,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Gives focus back to the app you were in once Settings closes.
     private let focus: FocusReturner
     private(set) var window: NSWindow?
-    private var tabs: SettingsTabController?
+    private let tabModel = SettingsTabModel()
     /// The room the window last opened in, for refitting it when the tab changes.
     private var area: NSRect?
     private var hasBeenPlaced = false
@@ -89,13 +72,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     /// The tab showing, or the one the window opens on.
-    var selectedTab: Tab {
-        tabs.flatMap { Tab(rawValue: $0.selectedTabViewItemIndex) } ?? .general
-    }
+    var selectedTab: Tab { tabModel.tab }
 
     func select(_ tab: Tab) {
-        _ = window ?? makeWindow()
-        tabs?.selectedTabViewItemIndex = tab.rawValue
+        if window == nil { window = makeWindow() }
+        tabModel.tab = tab
     }
 
     // MARK: - NSWindowDelegate
@@ -121,40 +102,28 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     // MARK: - Private
 
     private func makeWindow() -> NSWindow {
-        let tabs = SettingsTabController()
-        tabs.tabStyle = .toolbar
-        // Polka sizes the window itself (`fit`), keeping its top edge where it is.
-        tabs.transitionOptions = []
-        for tab in Tab.allCases {
-            let content = NSHostingController(rootView: form(for: tab))
-            // The window doesn't take the form's full height on its own, which can be
-            // taller than a small screen.
-            content.sizingOptions = []
-            // The window's title follows the tab, as in other Mac apps' settings.
-            content.title = tab.title
-            let item = NSTabViewItem(viewController: content)
-            item.label = tab.title
-            item.image = NSImage(systemSymbolName: tab.symbol, accessibilityDescription: tab.title)
-            tabs.addTabViewItem(item)
-        }
-        tabs.onSelect = { [weak self] in self?.tabChanged() }
-        self.tabs = tabs
-        let window = SettingsWindow(contentViewController: tabs)
+        let content = NSHostingController(rootView: root(showing: tabModel))
+        // Polka sizes the window itself (`fit`), rather than the window taking the
+        // form's full height, which can be taller than a small screen.
+        content.sizingOptions = []
+        tabModel.onChange = { [weak self] _ in self?.tabChanged() }
+        let window = SettingsWindow(contentViewController: content)
         window.styleMask = [.titled, .closable]
-        // Icons over their names, centered, like System Settings' old panes and Safari's.
-        window.toolbarStyle = .preference
+        // The tab bar says where you are, so the title bar shows only the window's
+        // buttons, in the window's own color. The title still names the window in
+        // the Window menu, Mission Control and VoiceOver.
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.titlebarSeparatorStyle = .none
+        window.title = "Polka Settings"
         window.isReleasedWhenClosed = false
         window.delegate = self
         Log.app.info("Settings window created")
         return window
     }
 
-    @ViewBuilder
-    private func form(for tab: Tab) -> some View {
-        switch tab {
-        case .general: SettingsView(loginItem: loginItem, screenshots: screenshots)
-        case .nearby: NearbySettingsView(nearby: nearby)
-        }
+    private func root(showing model: SettingsTabModel) -> SettingsRootView {
+        SettingsRootView(model: model, loginItem: loginItem, screenshots: screenshots, nearby: nearby)
     }
 
     private func tabChanged() {
@@ -186,25 +155,37 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// doesn't jump, and switching tabs grows or shrinks it downward.
     private func fit(_ window: NSWindow, animate: Bool) {
         let frame = window.frame
-        // The title bar and the tabs' toolbar.
+        // The title bar.
         let chrome = frame.height - window.contentRect(forFrameRect: frame).height
         var height = measuredFormHeight(for: selectedTab)
         if let area {
             height = min(height, area.height - chrome - Self.screenMargin * 2)
         }
         let size = window.frameRect(forContentRect: NSRect(x: 0, y: 0, width: SettingsView.width, height: height)).size
-        window.setFrame(NSRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height),
-                        display: true, animate: animate)
+        let target = NSRect(x: frame.minX, y: frame.maxY - size.height, width: size.width, height: size.height)
+        guard animate, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            window.setFrame(target, display: true)
+            return
+        }
+        // Through the animator rather than `setFrame(_:display:animate:)`, which holds
+        // the main thread until it's done, so SwiftUI couldn't draw the new tab meanwhile.
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.25
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            window.animator().setFrame(target, display: true)
+        }
     }
 
-    /// A tab's full form height, from a copy that doesn't scroll and so takes all the
-    /// room it needs.
+    /// A tab's full height, tab bar included, from a copy that doesn't scroll and so
+    /// takes all the room it needs.
     func measuredFormHeight(for tab: Tab) -> CGFloat {
         if let height = formHeights[tab] { return height }
-        let copy = NSHostingView(rootView: form(for: tab)
+        let copy = NSHostingView(rootView: root(showing: SettingsTabModel(tab))
             .scrollDisabled(true)
             .fixedSize(horizontal: false, vertical: true))
-        let height = copy.fittingSize.height
+        // Rounded up with 2 pt to spare: the live form can come out a point taller
+        // than its copy, and with scroll bars set to show always, that point showed one.
+        let height = copy.fittingSize.height.rounded(.up) + 2
         formHeights[tab] = height
         return height
     }
@@ -233,16 +214,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let lifted = area.midY - frame.height / 2 + area.height / 10
         let y = max(min(lifted, area.maxY - Self.screenMargin - frame.height), area.minY + Self.screenMargin)
         window.setFrameOrigin(CGPoint(x: area.midX - frame.width / 2, y: y))
-    }
-}
-
-/// Says when another tab is picked, so the window can take its height.
-private final class SettingsTabController: NSTabViewController {
-    var onSelect: (() -> Void)?
-
-    override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
-        super.tabView(tabView, didSelect: tabViewItem)
-        onSelect?()
     }
 }
 
