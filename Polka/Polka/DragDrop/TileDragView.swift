@@ -31,6 +31,9 @@ final class TileDragView: NSView {
         /// Makes the entry a submenu, asked for its entries each time it opens, so
         /// what it lists is current even if it changed while the menu was open.
         var submenu: (@MainActor () -> [MenuEntry])?
+        /// A submenu's section header, like "Remembered" in Send To: small grey text
+        /// over the entries under it, never chosen.
+        var isHeader = false
 
         init(title: String, isChecked: Bool = false, isEnabled: Bool = true, startsGroup: Bool = false,
              keyEquivalent: String = "", action: @escaping @MainActor () -> Void) {
@@ -347,6 +350,10 @@ private final class SubmenuSource: NSObject, NSMenuDelegate {
             menu.removeAllItems()
             for (index, entry) in shown.enumerated() {
                 if entry.startsGroup, index > 0 { menu.addItem(.separator()) }
+                if entry.isHeader {
+                    menu.addItem(.sectionHeader(title: entry.title))
+                    continue
+                }
                 let item = NSMenuItem(title: entry.title, action: #selector(chosen(_:)), keyEquivalent: "")
                 item.target = self
                 item.tag = index

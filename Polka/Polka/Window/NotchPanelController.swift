@@ -12,6 +12,8 @@ final class NotchPanelController {
     private let quickLook: QuickLookController
     private let share: ShareController
     private let fileChooser: FileChooser
+    /// Nearby Sharing: offers from other Macs open the panel by themselves.
+    private let nearby: NearbyService?
     private let model: NotchViewModel
     private let dragMonitor = GlobalDragMonitor()
     private let dragSource: ShelfDragSource
@@ -41,6 +43,29 @@ final class NotchPanelController {
     private var dragOpenTask: Task<Void, Never>?
     /// Waits for a click that ended a rename to be over before the keys go back.
     private var keyboardReturnTask: Task<Void, Never>?
+    /// Waits for a Mac's minute to pass before its next offer may open the panel.
+    private var offerCheckTask: Task<Void, Never>?
+    /// No offer opens the panel before this, so the shelf an offer was just accepted
+    /// into, or the closing of one just declined, isn't replaced at once by the next.
+    private var nextOfferNotBefore = ContinuousClock.now
+    /// True while the open shelf has asked Nearby Sharing to look for Macs, for Send To.
+    private var isBrowsingForShelf = false
+    /// Each Send To still running, by the id its tiles know it by, with the id
+    /// `NearbyService` knows it by, for Stop Sending.
+    private var sendIDs: [UUID: UUID] = [:]
+    /// Sends that finished before `NearbyService.send` returned their id.
+    private var finishedSends: Set<UUID> = []
+    /// The Send To box beside the open shelf (N5): drop a tile, or something from
+    /// another app, on a Mac nearby to send it.
+    private let box = NearbyBoxController()
+    /// What a drag from another app holds that could go to a Mac, read as the drop
+    /// zone opens: anything at all, and any files.
+    private var incomingToSend: (any: Bool, files: Bool) = (false, false)
+    /// What of the last tile drag could go to a Mac, noted as it started: its drop
+    /// on the box can arrive after the drag has ended and the move is cleared.
+    private var tileDragToSend: [ShelfItem] = []
+    /// True while the Send To box has asked Nearby Sharing to keep looking for Macs.
+    private var isBrowsingForBox = false
     private var collapsedAt = ContinuousClock.now
 
     /// How long the pointer can be away before the panel collapses while a message is showing.
@@ -66,12 +91,14 @@ final class NotchPanelController {
          quickLook: QuickLookController,
          share: ShareController,
          fileChooser: FileChooser,
+         nearby: NearbyService? = nil,
          openSettings: @escaping @MainActor () -> Void) {
         self.store = store
         self.images = images
         self.quickLook = quickLook
         self.share = share
         self.fileChooser = fileChooser
+        self.nearby = nearby
         self.openSettings = openSettings
         dragSource = ShelfDragSource(images: images)
         model = NotchViewModel(store: store, copies: copies, converter: converter)
@@ -159,7 +186,10 @@ final class NotchPanelController {
         model.$renamingItemID
             .map { $0 != nil }
             .removeDuplicates()
-            .sink { [weak panel] renaming in panel?.endsEditingOnClickElsewhere = renaming }
+            .sink { [weak self, weak panel] renaming in
+                panel?.endsEditingOnClickElsewhere = renaming
+                if !renaming { self?.showNextOfferSoon() }
+            }
             .store(in: &cancellables)
         // Cmd-V and Cmd-C go off the moment the shelf closes or the panel takes the keys, and
         // on when the shelf opens under a pointer that's already over it. Pointer
@@ -180,7 +210,11 @@ final class NotchPanelController {
         observeMenus()
         // Sharing held the shelf open. The pointer may have stopped moving outside it,
         // so check where it is now rather than wait for the next move.
-        share.onFinished = { [weak self] in self?.pointerMoved() }
+        share.onFinished = { [weak self] in
+            self?.pointerMoved()
+            self?.showNextOfferSoon()
+        }
+        startNearby()
     }
 
     // MARK: - Layout
@@ -230,6 +264,7 @@ final class NotchPanelController {
         model.hasNotch = geometry.hasNotch
 
         panel.setFrame(panelFrame(for: geometry), display: true)
+        updateBox()
 
         Log.window.info("""
             Panel placed. Notch: \(String(describing: geometry.notchRect), privacy: .public), \
@@ -270,6 +305,11 @@ final class NotchPanelController {
         if state == .collapsed { collapsedAt = .now }
         if state != .collapsed { cancelHover() }
         if state != .expanded { cancelDelayedCollapse() }
+        // Something on the panel may have ended, so a waiting offer can open now.
+        if state == .collapsed || state == .expanded { showNextOfferSoon() }
+        updateBrowsing(for: state)
+        // `model.state` changes after this; the box reads it.
+        DispatchQueue.main.async { [weak self] in self?.updateBox() }
         Log.window.debug("State: \(String(describing: state), privacy: .public)")
     }
 
@@ -318,7 +358,7 @@ final class NotchPanelController {
                     self.place(on: target)
                     self.expandForSettings()
                 }
-            case .dropReady, .draggingOut, .addingLink:
+            case .dropReady, .draggingOut, .addingLink, .offer:
                 // Busy with something else; it stays where it is.
                 break
             }
@@ -510,7 +550,10 @@ final class NotchPanelController {
                           quickLook: { [weak self] in self?.quickLookItems(from: $0) },
                           showInfo: { [weak self] in self?.showInfoForItems(from: $0) },
                           copy: { [weak self] in self?.model.copy(from: $0) },
-                          share: { [weak self] in self?.shareItems(from: $0, pointingAt: $1, $2) })
+                          share: { [weak self] in self?.shareItems(from: $0, pointingAt: $1, $2) },
+                          sendTargets: { [weak self] in self?.sendTargets(for: $0) },
+                          send: { [weak self] in self?.send(from: $0, to: $1) },
+                          stopSending: { [weak self] in self?.model.stopSending($0) })
     }
 
     /// Double-click. A file that can't be found does nothing, as it can't be dragged.
@@ -624,6 +667,9 @@ final class NotchPanelController {
             // The field stays while you type, wherever the pointer goes. A click
             // elsewhere closes it (`panelLostKeyboard`).
             break
+        case .offer:
+            // An offer stays until it's answered, wherever the pointer goes.
+            break
         }
     }
 
@@ -694,9 +740,8 @@ final class NotchPanelController {
     // MARK: - Leaving while a message is showing
 
     private func isPointerNearPanel(_ geometry: NotchGeometry) -> Bool {
-        geometry.expandedRect(size: model.expandedSize)
-            .insetBy(dx: -leaveMargin, dy: -leaveMargin)
-            .contains(NSEvent.mouseLocation)
+        let shelf = geometry.expandedRect(size: model.expandedSize).insetBy(dx: -leaveMargin, dy: -leaveMargin)
+        return box.reaches(NSEvent.mouseLocation, from: shelf)
     }
 
     /// Runs on a timer because the pointer may stop moving once it has left.
@@ -738,6 +783,7 @@ final class NotchPanelController {
                 MainActor.assumeIsolated {
                     self?.isMenuOpen = isOpen
                     self?.updateShortcuts()
+                    if !isOpen { self?.showNextOfferSoon() }
                 }
             }
         }
@@ -755,6 +801,7 @@ final class NotchPanelController {
         dragMonitor.onDragEnded = { [weak self] in
             self?.cancelDragOpen()
             self?.finishDrag()
+            self?.showNextOfferSoon()
         }
         dragMonitor.start()
     }
@@ -789,7 +836,7 @@ final class NotchPanelController {
             if let geometry, geometry.hoverRect(area: settings.hoverArea).contains(NSEvent.mouseLocation) {
                 openDropZone()
             }
-        case .draggingOut, .addingLink:
+        case .draggingOut, .addingLink, .offer:
             break
         }
     }
@@ -799,6 +846,8 @@ final class NotchPanelController {
         guard dragMonitor.isDragging, model.state == .collapsed || model.state == .expanded else { return }
         // The drop zone opens on the screen the drag is on.
         followPointer()
+        let toSend = DropReceiver.itemsToSend(from: NSPasteboard(name: .drag))
+        incomingToSend = (!toSend.isEmpty, toSend.contains { $0.kind == .file })
         model.state = .dropReady
     }
 
@@ -811,15 +860,22 @@ final class NotchPanelController {
         // Every tile drag lifts the tiles out of the grid. A drop back on the shelf
         // moves them; a drop anywhere else leaves them where they were.
         dragSource.onWillStart = { [weak self] contents in
-            self?.dragMonitor.beginOwnDrag()
-            self?.model.beginTileMove(contents)
+            guard let self else { return }
+            self.dragMonitor.beginOwnDrag()
+            self.model.beginTileMove(contents)
+            self.tileDragToSend = self.model.tileMoveItemsToSend
+            self.updateBox()
         }
-        dragSource.onMoved = { [weak self] point in
+        dragSource.onMoved = { [weak self] _ in
             guard let self, let geometry = self.geometry else { return }
             let panelRect = geometry.expandedRect(size: self.model.expandedSize)
-            self.model.dragOutMoved(isInsidePanel: panelRect.contains(point))
+            // On the way to the Send To box, and over it, the shelf stays open. The
+            // pointer itself, rather than the point AppKit reports for the picture.
+            self.model.dragOutMoved(isInsidePanel: self.box.reaches(NSEvent.mouseLocation, from: panelRect))
         }
         dragSource.onEnded = { [weak self] in
+            // Ended over the box: its drop may not have been read yet.
+            if self?.box.contains(NSEvent.mouseLocation) == true { self?.box.awaitDrop() }
             self?.dragMonitor.endOwnDrag()
             // A drop on the shelf has already moved the tiles by now.
             self?.model.endTileMove()
@@ -830,6 +886,8 @@ final class NotchPanelController {
             }
             // No mouse-moved events arrive during a drag, so check where the pointer ended up.
             self?.pointerMoved()
+            self?.showNextOfferSoon()
+            self?.updateBox()
         }
     }
 
@@ -837,8 +895,321 @@ final class NotchPanelController {
     /// A successful drop has already switched the state to expanded.
     private func finishDrag() {
         guard model.state == .dropReady, let geometry else { return }
+        // Ended over the Send To box: its drop may not have been read yet.
+        if box.contains(NSEvent.mouseLocation) { box.awaitDrop() }
         let area = geometry.expandedRect(size: model.expandedSize)
         // With Settings open, the shelf stays open after the drag too.
         model.state = isSettingsOpen || area.contains(NSEvent.mouseLocation) ? .expanded : .collapsed
+    }
+
+    // MARK: - Nearby Sharing
+
+    /// How long after an offer is answered before the next one may open the panel.
+    private let offerPause: Duration = .milliseconds(1500)
+
+    private func startNearby() {
+        guard let nearby else { return }
+        model.onOfferAnswered = { [weak self] offer, answer in
+            self?.offerAnswered(offer, answer)
+        }
+        nearby.onReceived = { [weak self] items, senderName, withoutAsking in
+            self?.received(items, from: senderName, withoutAsking: withoutAsking)
+        }
+        nearby.onRememberedOfferTooLarge = { [weak self] senderName in
+            self?.model.showNotice("There isn't enough space on this Mac for what \(senderName) sent")
+        }
+        nearby.onReceiveFailed = { [weak self] senderName, cancelledByThem in
+            self?.model.receiveNearbyFailed(from: senderName, cancelledByThem: cancelledByThem)
+        }
+        model.onStopSending = { [weak self] transfer in
+            self?.stopSending(transfer)
+        }
+        model.onCancelReceiving = { [weak self] id in
+            self?.nearby?.cancelReceiving(id)
+        }
+        box.onDrop = { [weak self] items, peerID in
+            self?.sendFromBox(items, to: peerID)
+        }
+        box.tilesToSend = { [weak self] in
+            guard let self else { return [] }
+            let dragged = self.model.tileMoveItemsToSend
+            // The drag may already have ended.
+            return dragged.isEmpty ? self.tileDragToSend : dragged
+        }
+        // The Macs the box lists stay found while it's up, whatever the shelf does.
+        box.onShownChange = { [weak self] shown in
+            guard let self, let nearby = self.nearby, shown != self.isBrowsingForBox else { return }
+            self.isBrowsingForBox = shown
+            if shown { nearby.beginBrowsing() } else { nearby.endBrowsing() }
+        }
+        box.model.onStop = { [weak self] transfer in
+            self?.stopSending(transfer)
+        }
+        // `@Published` reports a change before it's made, so the list is read a tick later.
+        nearby.$peers
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { self?.updateBox() }
+            }
+            .store(in: &cancellables)
+        nearby.$receiving
+            .map { $0.filter { $0.totalBytes > 0 } }
+            .removeDuplicates()
+            .sink { [weak self] receiving in self?.model.nearbyReceiving = receiving }
+            .store(in: &cancellables)
+        // `@Published` reports a change before it's made, so the list is read a tick later.
+        nearby.$offers
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { self?.offersChanged() }
+            }
+            .store(in: &cancellables)
+    }
+
+    private func offersChanged() {
+        guard let nearby else { return }
+        // The offer on screen went away unanswered: it timed out, the other Mac
+        // withdrew it, or Nearby Sharing was turned off.
+        if model.state == .offer, let shown = model.shownOffer,
+           !nearby.offers.contains(where: { $0.id == shown.id }) {
+            model.shownOffer = nil
+            closeOffer()
+        }
+        showNextOffer()
+    }
+
+    /// Tiles from a remembered Mac arrived while something was going on on the panel.
+    /// It opens to show them once that ends.
+    private var arrivalWaiting = false
+
+    private func received(_ items: [NearbyReceivedItem], from senderName: String, withoutAsking: Bool) {
+        model.receiveNearby(items, from: senderName, withoutAsking: withoutAsking)
+        guard withoutAsking else { return }
+        arrivalWaiting = true
+        showNextOffer()
+    }
+
+    /// Opens the shelf by itself to show what a remembered Mac sent (NS-18), scrolled
+    /// to it under the message naming the sender, as an offer opens the panel: never
+    /// in the middle of something, and without taking the keys. It closes 3 s later
+    /// unless the pointer comes to it. An open shelf only scrolls to it.
+    private func showArrival() {
+        guard arrivalWaiting, isFreeToOpenByItself else { return }
+        arrivalWaiting = false
+        guard model.state == .collapsed else { return }
+        followPointer()
+        model.state = .expanded
+        Log.window.info("Showing what a remembered Mac sent")
+        if let geometry, !isPointerNearPanel(geometry) { scheduleDelayedCollapse() }
+    }
+
+    /// Nothing is going on on the panel that opening it by itself would break: a drag,
+    /// a tile being moved, a rename, the link field, an open menu, Share or an offer.
+    private var isFreeToOpenByItself: Bool {
+        (model.state == .collapsed || model.state == .expanded)
+            && model.renamingItemID == nil && model.tileMove == nil
+            && !isMenuOpen && !dragMonitor.isDragging && !share.isSharing
+    }
+
+    /// After whatever just ended has settled.
+    private func showNextOfferSoon() {
+        guard nearby?.offers.isEmpty == false || arrivalWaiting else { return }
+        DispatchQueue.main.async { [weak self] in self?.showNextOffer() }
+    }
+
+    /// Opens the panel on the next waiting offer, if one may open it now (NS-17): never
+    /// in the middle of a drag, a tile move, a rename, the link field, an open menu or
+    /// Share, and never over another offer. A Mac whose offer opened the panel within
+    /// the last minute waits for the minute to pass. Like a drag arriving, the panel
+    /// doesn't take the keys and Polka doesn't become the active app.
+    private func showNextOffer() {
+        offerCheckTask?.cancel()
+        offerCheckTask = nil
+        showArrival()
+        guard let nearby, !nearby.offers.isEmpty else { return }
+        let now = ContinuousClock.now
+        if now < nextOfferNotBefore {
+            checkOffersAgain(after: nextOfferNotBefore - now)
+            return
+        }
+        guard isFreeToOpenByItself else { return }
+        let next = nearby.nextOfferToShow()
+        if let id = next.id, let offer = nearby.offers.first(where: { $0.id == id }) {
+            // A closed panel opens on the screen the pointer is on, as the drop zone does.
+            if model.state == .collapsed { followPointer() }
+            nearby.showingOffer(id)
+            model.shownOffer = offer
+            model.state = .offer
+            Log.window.info("Showing an offer")
+        } else if let date = next.checkAgainAt {
+            checkOffersAgain(after: .seconds(max(date.timeIntervalSinceNow, 0.1)))
+        }
+    }
+
+    private func checkOffersAgain(after delay: Duration) {
+        offerCheckTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            self?.showNextOffer()
+        }
+    }
+
+    private func offerAnswered(_ offer: NearbyIncomingOffer, _ answer: NotchViewModel.OfferAnswer) {
+        nextOfferNotBefore = .now + offerPause
+        switch answer {
+        case .accept:
+            if nearby?.accept(offer.id) == .notEnoughSpace {
+                model.showNotice("There isn't enough space on this Mac for what \(offer.senderName) shared")
+            }
+            // The view grows back into the shelf, where the items land as they arrive.
+            model.state = .expanded
+        case .decline:
+            nearby?.decline(offer.id)
+            closeOffer()
+        case .block:
+            nearby?.decline(offer.id, block: true)
+            closeOffer()
+        }
+    }
+
+    // MARK: Send To
+
+    /// Nearby Macs are looked for only while the shelf is open, so Send To has them
+    /// ready, and not while it's closed: looking keeps the Wi-Fi radio hopping to the
+    /// peer-to-peer channel, which costs battery.
+    private func updateBrowsing(for state: NotchState) {
+        // The drop zone too, for the Send To box beside it.
+        let wants = state == .expanded || state == .addingLink || state == .offer || state == .dropReady
+        guard let nearby, wants != isBrowsingForShelf else { return }
+        isBrowsingForShelf = wants
+        if wants {
+            nearby.beginBrowsing()
+        } else {
+            nearby.endBrowsing()
+        }
+    }
+
+    /// What Send To on `id` lists as it opens: the Macs found nearby that told their
+    /// names, or a note saying why there are none. Nil while Nearby Sharing is off. A
+    /// Mac on an older Polka is listed but can't be chosen when it can't take what's
+    /// being sent: anything at all on N1's, files on N2's.
+    private func sendTargets(for id: ShelfItem.ID) -> [NearbySendTarget]? {
+        guard let nearby, nearby.isEnabled else { return nil }
+        switch nearby.status {
+        case .noLocalNetwork:
+            return [NearbySendTarget(peerID: nil, title: "Local Network Access Is Off")]
+        case .failed:
+            return [NearbySendTarget(peerID: nil, title: "Nearby Sharing Isn't Working")]
+        case .off, .starting, .on:
+            break
+        }
+        let peers = nearby.peers
+        guard !peers.isEmpty else {
+            let isStillLooking = nearby.browsingSince.map { -$0.timeIntervalSinceNow < 5 } ?? true
+            return [NearbySendTarget(peerID: nil, title: isStillLooking ? "Looking for Macs…" : "No Macs Nearby")]
+        }
+        let hasFiles = model.itemsToSend(from: id).contains { $0.kind == .file }
+        return NearbySendTarget.list(peers, hasFiles: hasFiles)
+    }
+
+    /// Send To > a Mac. The shelf stays open, as for Copy and Share, and the sending
+    /// tiles say how it's going.
+    private func send(from id: ShelfItem.ID, to peerID: String) {
+        let items = model.itemsToSend(from: id)
+        guard !items.isEmpty else { return }
+        startSend(items, showingOn: items.map(\.id), to: peerID, inBox: false)
+    }
+
+    /// A drop on a Mac in the Send To box (N5): tiles from the shelf, which say how it's
+    /// going as with Send To, or things from another app, which go straight to the Mac
+    /// without landing on the shelf, so the drop zone closes. The box shows how it's
+    /// going either way.
+    private func sendFromBox(_ items: [ShelfItem], to peerID: String) {
+        Log.window.info("Sending \(items.count, privacy: .public) item(s) dropped on the Send To box")
+        let onShelf = Set(store.items.map(\.id))
+        let tileIDs = items.map(\.id).filter(onShelf.contains)
+        if model.state == .dropReady { dragMonitor.endDrag() }
+        startSend(items, showingOn: tileIDs, to: peerID, inBox: true)
+    }
+
+    private func startSend(_ items: [ShelfItem], showingOn ids: [ShelfItem.ID], to peerID: String, inBox: Bool) {
+        guard let nearby else { return }
+        guard let peer = nearby.peers.first(where: { $0.id == peerID }) else {
+            model.showNotice("That Mac is no longer nearby")
+            return
+        }
+        let transfer = UUID()
+        if inBox { box.addSend(transfer, to: NearbyBoxModel.mac(peer, carryingFiles: false)) }
+        let started = nearby.send(items, to: peerID) { [weak self] status in
+            guard let self else { return }
+            if !ids.isEmpty {
+                self.model.showSending(Self.sendingLabel(status, to: peer.name), isFinished: status.isFinished,
+                                       on: ids, transfer: transfer)
+            }
+            if inBox { self.box.update(transfer, status) }
+            if status.isFinished {
+                self.sendIDs[transfer] = nil
+                self.finishedSends.insert(transfer)
+            }
+            switch status {
+            case .failed(.tooLarge):
+                self.model.showNotice("That's more than 1 GB, too much to send at once")
+            case .failed(.unreadable):
+                self.model.showNotice("A file couldn't be read, so nothing more was sent")
+            default:
+                break
+            }
+        }
+        if let started {
+            // Unless it finished already, before `send` returned.
+            if finishedSends.remove(transfer) == nil { sendIDs[transfer] = started }
+        } else {
+            if inBox { box.update(transfer, .failed(.unreachable)) }
+            model.showNotice("Couldn't send to \(peer.name)")
+        }
+    }
+
+    /// Shows or hides the Send To box beside the open shelf: while a tile that can be
+    /// sent is dragged on it, or the drop zone is open for something from another app
+    /// that can, with Nearby Sharing on and a Mac nearby. And while what was dropped on
+    /// it is being sent, whatever the shelf does.
+    private func updateBox() {
+        guard let nearby, let geometry else { return }
+        let tiles = model.state == .expanded ? model.tileMoveItemsToSend : []
+        let incoming = model.state == .dropReady && incomingToSend.any
+        let carriesFiles = incoming ? incomingToSend.files : tiles.contains { $0.kind == .file }
+        let peers = nearby.isEnabled ? nearby.peers : []
+        let macs = peers.map { NearbyBoxModel.mac($0, carryingFiles: carriesFiles) }
+        if box.model.macs != macs { box.model.macs = macs }
+        let isDragging = (!tiles.isEmpty || incoming) && !macs.isEmpty
+        if box.model.isDragging != isDragging { box.model.isDragging = isDragging }
+        box.place(beside: geometry.expandedRect(size: model.expandedSize),
+                  top: geometry.screen.frame.maxY - geometry.notchRect.height)
+    }
+
+    /// Stop Sending: the Send To a tile is in.
+    private func stopSending(_ transfer: UUID) {
+        guard let id = sendIDs[transfer] else { return }
+        nearby?.cancelSending(id)
+    }
+
+    /// What a sending tile's detail line says.
+    private static func sendingLabel(_ status: NearbyOutgoingSession.Status, to name: String) -> String {
+        switch status {
+        case .connecting, .waiting: return "Waiting for \(name)…"
+        case let .sending(fraction): return "Sending \(Int(fraction * 100))%"
+        case .sent: return "Sent"
+        case .declined: return "Declined"
+        case .cancelled: return "Cancelled"
+        case .failed(.tooOld): return "\(name) needs a newer Polka"
+        case .failed(.unreachable), .failed(.wrongMac): return "Couldn't reach \(name)"
+        case .failed(.tooLarge): return "Over 1 GB"
+        case .failed(.unreadable): return "Couldn't read the file"
+        case .failed(.nothingToSend): return "Nothing to send"
+        }
+    }
+
+    /// The offer view goes: the panel collapses, unless Settings holds the shelf open.
+    private func closeOffer() {
+        guard model.state == .offer else { return }
+        model.state = isSettingsOpen ? .expanded : .collapsed
     }
 }

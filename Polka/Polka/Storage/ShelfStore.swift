@@ -75,7 +75,8 @@ final class ShelfStore: ObservableObject {
                                       createdAt: date,
                                       expiresAt: draft.lifetime.map { date.addingTimeInterval($0) },
                                       sortOrder: 0,
-                                      origin: draft.origin))
+                                      origin: draft.origin,
+                                      receivedFrom: draft.receivedFrom))
         }
 
         guard !newItems.isEmpty else { return AddResult(added: [], duplicates: duplicates) }

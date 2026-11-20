@@ -15,6 +15,48 @@ struct ShelfItemCommands {
     /// Right-click > Share, with the view and area the popover points at. The shelf
     /// stays open under the popover, as it does under a menu.
     let share: @MainActor (ShelfItem.ID, NSView, NSRect) -> Void
+    /// What Right-click > Send To on a tile lists, read as it opens, or nil while
+    /// Nearby Sharing is off, which leaves Send To out of the menu.
+    var sendTargets: @MainActor (ShelfItem.ID) -> [NearbySendTarget]? = { _ in nil }
+    /// Right-click > Send To > a Mac: the tile, or what can be sent of the selection if
+    /// the tile is in it, offered to that Mac (its Bonjour name).
+    var send: @MainActor (ShelfItem.ID, String) -> Void = { _, _ in }
+    /// Right-click > Stop Sending, on a tile that's being sent.
+    var stopSending: @MainActor (ShelfItem.ID) -> Void = { _ in }
+}
+
+/// One line in the Send To submenu: a Mac nearby, or a note that can't be chosen,
+/// like "Looking for Macs…", or a section's header.
+struct NearbySendTarget: Equatable {
+    /// The Mac's Bonjour name, or nil for a note or a header.
+    let peerID: String?
+    let title: String
+    var isHeader = false
+    /// Puts a divider above this line.
+    var startsGroup = false
+    var isEnabled: Bool { peerID != nil }
+
+    /// The Macs nearby as Send To lists them (NS-4): remembered ones first under
+    /// "Remembered", then the rest under "Other Macs", headed only when there are
+    /// both. A Mac on an older Polka is listed but can't be chosen when it can't take
+    /// what's being sent: anything at all on N1's, files on N2's.
+    static func list(_ peers: [NearbyService.Peer], hasFiles: Bool) -> [NearbySendTarget] {
+        func target(_ peer: NearbyService.Peer) -> NearbySendTarget {
+            let takesThese = peer.takesOffers && (!hasFiles || peer.version >= NearbyProtocol.fileVersion)
+            return takesThese
+                ? NearbySendTarget(peerID: peer.id, title: peer.name)
+                : NearbySendTarget(peerID: nil, title: "\(peer.name) (Needs a Newer Polka)")
+        }
+        let remembered = peers.filter(\.isRemembered)
+        let others = peers.filter { !$0.isRemembered }
+        guard !remembered.isEmpty else { return others.map(target) }
+        var list = [NearbySendTarget(peerID: nil, title: "Remembered", isHeader: true)] + remembered.map(target)
+        if !others.isEmpty {
+            list.append(NearbySendTarget(peerID: nil, title: "Other Macs", isHeader: true, startsGroup: true))
+            list += others.map(target)
+        }
+        return list
+    }
 }
 
 /// Right-click > Rename: the tile's label, file name or address turns into a field,
@@ -40,6 +82,12 @@ struct ShelfGridView: View {
     let missingItemIDs: Set<ShelfItem.ID>
     let copyingItemIDs: Set<ShelfItem.ID>
     let convertingItemIDs: Set<ShelfItem.ID>
+    /// How a Send To is going, for the sending tiles' detail lines.
+    var sendingLabels: [ShelfItem.ID: String] = [:]
+    /// Tiles in a Send To that hasn't finished, which offer Stop Sending instead.
+    var sendingItemIDs: Set<ShelfItem.ID> = []
+    /// How many selected tiles Send To would offer, for "Send 3 Items To".
+    var sendableSelectionCount = 0
     let selection: Set<ShelfItem.ID>
     /// Tiles shown as empty gaps: being moved, or just dropped and still landing.
     let hiddenItemIDs: Set<ShelfItem.ID>
@@ -179,6 +227,12 @@ struct ShelfGridView: View {
                                           copyPulses: copyPulses[item.id] ?? 0,
                                           onCopy: { commands.copy(item.id) },
                                           onShare: { commands.share(item.id, $0, $1) },
+                                          sendingLabel: sendingLabels[item.id],
+                                          sendableSelectionCount: sendableSelectionCount,
+                                          sendTargets: { commands.sendTargets(item.id) },
+                                          onSend: { commands.send(item.id, $0) },
+                                          isSending: sendingItemIDs.contains(item.id),
+                                          onStopSending: { commands.stopSending(item.id) },
                                           isRenaming: renamingItemID == item.id,
                                           renameKind: renameKind,
                                           onRename: { rename.begin(item.id, $0) },

@@ -89,6 +89,10 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     /// True for an item pinned to the shelf's first row ("Pin", FR-21). Nil when it
     /// isn't, which also means shelves saved before pinning existed still load.
     var pinned: Bool? = nil
+    /// For an item sent from another Mac with Nearby Sharing: the name that Mac gave,
+    /// not verified. Kept but not shown yet. Nil for everything else, which also means
+    /// shelves saved before Nearby Sharing still load, and Polka 1.0 skips it.
+    var receivedFrom: String? = nil
 }
 
 extension ShelfItem {
@@ -143,6 +147,8 @@ extension ShelfItem {
         /// Set for an item that starts out temporary, such as a screenshot: how long
         /// it lasts from the moment it's added. Nil for a permanent one.
         var lifetime: TimeInterval? = nil
+        /// See `ShelfItem.receivedFrom`.
+        var receivedFrom: String? = nil
 
         /// `storageMode` is `.copy` for a file that already sits in Polka's Copies
         /// folder, such as one an app wrote there to keep a promise.

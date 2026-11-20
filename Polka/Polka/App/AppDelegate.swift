@@ -19,12 +19,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var quickLook = QuickLookController(focus: focus)
     private lazy var share = ShareController(focus: focus)
     private lazy var fileChooser = FileChooser(focus: focus)
+    /// Nearby Sharing's discovery, running while its Settings switch is on.
+    private lazy var nearby = NearbyService()
 
     /// Settings opens on the built-in screen, below the shelf, which opens with it and
     /// stays open until Settings closes, so changes to its look show as they're made.
     func showSettings() {
         let controller = settingsWindow ?? SettingsWindowController(loginItem: loginItem,
                                                                     screenshots: screenshotCatcher,
+                                                                    nearby: nearby,
                                                                     focus: focus)
         controller.onClose = { [weak self] in self?.notchController?.settingsClosed() }
         settingsWindow = controller
@@ -62,6 +65,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             linkPreviewFetcher = fetcher
         }
 
+        if let locations {
+            nearby.copies = ShelfCopies(folder: locations.copiesFolder)
+            nearby.previewsFolder = locations.previewsFolder
+            nearby.rememberedFile = locations.rememberedMacsFile
+        }
+
         let images = ShelfItemImages(previewsFolder: locations?.previewsFolder)
         let controller = NotchPanelController(store: store,
                                               images: images,
@@ -70,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                               quickLook: quickLook,
                                               share: share,
                                               fileChooser: fileChooser,
+                                              nearby: nearby,
                                               openSettings: { [weak self] in self?.showSettings() })
         controller.start()
         notchController = controller
@@ -85,6 +95,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             catcher.start()
             screenshotCatcher = catcher
         }
+
+        nearby.start()
     }
 
     // MARK: - Quick Look control

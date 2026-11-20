@@ -120,6 +120,7 @@ struct NotchView: View {
         // The same spring as the opening, so the swell flows into it without a seam.
         .animation(reduceMotion ? nil : Self.openSpring, value: model.isAboutToOpen)
         .animation(.easeOut(duration: 0.15), value: model.notice)
+        .animation(.easeOut(duration: 0.15), value: model.nearbyReceiving.first?.id)
     }
 
     // MARK: - Content
@@ -155,11 +156,20 @@ struct NotchView: View {
                     .frame(width: model.linkEntrySize.width, height: model.linkEntrySize.height)
                     .transition(dropZoneTransition)
             }
+            if model.state == .offer, let offer = model.shownOffer {
+                NearbyOfferView(offer: offer,
+                                images: images,
+                                headerHeight: model.notchSize.height,
+                                pointer: pointer,
+                                onAnswer: { model.answerOffer($0) })
+                    .frame(width: model.expandedSize.width, height: model.expandedSize.height)
+                    .transition(dropZoneTransition)
+            }
         }
     }
 
-    /// The drop zone and the link field are light enough to build when they're
-    /// needed. Each arrives as the shape changes and leaves quickly.
+    /// The drop zone, the link field and an offer are light enough to build when
+    /// they're needed. Each arrives as the shape changes and leaves quickly.
     private var dropZoneTransition: AnyTransition {
         let arrival: AnyTransition = reduceMotion
             ? .opacity
@@ -203,6 +213,9 @@ struct NotchView: View {
                               missingItemIDs: store.missingItemIDs,
                               copyingItemIDs: store.copyingItemIDs,
                               convertingItemIDs: store.convertingItemIDs,
+                              sendingLabels: model.sendingLabels,
+                              sendingItemIDs: Set(model.activeSends.keys),
+                              sendableSelectionCount: model.sendableSelectionCount,
                               selection: model.selection,
                               hiddenItemIDs: model.hiddenItemIDs,
                               isMovingTiles: model.tileMove != nil,
@@ -236,6 +249,10 @@ struct NotchView: View {
                               onMarqueeChanged: { model.updateMarquee(touching: $0) })
             }
             // Below the grid so it never covers a tile, and tiles don't shift under the pointer.
+            if let receiving = model.nearbyReceiving.first {
+                NearbyReceivingBanner(receiving: receiving) { model.cancelReceiving(receiving.id) }
+                    .transition(.opacity)
+            }
             if let notice = model.notice {
                 NoticeBanner(message: notice) { model.dismissNotice() }
                     .transition(.opacity)

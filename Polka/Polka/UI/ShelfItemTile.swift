@@ -63,6 +63,20 @@ struct ShelfItemTile: View {
     /// "Share": this item, or the whole selection if this item is in it, with the
     /// popover pointing at this tile (its drag layer, and the tile as drawn in it).
     let onShare: @MainActor (NSView, NSRect) -> Void
+    /// How a Send To of this tile is going ("Waiting for Alex…", "Sent"), shown in
+    /// place of the type line. Nil when it isn't being sent.
+    let sendingLabel: String?
+    /// How many selected tiles "Send To" would offer, for "Send 3 Items To".
+    let sendableSelectionCount: Int
+    /// The Macs "Send To" lists, read as it opens; nil leaves it out (Nearby Sharing off).
+    let sendTargets: @MainActor () -> [NearbySendTarget]?
+    /// "Send To" > a Mac: this item, or what can be sent of the selection if this item
+    /// is in it.
+    let onSend: @MainActor (String) -> Void
+    /// True while a Send To of this tile hasn't finished: "Stop Sending" takes Send
+    /// To's place.
+    let isSending: Bool
+    let onStopSending: @MainActor () -> Void
     /// True while the name is a field being typed in ("Rename").
     let isRenaming: Bool
     /// What the field edits while `isRenaming`: the label, the file name or the address.
@@ -104,7 +118,7 @@ struct ShelfItemTile: View {
 
     /// The name's font, as AppKit needs it for the rename field and for measuring.
     /// The same as the `Text` under the picture.
-    private static let nameFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+    static let nameFont = NSFont.systemFont(ofSize: 11, weight: .medium)
 
     private var image: NSImage {
         loadedThumbnail ?? images.image(for: item)
@@ -113,6 +127,7 @@ struct ShelfItemTile: View {
     private var detailLine: String {
         if isCopying { return "Copying…" }
         if isConverting { return "Converting…" }
+        if let sendingLabel { return sendingLabel }
         guard isAvailable else { return "Unavailable" }
         return [item.typeLabel, item.storageMode == .copy ? "Copy" : nil, item.timeLeftLabel(now: Date())]
             .compactMap { $0 }
@@ -121,9 +136,10 @@ struct ShelfItemTile: View {
 
     /// Quick Look and Get Info for files and folders, and Quick Look for text, which has
     /// no file to get info on. Then "Copy" and "Rename" for every tile, Rename right
-    /// after Get Info and Copy as in Finder. "Share" closes the group for every tile: macOS's share
-    /// popover takes files as Finder does, links as Safari does, and text as Notes
-    /// does. Then how Polka keeps the item: "Pin", which reads "Unpin"
+    /// after Get Info and Copy as in Finder. "Share": macOS's share popover takes files as
+    /// Finder does, links as Safari does, and text as Notes does. "Send To" (Nearby
+    /// Sharing) right after it, for files, links and text but not folders, closes the
+    /// group; while the tile is being sent, "Stop Sending" is there instead. Then how Polka keeps the item: "Pin", which reads "Unpin"
     /// on a pinned tile as in Notes and Messages, "Temporary", checked while it has an
     /// expiry, and for files and folders "Keep a Copy", checked for a copy.
     /// Links and text have no file to show or copy, so they skip those. "Remove" comes
@@ -154,6 +170,30 @@ struct ShelfItemTile: View {
         entries.append(TileDragView.MenuEntry(title: "Share",
                                               isEnabled: !isFile || isAvailable,
                                               pointingAtTile: onShare))
+        // Nearby Sharing: files, links and text, not folders. In a selection, what
+        // can't be sent stays behind. Left out while Nearby Sharing is off.
+        if isSending {
+            entries.append(TileDragView.MenuEntry(title: "Stop Sending", action: onStopSending))
+        } else if item.kind != .folder {
+            let sendCount = isSelected ? max(sendableSelectionCount, 1) : 1
+            var sendTo = TileDragView.MenuEntry(title: sendCount > 1 ? "Send \(sendCount) Items To" : "Send To",
+                                                isEnabled: item.kind != .file || isAvailable,
+                                                action: {})
+            let targets = sendTargets
+            let send = onSend
+            sendTo.isShown = { targets() != nil }
+            sendTo.submenu = {
+                (targets() ?? []).map { target in
+                    var entry = TileDragView.MenuEntry(title: target.title, isEnabled: target.isEnabled,
+                                                       startsGroup: target.startsGroup) {
+                        if let peerID = target.peerID { send(peerID) }
+                    }
+                    entry.isHeader = target.isHeader
+                    return entry
+                }
+            }
+            entries.append(sendTo)
+        }
         // Always enabled: past the limit, choosing it says why nothing was pinned.
         entries.append(TileDragView.MenuEntry(title: item.isPinned ? "Unpin" : "Pin",
                                               startsGroup: true,

@@ -38,6 +38,34 @@ enum DroppedItem: Equatable {
         guard case .refusedLink = self else { return false }
         return true
     }
+
+    /// What this is to a Mac it's dropped on (Nearby Sharing, N5): a tile that's never
+    /// on the shelf, for `NearbyService.send`, which leaves out whatever of it can't
+    /// go. Nil for what can't be sent at all: folders and packages (an app is a folder
+    /// too), promised files, which don't exist until the drop, and links that aren't
+    /// web addresses. Reads the disk for a file.
+    var itemToSend: ShelfItem? {
+        let kind: ShelfItem.Kind
+        let title: String
+        let source: ShelfItem.Source
+        switch self {
+        case .file(let url):
+            guard (try? url.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true else { return nil }
+            kind = .file
+            title = url.lastPathComponent
+            source = .file(path: url.standardizedFileURL.path, bookmark: nil)
+        case .link(let url):
+            let draft = ShelfItem.Draft(linkURL: url)
+            (kind, title, source) = (draft.kind, draft.title, draft.source)
+        case .text(let text):
+            let draft = ShelfItem.Draft(text: text)
+            (kind, title, source) = (draft.kind, draft.title, draft.source)
+        case .promise, .refusedLink:
+            return nil
+        }
+        return ShelfItem(id: UUID(), kind: kind, title: title, source: source, storageMode: .reference,
+                         createdAt: Date(), expiresAt: nil, sortOrder: 0)
+    }
 }
 
 /// Reads file URLs, web URLs, file promises and text from a drag pasteboard.
@@ -63,7 +91,25 @@ enum DropReceiver {
     static func items(from pasteboard: NSPasteboard) -> [DroppedItem] {
         let types = pasteboard.types?.map(\.rawValue).joined(separator: ", ") ?? "none"
         Log.drop.debug("Drop pasteboard types: \(types, privacy: .public)")
+        let items = read(pasteboard)
+        if items.isEmpty {
+            Log.drop.info("Drop had nothing Polka can store (types: \(types, privacy: .public))")
+        }
+        for item in items {
+            Log.drop.info("Dropped \(item.label, privacy: .private)")
+        }
+        return items
+    }
 
+    /// What of a drag could go straight to a Mac nearby, as tiles that are never on
+    /// the shelf: everything `items` reads that `itemToSend` takes. Empty if the drag
+    /// holds promised files, since what's dropped is then the promise, as on the shelf.
+    /// Read while the drag is still going too, for whether to show the Send To box.
+    static func itemsToSend(from pasteboard: NSPasteboard) -> [ShelfItem] {
+        read(pasteboard).compactMap(\.itemToSend)
+    }
+
+    private static func read(_ pasteboard: NSPasteboard) -> [DroppedItem] {
         let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL] ?? []
         let promises = pasteboard.readObjects(forClasses: [NSFilePromiseReceiver.self], options: nil)
             as? [NSFilePromiseReceiver] ?? []
@@ -86,13 +132,6 @@ enum DropReceiver {
             } else if !text.isEmpty {
                 items = [.text(text)]
             }
-        }
-
-        if items.isEmpty {
-            Log.drop.info("Drop had nothing Polka can store (types: \(types, privacy: .public))")
-        }
-        for item in items {
-            Log.drop.info("Dropped \(item.label, privacy: .private)")
         }
         return items
     }

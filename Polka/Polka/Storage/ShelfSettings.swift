@@ -131,6 +131,52 @@ struct ShelfSettings {
         get { defaults.string(forKey: Self.shelfSortKey).flatMap(ShelfSort.init(rawValue:)) ?? .none }
         nonmutating set { defaults.set(newValue.rawValue, forKey: Self.shelfSortKey) }
     }
+
+    // MARK: - Nearby Sharing
+
+    static let nearbySharingKey = "nearbySharingEnabled"
+    static let nearbyNameKey = "nearbyDisplayName"
+    static let nearbyReceiveFromKey = "nearbyReceiveFrom"
+
+    /// Nearby Sharing's switch (NS-1). Off by default: until it's turned on, Polka
+    /// doesn't advertise, browse or listen, and nobody nearby can see or reach it.
+    var nearbySharingEnabled: Bool {
+        get { defaults.bool(forKey: Self.nearbySharingKey) }
+        nonmutating set { defaults.set(newValue, forKey: Self.nearbySharingKey) }
+    }
+
+    /// The name others see, as typed in Settings (NS-2). Empty means the Mac's name.
+    var nearbyName: String {
+        get { defaults.string(forKey: Self.nearbyNameKey) ?? "" }
+        nonmutating set { defaults.set(newValue, forKey: Self.nearbyNameKey) }
+    }
+
+    /// Who can see this Mac and send to it (NS-3). Everyone by default.
+    var nearbyReceiveFrom: NearbyReceiveFrom {
+        get { defaults.string(forKey: Self.nearbyReceiveFromKey).flatMap(NearbyReceiveFrom.init(rawValue:)) ?? .everyone }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: Self.nearbyReceiveFromKey) }
+    }
+
+    /// The name others see: what was typed, cleaned as any name is, or else the Mac's
+    /// name, or else "Mac".
+    static func nearbyName(typed: String, macName: String) -> String {
+        NearbyName.clean(typed) ?? NearbyName.clean(macName) ?? "Mac"
+    }
+}
+
+/// Settings' "Receive From" for Nearby Sharing.
+enum NearbyReceiveFrom: String, CaseIterable {
+    /// Anyone nearby with Polka can see this Mac's name and send to it.
+    case everyone
+    /// Only remembered Macs can. Everyone else gets no name and no answer.
+    case remembered
+
+    var title: String {
+        switch self {
+        case .everyone: return "Everyone"
+        case .remembered: return "Remembered Macs Only"
+        }
+    }
 }
 
 /// The hover area setting. The sizes in points are in `NotchGeometry`.

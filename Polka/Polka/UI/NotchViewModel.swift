@@ -1,7 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The four states from the PRD's interaction flow, plus the link field.
+/// The four states from the PRD's interaction flow, plus the link field and an offer
+/// from a Mac nearby.
 enum NotchState: Equatable {
     case collapsed
     case expanded
@@ -10,6 +11,11 @@ enum NotchState: Equatable {
     case draggingOut
     /// The shelf has turned into a field for typing a link ("Add New", "Link").
     case addingLink
+    /// Another Mac wants to share something (Nearby Sharing, NS-6): the eyes, who's
+    /// sharing, the items as tiles, Accept and Decline. Opened by the controller, like
+    /// the drop zone, and closed only by an answer, the offer timing out, or the other
+    /// Mac withdrawing it.
+    case offer
 
     /// True when the shape is notch-sized and the pointer passes through to what's beneath.
     var isAtNotchSize: Bool {
@@ -175,9 +181,149 @@ final class NotchViewModel: ObservableObject {
     var currentSize: CGSize {
         switch state {
         case .collapsed, .draggingOut: return notchSize
-        case .expanded, .dropReady: return expandedSize
+        case .expanded, .dropReady, .offer: return expandedSize
         case .addingLink: return linkEntrySize
         }
+    }
+
+    // MARK: - Nearby Sharing
+
+    /// How a person answered an offer.
+    enum OfferAnswer {
+        case accept
+        case decline
+        /// "Decline and Block": declines, and turns that Mac away until Polka quits.
+        case block
+    }
+
+    /// The offer the panel shows while it's `.offer`.
+    @Published var shownOffer: NearbyIncomingOffer?
+    /// Takes the answer to Nearby Sharing; set by the controller.
+    var onOfferAnswered: ((NearbyIncomingOffer, OfferAnswer) -> Void)?
+
+    /// Accept, Decline, or Decline and Block in the offer view. Accept grows the view
+    /// back into the shelf, where the items land as they arrive; declining closes it.
+    func answerOffer(_ answer: OfferAnswer) {
+        guard state == .offer, let offer = shownOffer else { return }
+        shownOffer = nil
+        onOfferAnswered?(offer, answer)
+    }
+
+    /// Accepted offers whose files are still arriving, as the shelf's message line
+    /// shows them. Links and text arrive at once, so they never show here.
+    @Published var nearbyReceiving: [NearbyReceiving] = []
+    var onCancelReceiving: ((UUID) -> Void)?
+
+    /// The receiving message's ×.
+    func cancelReceiving(_ id: UUID) {
+        onCancelReceiving?(id)
+    }
+
+    /// What an accepted offer brought: new tiles at the top, marked with who sent them,
+    /// with the usual duplicate check and message. The shelf scrolls to them. Tiles a
+    /// remembered Mac sent without asking come with a message saying who sent what
+    /// (NS-12), which stays until its ×, like other messages.
+    func receiveNearby(_ items: [NearbyReceivedItem], from senderName: String, withoutAsking: Bool = false) {
+        let drafts = items.map { $0.draft(from: senderName) }
+        let added = add(drafts)
+        if withoutAsking, !drafts.isEmpty {
+            let name = store.items.first { added.contains($0.id) }?.displayName ?? drafts[0].title
+            notice = Self.arrivalMessage(from: senderName, count: drafts.count, added: added.count, firstName: name)
+        }
+        reveal(added)
+    }
+
+    /// "Alex sent \u{201C}report.pdf\u{201D}", "Alex sent 3 items", and what of it was on the
+    /// shelf already.
+    static func arrivalMessage(from sender: String, count: Int, added: Int, firstName: String) -> String {
+        let what = count == 1 ? "\u{201C}\(firstName)\u{201D}" : "\(count) items"
+        let duplicates = count - added
+        if duplicates == 0 { return "\(sender) sent \(what)" }
+        if added == 0 {
+            return count == 1 ? "\(sender) sent \(what), already on the shelf"
+                              : "\(sender) sent \(what), all already on the shelf"
+        }
+        return "\(sender) sent \(what). \(duplicates) \(duplicates == 1 ? "was" : "were") already on the shelf"
+    }
+
+    // MARK: Sending
+
+    /// How a Send To is going, by tile, shown in place of the type line.
+    @Published private(set) var sendingLabels: [ShelfItem.ID: String] = [:]
+    /// Which Send To each label belongs to, so an older one clearing late doesn't wipe
+    /// out a newer one.
+    private var sendingTransfers: [ShelfItem.ID: UUID] = [:]
+    /// The Send To each tile is in while it hasn't finished, for Stop Sending.
+    @Published private(set) var activeSends: [ShelfItem.ID: UUID] = [:]
+    /// Stop Sending, with the Send To it belongs to.
+    var onStopSending: ((UUID) -> Void)?
+    /// How long a finished Send To's last word ("Sent", "Declined") stays.
+    static let sendingLabelDuration: Duration = .seconds(4)
+
+    /// What a right-click "Send To" on `id` offers: the tile, or the whole selection if
+    /// the tile is in it, the tile first, then in shelf order. Files, links and text go;
+    /// folders and files that can't be found stay behind.
+    func itemsToSend(from id: ShelfItem.ID) -> [ShelfItem] {
+        let ids = selection.contains(id) ? selection : [id]
+        let chosen = store.items.filter { ids.contains($0.id) && isSendable($0) }
+        return chosen.filter { $0.id == id } + chosen.filter { $0.id != id }
+    }
+
+    /// What of the tiles being dragged can be sent to a Mac nearby (N5), in the drag's
+    /// order: the same as "Send To" leaves in. Empty while no tile is dragged.
+    var tileMoveItemsToSend: [ShelfItem] {
+        guard let tileMove else { return [] }
+        let byID = Dictionary(store.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return tileMove.ids.compactMap { byID[$0] }.filter(isSendable)
+    }
+
+    /// How many selected tiles "Send To" would offer, for "Send 3 Items To".
+    var sendableSelectionCount: Int {
+        store.items.filter { selection.contains($0.id) && isSendable($0) }.count
+    }
+
+    private func isSendable(_ item: ShelfItem) -> Bool {
+        switch item.kind {
+        case .link, .text: return true
+        case .file: return !store.missingItemIDs.contains(item.id)
+        case .folder: return false
+        }
+    }
+
+    /// Right-click > Stop Sending on `id`: stops the Send To it's in.
+    func stopSending(_ id: ShelfItem.ID) {
+        guard let transfer = activeSends[id] else { return }
+        onStopSending?(transfer)
+    }
+
+    /// Shows how a Send To is going on its tiles. A finished one's last word fades
+    /// back to the type line after a few seconds.
+    func showSending(_ label: String, isFinished: Bool, on ids: [ShelfItem.ID], transfer: UUID) {
+        for id in ids {
+            sendingTransfers[id] = transfer
+            sendingLabels[id] = label
+            if isFinished {
+                if activeSends[id] == transfer { activeSends[id] = nil }
+            } else if activeSends[id] != transfer {
+                activeSends[id] = transfer
+            }
+        }
+        guard isFinished else { return }
+        Task { [weak self] in
+            try? await Task.sleep(for: Self.sendingLabelDuration)
+            guard let self else { return }
+            for id in ids where self.sendingTransfers[id] == transfer {
+                self.sendingTransfers[id] = nil
+                self.sendingLabels[id] = nil
+            }
+        }
+    }
+
+    /// An accepted offer that stopped arriving partway: nothing from it was added.
+    func receiveNearbyFailed(from senderName: String, cancelledByThem: Bool = false) {
+        notice = cancelledByThem
+            ? "\(senderName) stopped sending"
+            : "Couldn't receive what \(senderName) shared"
     }
 
     /// Promised files aren't in `items` as drafts: they're added by
