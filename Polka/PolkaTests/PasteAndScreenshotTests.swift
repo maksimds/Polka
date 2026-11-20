@@ -264,6 +264,29 @@ struct PasteReaderTests {
 
         #expect(image?.type == .png)
     }
+
+    /// The + menu and the shelf's free space menu share this item.
+    @Test func thePasteItemSaysWhatItPastesAndShowsCommandV() {
+        var pasted: [Pasteable] = []
+        let item = NSMenuItem.paste(.text("Notes")) { pasted.append($0) }
+
+        #expect(item.title == "Paste Text")
+        #expect(item.isEnabled)
+        #expect(item.keyEquivalent == "v")
+        #expect(item.keyEquivalentModifierMask == .command)
+        if let target = item.target, let action = item.action {
+            _ = (target as AnyObject).perform(action)
+        }
+        #expect(pasted == [.text("Notes")])
+    }
+
+    @Test func thePasteItemIsGreyedOutWithNothingToPaste() {
+        let item = NSMenuItem.paste(nil) { _ in Issue.record("Nothing should be pasted") }
+
+        #expect(item.title == "Paste")
+        #expect(!item.isEnabled)
+        #expect(item.keyEquivalent == "v")
+    }
 }
 
 // MARK: - Saving a pasted picture

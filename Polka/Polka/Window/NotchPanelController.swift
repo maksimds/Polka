@@ -158,6 +158,9 @@ final class NotchPanelController {
         dropView.onTileDropped = { [weak self] drop, gliding in
             self?.model.finishTileMove(at: drop.target, gliding: gliding)
         }
+        dropView.freeSpaceMenu = { [weak self] point in
+            self?.freeSpaceMenu(at: point)
+        }
         dropView.embed(hostingView)
         panel.contentView = dropView
         self.panel = panel
@@ -443,6 +446,22 @@ final class NotchPanelController {
         if !model.copySelection() {
             NSSound.beep()
         }
+    }
+
+    /// A right-click on the open shelf's free space, between and around the tiles or
+    /// on an empty shelf, as on the desktop: a menu with the + menu's Paste, named
+    /// after what's on the clipboard, with its ⌘V. Nothing on the header, a message or
+    /// the clear room around the shape. Like a click on free space (and a right-click
+    /// on the desktop), it clears the selection.
+    private func freeSpaceMenu(at point: CGPoint) -> NSMenu? {
+        guard model.state == .expanded, model.gridGeometry.shelfArea.contains(point) else { return nil }
+        model.clearSelection()
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addItem(.paste(PasteReader.contents(of: .general)) { [weak self] contents in
+            self?.pasteFromPanel(contents)
+        })
+        return menu
     }
 
     /// Turns Cmd-V and Cmd-C on or off for where things stand now. `@Published` reports a change

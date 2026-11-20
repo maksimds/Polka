@@ -202,6 +202,28 @@ struct NotchView: View {
 
     private var expandedContent: some View {
         VStack(spacing: 8) {
+            shelf
+            // Below the grid so it never covers a tile, and tiles don't shift under the pointer.
+            if let receiving = model.nearbyReceiving.first {
+                NearbyReceivingBanner(receiving: receiving) { model.cancelReceiving(receiving.id) }
+                    .transition(.opacity)
+            }
+            if let notice = model.notice {
+                NoticeBanner(message: notice) { model.dismissNotice() }
+                    .transition(.opacity)
+            }
+        }
+        .font(.system(size: 13))
+        .padding(.top, model.notchSize.height + 8)
+        .padding(.horizontal, Self.sideInset)
+        .padding(.bottom, 14)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// The tiles, or with none, a line saying how to add some. Measured for the free
+    /// space menu, which a right-click anywhere here but on a tile opens.
+    private var shelf: some View {
+        Group {
             if store.items.isEmpty {
                 Text("Drag a file or link here")
                     .foregroundStyle(.white.opacity(0.6))
@@ -248,21 +270,12 @@ struct NotchView: View {
                               onMarqueeBegan: { model.beginMarquee($0) },
                               onMarqueeChanged: { model.updateMarquee(touching: $0) })
             }
-            // Below the grid so it never covers a tile, and tiles don't shift under the pointer.
-            if let receiving = model.nearbyReceiving.first {
-                NearbyReceivingBanner(receiving: receiving) { model.cancelReceiving(receiving.id) }
-                    .transition(.opacity)
-            }
-            if let notice = model.notice {
-                NoticeBanner(message: notice) { model.dismissNotice() }
-                    .transition(.opacity)
-            }
         }
-        .font(.system(size: 13))
-        .padding(.top, model.notchSize.height + 8)
-        .padding(.horizontal, Self.sideInset)
-        .padding(.bottom, 14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .global)
+        } action: { [geometry = model.gridGeometry] frame in
+            geometry.shelfArea = frame
+        }
     }
 
     /// The strip beside the notch, laid out on the tiles' own grid: same columns, same

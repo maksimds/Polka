@@ -234,6 +234,10 @@ struct ShelfGridArrangement: Layout {
 final class ShelfGridGeometry {
     /// The part of the grid you can see.
     var viewport: CGRect = .zero
+    /// The shelf under the header: the grid's visible part, or, with nothing on the
+    /// shelf, where it says to drag something in. A right-click here that no tile
+    /// takes opens the free space menu (`NotchPanelController.freeSpaceMenu`).
+    var shelfArea: CGRect = .zero
     /// The whole grid, scrolled-away rows included. Its top moves up as it scrolls down.
     var content: CGRect = .zero
     /// Where a tile's picture sits within its spot. The same for every tile.

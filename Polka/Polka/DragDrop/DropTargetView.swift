@@ -44,6 +44,11 @@ final class DropTargetView: NSView {
     /// Tiles were dropped. True when their pictures are gliding into place.
     var onTileDropped: (@MainActor (TileDrop, Bool) -> Void)?
 
+    /// The menu for a right-click at this point in SwiftUI's coordinates, or nil for
+    /// none. Only asked for right-clicks nothing in the panel took: a tile's AppKit
+    /// layer takes those on the tile and shows the tile's own menu.
+    var freeSpaceMenu: (@MainActor (CGPoint) -> NSMenu?)?
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         registerForDraggedTypes(Self.draggedTypes)
@@ -63,6 +68,27 @@ final class DropTargetView: NSView {
         child.frame = bounds
         child.autoresizingMask = [.width, .height]
         addSubview(child)
+    }
+
+    // MARK: - Right-click
+
+    /// A right-click nothing in the panel took. SwiftUI's views pass it up to this
+    /// one, which wraps them, as AppKit hands a press nobody wants to the view behind.
+    ///
+    /// The menu opens a run-loop pass later, so whatever the right-click changed (it
+    /// clears the selection, as on the desktop) is drawn before AppKit starts following
+    /// the pointer for the menu, as with the header's menus (`HeaderMenuView`). The
+    /// press is usually still held then, so pressing, sliding to Paste and letting go
+    /// works too.
+    override func rightMouseDown(with event: NSEvent) {
+        guard let menu = freeSpaceMenu?(swiftUIPoint(event.locationInWindow)) else {
+            super.rightMouseDown(with: event)
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            NSMenu.popUpContextMenu(menu, with: event, for: self)
+        }
     }
 
     // MARK: - NSDraggingDestination

@@ -30,17 +30,26 @@ struct AddMenuButton: View {
         menu.addItem(NSMenuItem(title: "Link", action: onAddLink))
         menu.addItem(NSMenuItem(title: "File", action: onAddFiles))
         menu.addItem(.separator())
-        // Named after what's on the clipboard ("Paste 3 Files", "Paste Image"), so you
-        // know what you'll get. The ⌘V says the same works with the pointer over the
-        // shelf (`ShelfShortcuts`); pressed while this menu is open, it chooses this item.
-        let contents = pasteable()
-        let pasteItem = NSMenuItem(title: contents?.menuTitle ?? "Paste") { [onPaste] in
-            if let contents { onPaste(contents) }
-        }
-        pasteItem.keyEquivalent = "v"
-        pasteItem.keyEquivalentModifierMask = .command
-        pasteItem.isEnabled = contents != nil
-        menu.addItem(pasteItem)
+        menu.addItem(.paste(pasteable(), action: onPaste))
         return menu
+    }
+}
+
+extension NSMenuItem {
+    /// "Paste", as the + menu and the shelf's free space menu show it: named after
+    /// what's on the clipboard ("Paste 3 Files", "Paste Image"), so you know what
+    /// you'll get, and greyed out when there's nothing Polka can keep. The ⌘V says
+    /// the same works with the pointer over the shelf (`ShelfShortcuts`); pressed
+    /// while the menu is open, it chooses this item. Its menu needs
+    /// `autoenablesItems` off, or AppKit decides whether it can be chosen.
+    @MainActor
+    static func paste(_ contents: Pasteable?, action: @escaping @MainActor (Pasteable) -> Void) -> NSMenuItem {
+        let item = NSMenuItem(title: contents?.menuTitle ?? "Paste") {
+            if let contents { action(contents) }
+        }
+        item.keyEquivalent = "v"
+        item.keyEquivalentModifierMask = .command
+        item.isEnabled = contents != nil
+        return item
     }
 }
