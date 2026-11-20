@@ -445,7 +445,7 @@ struct NearbyTestSide {
 
     var settings: ShelfSettings { ShelfSettings(defaults: defaults) }
 
-    init(answerTimeout: TimeInterval = NearbyOfferLine.answerTimeout, listsThisMac: Bool = false,
+    init(answerTimeout: TimeInterval = NearbyOfferLine.answerTimeout,
          freeSpace: @escaping (URL) -> Int64? = { _ in 500_000_000_000 }) throws {
         suite = "PolkaTests-\(UUID().uuidString)"
         defaults = try #require(UserDefaults(suiteName: suite))
@@ -454,7 +454,7 @@ struct NearbyTestSide {
             .appendingPathComponent("PolkaNearbyTests-\(UUID().uuidString)", isDirectory: true)
             .appendingPathComponent("Copies", isDirectory: true))
         service = NearbyService(settings: ShelfSettings(defaults: defaults), identityTag: tag,
-                                answerTimeout: answerTimeout, listsThisMac: listsThisMac, freeSpace: freeSpace)
+                                answerTimeout: answerTimeout, freeSpace: freeSpace)
         service.copies = copies
     }
 
@@ -542,23 +542,19 @@ struct NearbySendingTests {
     }
 
     @Test(.timeLimit(.minutes(1)))
-    func anOfferNobodyAnswersIsDeclinedAndOneMacCanSendToItself() async throws {
-        // The test build's "list this Mac": one service finds and offers to itself.
-        let side = try NearbyTestSide(answerTimeout: 1, listsThisMac: true)
-        defer { side.cleanUp() }
-        let name = "Self \(Int.random(in: 1000...9999))"
-        side.settings.nearbyName = name
-        side.settings.nearbySharingEnabled = true
-        side.service.start()
-        side.service.beginBrowsing()
-        #expect(try await nearbyEventually(20) { side.service.peers.contains { $0.name == name } })
-        let peerID = try #require(side.service.peers.first { $0.name == name }).id
-
+    func anOfferNobodyAnswersIsDeclined() async throws {
+        let sender = try NearbyTestSide()
+        let receiver = try NearbyTestSide(answerTimeout: 1)
+        defer {
+            sender.cleanUp()
+            receiver.cleanUp()
+        }
+        let peerID = try await found(receiver, from: sender, named: "Away \(Int.random(in: 1000...9999))")
         var statuses: [NearbyOutgoingSession.Status] = []
-        #expect(side.service.send([shelfItem(.link(example))], to: peerID) { statuses.append($0) } != nil)
-        #expect(try await nearbyEventually(10) { !side.service.offers.isEmpty })
+        #expect(sender.service.send([shelfItem(.link(example))], to: peerID) { statuses.append($0) } != nil)
+        #expect(try await nearbyEventually(10) { !receiver.service.offers.isEmpty })
         #expect(try await nearbyEventually(10) { statuses.last == .declined })
-        #expect(side.service.offers.isEmpty)
+        #expect(receiver.service.offers.isEmpty)
     }
 
     @Test(.timeLimit(.minutes(1)))

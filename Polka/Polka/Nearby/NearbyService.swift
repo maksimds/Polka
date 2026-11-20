@@ -163,9 +163,6 @@ final class NearbyService: ObservableObject {
     /// Where each Mac found nearby can be reached, by its Bonjour name.
     private var endpoints: [String: NWEndpoint] = [:]
     private let answerTimeout: TimeInterval
-    /// Lists this Mac among the Macs nearby, so one Mac can send to itself. Only in
-    /// the test build (`listsThisMacForTesting`) and in tests.
-    private let listsThisMac: Bool
     /// Bonjour names asked for their name since browsing started.
     private var asked: Set<String> = []
     /// How many times each Bonjour name was asked without an answer.
@@ -191,12 +188,10 @@ final class NearbyService: ObservableObject {
 
     init(settings: ShelfSettings = ShelfSettings(), identityTag: String = NearbyIdentity.standardTag,
          answerTimeout: TimeInterval = NearbyOfferLine.answerTimeout,
-         listsThisMac: Bool = NearbyService.listsThisMacForTesting,
          freeSpace: @escaping (URL) -> Int64? = NearbyService.freeSpace(at:)) {
         self.settings = settings
         self.identityTag = identityTag
         self.answerTimeout = answerTimeout
-        self.listsThisMac = listsThisMac
         self.freeSpace = freeSpace
     }
 
@@ -210,13 +205,6 @@ final class NearbyService: ObservableObject {
         }
         return (try? folder.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))?
             .volumeAvailableCapacityForImportantUsage
-    }
-
-    /// The test build's `-NearbyListThisMac YES` launch argument. Ignored by every other
-    /// build, the daily Polka included. Remove before merging, with the test build.
-    nonisolated static var listsThisMacForTesting: Bool {
-        Bundle.main.bundleIdentifier == "com.maksimds.Polka.NearbyTest"
-            && UserDefaults.standard.bool(forKey: "NearbyListThisMac")
     }
 
     func start() {
@@ -950,7 +938,7 @@ final class NearbyService: ObservableObject {
         var present: [String: NWEndpoint] = [:]
         for result in results {
             guard case let .service(name, _, _, _) = result.endpoint,
-                  name != serviceName || listsThisMac else { continue }
+                  name != serviceName else { continue }
             present[name] = result.endpoint
         }
         peers.removeAll { present[$0.id] == nil }

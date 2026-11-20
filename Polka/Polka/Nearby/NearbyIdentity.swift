@@ -16,7 +16,7 @@ struct NearbyIdentity {
 
     var fingerprint: String { Self.fingerprint(of: publicKey) }
 
-    /// One key per app, so a test build with its own bundle ID never shares a key with
+    /// One key per app, so a copy built under another bundle ID never shares a key with
     /// the daily Polka.
     static var standardTag: String {
         "\(Bundle.main.bundleIdentifier ?? "com.maksimds.Polka").nearby.identity"
