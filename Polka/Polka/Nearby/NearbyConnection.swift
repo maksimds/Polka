@@ -100,8 +100,9 @@ final class NearbyConnection {
         })
     }
 
-    /// Closes the connection, once. A graceful close: what was sent still arrives.
-    func end(because reason: String?) {
+    /// Closes the connection, once. A graceful close, so what was sent still arrives,
+    /// unless `abruptly`: a reset, which the other side hears as an error.
+    func end(because reason: String?, abruptly: Bool = false) {
         guard !hasEnded else { return }
         hasEnded = true
         deadline?.cancel()
@@ -109,7 +110,11 @@ final class NearbyConnection {
         if let reason {
             Log.nearby.info("Connection \(self.isIncoming ? "in" : "out", privacy: .public) ended: \(reason, privacy: .public)")
         }
-        connection.cancel()
+        if abruptly {
+            connection.forceCancel()
+        } else {
+            connection.cancel()
+        }
         onEnd?(reason)
         onEnd = nil
         onMessage = nil

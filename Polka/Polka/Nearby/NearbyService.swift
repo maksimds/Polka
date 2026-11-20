@@ -108,6 +108,17 @@ final class NearbyService: ObservableObject {
     /// The Settings switch.
     var isEnabled: Bool { settings.nearbySharingEnabled }
 
+    /// The port the listener took, once it's listening. Only tests use it, to reach
+    /// this Mac directly rather than through Bonjour. A listener just started says 0
+    /// until it has one.
+    var listeningPort: NWEndpoint.Port? {
+        guard let port = listener?.port, port.rawValue != 0 else { return nil }
+        return port
+    }
+
+    /// The random Bonjour name it advertises under, while it does. Only tests use it.
+    var advertisedName: String? { listener == nil ? nil : serviceName }
+
     /// This Mac's public key, once it's been read from the Keychain.
     var thisMacKey: Data? { identity?.publicKey }
 
@@ -162,7 +173,15 @@ final class NearbyService: ObservableObject {
     private var serviceName = NearbyService.randomServiceName()
     private var defaultsObserver: NSObjectProtocol?
 
-    private static let maxIncoming = 4
+    /// Connections at once, from every Mac together. Past it, a connection is turned
+    /// away before its handshake.
+    private static let maxIncoming = 8
+    /// Of them, from Macs that aren't remembered (N6). A caller is only known by its key
+    /// once its handshake is done, so one over this is turned away then, and a
+    /// remembered Mac still gets through while strangers fill their share.
+    private static let maxStrangers = 4
+    /// The incoming connections from Macs that aren't remembered.
+    private var strangerSessions: Set<UUID> = []
     private static let maxOutgoing = 8
     /// How many times a Polka is asked its name before it's left alone.
     private static let maxAsks = 6
@@ -380,8 +399,8 @@ final class NearbyService: ObservableObject {
             Log.nearby.info("Turned a connection away: too many at once")
             return
         }
-        let session = NearbyIncomingSession(connection: connection) { [weak self] key in
-            self?.hello(forCaller: key)
+        let session = NearbyIncomingSession(connection: connection) { [weak self] id, key in
+            self?.greeting(for: id, caller: key) ?? .silence
         }
         incoming[session.id] = session
         session.onOffer = { [weak self] in self?.offered($0) }
@@ -410,11 +429,19 @@ final class NearbyService: ObservableObject {
         settings.nearbyReceiveFrom == .everyone || rememberPhase == .looking
     }
 
-    /// What this Mac says to a caller, once its key is known: its name, or nothing at
-    /// all to a Mac it hides from.
-    private func hello(forCaller key: Data?) -> NearbyHello? {
-        guard let advertised, advertised.visibleToAll || remembered.contains(key) else { return nil }
-        return NearbyHello(version: NearbyProtocol.version, name: advertised.name)
+    /// What this Mac says to a caller, once its key is known: its name; nothing at all
+    /// to a Mac it hides from; or, to a stranger past `maxStrangers`, that it's busy.
+    private func greeting(for session: UUID, caller key: Data?) -> NearbyIncomingSession.Greeting {
+        let isRemembered = remembered.contains(key)
+        guard let advertised, advertised.visibleToAll || isRemembered else { return .silence }
+        if !isRemembered {
+            guard strangerSessions.count < Self.maxStrangers else {
+                Log.nearby.info("Turned a connection away: too many from Macs that aren't remembered")
+                return .busy
+            }
+            strangerSessions.insert(session)
+        }
+        return .hello(NearbyHello(version: NearbyProtocol.version, name: advertised.name))
     }
 
     // MARK: - Offers to this Mac
@@ -468,13 +495,18 @@ final class NearbyService: ObservableObject {
         Log.nearby.info("Stopped receiving")
     }
 
-    /// Decline, or Decline and Block, which turns away that Mac's offers until Polka quits.
+    /// Decline, or Decline and Block, which turns away that Mac's offers until Polka
+    /// quits, and every Mac that isn't remembered for `NearbyOfferLine.blockPause`, the
+    /// ones waiting included: the sender could come back with a new key.
     func decline(_ id: UUID, block: Bool = false) {
         guard let offer = offers.first(where: { $0.id == id }) else { return }
         if block { line.block(offer.fingerprint) }
         removeOffer(id)
         incoming[id]?.answer(accept: false, copies: nil)
         Log.nearby.info("Declined an offer\(block ? " and blocked its Mac" : "", privacy: .public)")
+        if block {
+            for waiting in offers { decline(waiting.id) }
+        }
     }
 
     private func offered(_ session: NearbyIncomingSession) {
@@ -543,6 +575,7 @@ final class NearbyService: ObservableObject {
     private func incomingEnded(_ session: NearbyIncomingSession) {
         let name = senderName(of: session)
         incoming[session.id] = nil
+        strangerSessions.remove(session.id)
         acceptedWithoutAsking.remove(session.id)
         // Withdrawn: the other Mac went away before an answer.
         if offers.contains(where: { $0.id == session.id }) {
@@ -796,6 +829,7 @@ final class NearbyService: ObservableObject {
             return
         }
         incoming[session.id] = nil
+        strangerSessions.remove(session.id)
         let connection = session.handOver()
         guard let remember = NearbyRememberSession(asked: connection, by: name, ownKey: identity.publicKey) else {
             connection.end(because: "no key or exporter to bind the code to")
@@ -1014,8 +1048,8 @@ final class NearbyService: ObservableObject {
     }
 
     /// Mutual TLS 1.3 with this Mac's identity, over any interface including
-    /// peer-to-peer Wi-Fi.
-    private static func parameters(_ identity: NearbyIdentity) -> NWParameters {
+    /// peer-to-peer Wi-Fi. Not private: the tests' hostile peer starts from it.
+    static func parameters(_ identity: NearbyIdentity) -> NWParameters {
         let tls = NWProtocolTLS.Options()
         let options = tls.securityProtocolOptions
         sec_protocol_options_set_min_tls_protocol_version(options, .TLSv13)

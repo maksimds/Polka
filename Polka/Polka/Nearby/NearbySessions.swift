@@ -46,11 +46,21 @@ final class NearbyIncomingSession {
     /// The offer's pictures, by place, undecoded.
     private(set) var previews: [Int: Data] = [:]
 
+    /// What this side does once the handshake shows the caller's key.
+    enum Greeting {
+        /// Says hello, with or without a name.
+        case hello(NearbyHello)
+        /// Closes without a word: a Mac that only receives from remembered Macs does
+        /// that to everyone else, and the caller doesn't ask again.
+        case silence
+        /// Resets the connection: too many callers at once. The caller hears an error,
+        /// not a quiet close, and tries again later.
+        case busy
+    }
+
     private let connection: NearbyConnection
-    /// What this side says to the Mac with this key, once the handshake shows it, or
-    /// nil to close without a word: a Mac that only receives from remembered Macs does
-    /// that to everyone else.
-    private let hello: (Data?) -> NearbyHello?
+    /// Asked with this session's id and the caller's key.
+    private let greeting: (UUID, Data?) -> Greeting
     private var rules = NearbyIncomingTransfer()
     private var sink: NearbyFileSink?
     private var hasEnded = false
@@ -60,19 +70,22 @@ final class NearbyIncomingSession {
     /// How long to wait for the next text, picture or piece.
     static let dataTimeout: TimeInterval = 30
 
-    init(connection: NWConnection, hello: @escaping (Data?) -> NearbyHello?) {
+    init(connection: NWConnection, greeting: @escaping (UUID, Data?) -> Greeting) {
         self.connection = NearbyConnection(connection, isIncoming: true)
-        self.hello = hello
+        self.greeting = greeting
     }
 
     func start() {
         connection.onReady = { [weak self] in
             guard let self else { return }
-            guard let hello = self.hello(self.connection.peerPublicKey) else {
+            switch self.greeting(self.id, self.connection.peerPublicKey) {
+            case let .hello(hello):
+                self.connection.send([.hello(hello)])
+            case .silence:
                 self.connection.end(because: "this Mac receives only from remembered Macs")
-                return
+            case .busy:
+                self.connection.end(because: "too many callers", abruptly: true)
             }
-            self.connection.send([.hello(hello)])
         }
         connection.onMessage = { [weak self] message in
             try self?.read(message)

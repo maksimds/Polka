@@ -375,10 +375,14 @@ struct NearbyOfferLineTests {
         line.show(first, at: start)
         #expect(line.next(at: start).id == nil)
         line.remove(first)
-        #expect(line.next(at: start).id == second)
+        // The next waits for the minute, whichever Mac it's from.
+        #expect(line.next(at: start).id == nil)
+        #expect(line.next(at: start.addingTimeInterval(NearbyOfferLine.strangerOpenInterval)).id == second)
     }
 
-    @Test func aMacOpensThePanelAtMostOnceAMinute() {
+    /// A hostile Polka can make a new key for every offer, so the minute is for every
+    /// Mac that isn't remembered together, not for each key (N6).
+    @Test func offersOpenThePanelAtMostOnceAMinuteWhicheverMacTheyreFrom() {
         var line = NearbyOfferLine()
         let first = UUID(), again = UUID(), other = UUID()
         _ = line.admit(id: first, fingerprint: "A")
@@ -386,16 +390,26 @@ struct NearbyOfferLineTests {
         line.remove(first)
 
         _ = line.admit(id: again, fingerprint: "A")
+        _ = line.admit(id: other, fingerprint: "B")
         let tooSoon = line.next(at: start.addingTimeInterval(10))
         #expect(tooSoon.id == nil)
         #expect(tooSoon.checkAgainAt == start.addingTimeInterval(NearbyOfferLine.strangerOpenInterval))
 
-        // Another Mac doesn't wait for A's minute.
-        _ = line.admit(id: other, fingerprint: "B")
-        #expect(line.next(at: start.addingTimeInterval(10)).id == other)
-
-        line.remove(other)
+        // Once the minute is up, the first in line.
         #expect(line.next(at: start.addingTimeInterval(60)).id == again)
+    }
+
+    /// Decline and Block turns that Mac away until Polka quits, and every Mac that
+    /// isn't remembered for ten minutes, since it could come back with a new key.
+    @Test func blockingTurnsAwayEveryStrangerForTenMinutes() {
+        var line = NearbyOfferLine()
+        line.block("A", at: start)
+        #expect(line.admit(id: UUID(), fingerprint: "B", at: start.addingTimeInterval(60)) == .paused)
+        #expect(line.admit(id: UUID(), fingerprint: "C",
+                           at: start.addingTimeInterval(NearbyOfferLine.blockPause - 1)) == .paused)
+        let later = start.addingTimeInterval(NearbyOfferLine.blockPause + 1)
+        #expect(line.admit(id: UUID(), fingerprint: "B", at: later) == .admitted)
+        #expect(line.admit(id: UUID(), fingerprint: "A", at: later) == .blocked)
     }
 }
 

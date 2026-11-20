@@ -375,16 +375,24 @@ struct NearbyOutgoingTransfer {
     }
 }
 
-/// Which incoming offer the panel shows, and when (NS-14, NS-17). Offers wait in the
-/// order they arrived. A Mac that isn't remembered (in N2, every Mac) can open the
-/// panel at most once a minute, has at most one offer waiting, and at most
-/// `maxFromStrangers` wait at once. Every offer is declined `answerTimeout` after it
-/// arrived, shown or not (`NearbyService` keeps that time). Plain Swift with the time
-/// passed in, so it can be tested.
+/// Which incoming offer the panel shows, and when (NS-14, NS-17). Only offers from Macs
+/// that aren't remembered wait here; a remembered Mac's are accepted without asking.
+/// Offers wait in the order they arrived, at most one from each Mac and at most
+/// `maxFromStrangers` in all. Every offer is declined `answerTimeout` after it arrived,
+/// shown or not (`NearbyService` keeps that time). Plain Swift with the time passed
+/// in, so it can be tested.
+///
+/// A Mac is its key, and a hostile Polka can make a new key for every offer (N6). So
+/// what keeps strangers from opening the panel over and over is counted for all of
+/// them together: an offer opens it at most once a minute, whichever Mac it's from,
+/// and Decline and Block turns away every Mac that isn't remembered for
+/// `blockPause`, not only the one blocked, which could come back with a new key.
 struct NearbyOfferLine {
     static let maxFromStrangers = 3
     static let strangerOpenInterval: TimeInterval = 60
     static let answerTimeout: TimeInterval = 120
+    /// After Decline and Block, how long every Mac that isn't remembered is turned away.
+    static let blockPause: TimeInterval = 600
 
     struct Entry: Equatable {
         let id: UUID
@@ -396,6 +404,9 @@ struct NearbyOfferLine {
         case admitted
         /// "Decline and Block" was chosen for this Mac since Polka started.
         case blocked
+        /// "Decline and Block" was chosen for some Mac within `blockPause`: every Mac
+        /// that isn't remembered is turned away meanwhile.
+        case paused
         /// This Mac already has an offer waiting.
         case alreadyWaiting
         case full
@@ -405,36 +416,36 @@ struct NearbyOfferLine {
     /// The offer on screen, if any.
     private(set) var shownID: UUID?
     private(set) var blocked: Set<String> = []
-    /// When each Mac's offer last opened the panel.
-    private var lastShown: [String: Date] = [:]
+    /// Until when every Mac that isn't remembered is turned away, after a Block.
+    private(set) var pausedUntil: Date?
+    /// When an offer last opened the panel, whichever Mac it was from.
+    private var lastShown: Date?
 
-    mutating func admit(id: UUID, fingerprint: String) -> Admission {
+    mutating func admit(id: UUID, fingerprint: String, at now: Date = Date()) -> Admission {
         if blocked.contains(fingerprint) { return .blocked }
+        if let pausedUntil, now < pausedUntil { return .paused }
         if entries.contains(where: { $0.fingerprint == fingerprint }) { return .alreadyWaiting }
         if entries.count >= Self.maxFromStrangers { return .full }
         entries.append(Entry(id: id, fingerprint: fingerprint))
         return .admitted
     }
 
-    /// The offer that may open the panel now, if none is shown: the first in line
-    /// whose Mac hasn't opened it within the last minute. Otherwise nil, with the time
-    /// one will be allowed to, if any is waiting for that.
+    /// The offer that may open the panel now, if none is shown: the first in line, once
+    /// a minute has passed since an offer last opened it. Otherwise nil, with the time
+    /// it will be allowed to, if one is waiting for that.
     func next(at now: Date) -> (id: UUID?, checkAgainAt: Date?) {
-        guard shownID == nil else { return (nil, nil) }
-        var soonest: Date?
-        for entry in entries {
-            guard let last = lastShown[entry.fingerprint] else { return (entry.id, nil) }
-            let allowed = last.addingTimeInterval(Self.strangerOpenInterval)
-            if allowed <= now { return (entry.id, nil) }
-            soonest = min(soonest ?? allowed, allowed)
+        guard shownID == nil, let first = entries.first else { return (nil, nil) }
+        if let lastShown {
+            let allowed = lastShown.addingTimeInterval(Self.strangerOpenInterval)
+            if allowed > now { return (nil, allowed) }
         }
-        return (nil, soonest)
+        return (first.id, nil)
     }
 
     mutating func show(_ id: UUID, at now: Date) {
-        guard let entry = entries.first(where: { $0.id == id }) else { return }
+        guard entries.contains(where: { $0.id == id }) else { return }
         shownID = id
-        lastShown[entry.fingerprint] = now
+        lastShown = now
     }
 
     /// Answered, timed out or withdrawn by the other Mac.
@@ -443,9 +454,11 @@ struct NearbyOfferLine {
         if shownID == id { shownID = nil }
     }
 
-    /// Until Polka quits. Its waiting offers are left for the caller to decline.
-    mutating func block(_ fingerprint: String) {
+    /// That Mac until Polka quits, and every Mac that isn't remembered for
+    /// `blockPause`. Offers already waiting are left for the caller to decline.
+    mutating func block(_ fingerprint: String, at now: Date = Date()) {
         blocked.insert(fingerprint)
+        pausedUntil = now.addingTimeInterval(Self.blockPause)
     }
 }
 
