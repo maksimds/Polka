@@ -26,12 +26,37 @@ struct ShelfItemCommands {
 }
 
 /// One line in the Send To submenu: a Mac nearby, or a note that can't be chosen,
-/// like "Looking for Macs…".
+/// like "Looking for Macs…", or a section's header.
 struct NearbySendTarget: Equatable {
-    /// The Mac's Bonjour name, or nil for a note.
+    /// The Mac's Bonjour name, or nil for a note or a header.
     let peerID: String?
     let title: String
+    var isHeader = false
+    /// Puts a divider above this line.
+    var startsGroup = false
     var isEnabled: Bool { peerID != nil }
+
+    /// The Macs nearby as Send To lists them (NS-4): remembered ones first under
+    /// "Remembered", then the rest under "Other Macs", headed only when there are
+    /// both. A Mac on an older Polka is listed but can't be chosen when it can't take
+    /// what's being sent: anything at all on N1's, files on N2's.
+    static func list(_ peers: [NearbyService.Peer], hasFiles: Bool) -> [NearbySendTarget] {
+        func target(_ peer: NearbyService.Peer) -> NearbySendTarget {
+            let takesThese = peer.takesOffers && (!hasFiles || peer.version >= NearbyProtocol.fileVersion)
+            return takesThese
+                ? NearbySendTarget(peerID: peer.id, title: peer.name)
+                : NearbySendTarget(peerID: nil, title: "\(peer.name) (Needs a Newer Polka)")
+        }
+        let remembered = peers.filter(\.isRemembered)
+        let others = peers.filter { !$0.isRemembered }
+        guard !remembered.isEmpty else { return others.map(target) }
+        var list = [NearbySendTarget(peerID: nil, title: "Remembered", isHeader: true)] + remembered.map(target)
+        if !others.isEmpty {
+            list.append(NearbySendTarget(peerID: nil, title: "Other Macs", isHeader: true, startsGroup: true))
+            list += others.map(target)
+        }
+        return list
+    }
 }
 
 /// Right-click > Rename: the tile's label, file name or address turns into a field,

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Nearby Sharing's wire format: what two Polkas say to each other inside their TLS
@@ -6,8 +7,8 @@ import Foundation
 /// hostile until it has passed these checks.
 enum NearbyProtocol {
     /// This Polka's protocol version, sent in `hello`. 1 was N1's, which only said hello;
-    /// 2 adds offers of links and text; 3 adds files and pictures.
-    static let version = 3
+    /// 2 adds offers of links and text; 3 adds files and pictures; 4 adds remembering.
+    static let version = 4
     /// The oldest version this Polka talks to. There's no older, weaker one to fall back to.
     static let minimumVersion = 1
     /// The oldest version that takes offers. A Mac on version 1 is found, but can't be
@@ -16,6 +17,8 @@ enum NearbyProtocol {
     /// The oldest version that takes files, previews, data pieces and `cancel`. A Mac on
     /// version 2 is only ever sent links and text, with no pictures.
     static let fileVersion = 3
+    /// The oldest version that remembers Macs (`remember` and what follows it).
+    static let rememberVersion = 4
     /// The Bonjour service type. It's also listed under `NSBonjourServices` in
     /// `Polka-Info.plist`, without which macOS doesn't let Polka use it.
     static let serviceType = "_polka._tcp"
@@ -49,8 +52,19 @@ enum NearbyMessage: Equatable {
     /// From the Mac sharing: everything has been sent. From the Mac receiving: it's all
     /// on the shelf.
     case done
-    /// From either side, once the offer is made: the person there stopped it.
+    /// From either side, once the offer is made, or once remembering has begun: the
+    /// person there stopped it.
     case cancel
+    /// From a Mac that wants to remember this one, right after the hellos, in place of
+    /// an offer. Answered with `rememberCommit`, or `decline`.
+    case remember
+    /// From the Mac asked to remember: the SHA-256 of its random number, sent before
+    /// it sees the other's (`NearbyRememberCode`).
+    case rememberCommit(Data)
+    /// Each Mac's random number: the asking Mac's first, then the asked Mac's.
+    case rememberNonce(Data)
+    /// The person at the Mac sending it pressed Codes Match.
+    case rememberConfirm
 
     enum Failure: Error, Equatable {
         /// Not JSON, or not the shape Polka writes.
@@ -67,6 +81,8 @@ enum NearbyMessage: Equatable {
         case badText
         /// A preview or file end for an item that can't exist, or that's malformed.
         case badItem
+        /// A commitment or random number that isn't exactly 32 bytes.
+        case badRemember
     }
 
     /// The message as it goes on the wire: its length in 4 bytes, most significant
@@ -119,6 +135,18 @@ enum NearbyMessage: Equatable {
             return .done
         case Envelope.cancelType:
             return .cancel
+        case Envelope.rememberType:
+            return .remember
+        case Envelope.rememberCommitType:
+            guard let commitment = envelope.commitment else { throw Failure.unreadable }
+            guard commitment.count == SHA256Digest.byteCount else { throw Failure.badRemember }
+            return .rememberCommit(commitment)
+        case Envelope.rememberNonceType:
+            guard let nonce = envelope.nonce else { throw Failure.unreadable }
+            guard nonce.count == NearbyRememberCode.nonceBytes else { throw Failure.badRemember }
+            return .rememberNonce(nonce)
+        case Envelope.rememberConfirmType:
+            return .rememberConfirm
         default:
             throw Failure.unknownType
         }
@@ -134,6 +162,10 @@ enum NearbyMessage: Equatable {
         static let fileEndType = "fileEnd"
         static let doneType = "done"
         static let cancelType = "cancel"
+        static let rememberType = "remember"
+        static let rememberCommitType = "rememberCommit"
+        static let rememberNonceType = "rememberNonce"
+        static let rememberConfirmType = "rememberConfirm"
 
         var type: String
         var hello: NearbyHello?
@@ -141,6 +173,8 @@ enum NearbyMessage: Equatable {
         var text: NearbyText?
         var preview: NearbyPreview?
         var fileEnd: NearbyFileEnd?
+        var commitment: Data?
+        var nonce: Data?
 
         init(_ message: NearbyMessage) {
             switch message {
@@ -167,6 +201,16 @@ enum NearbyMessage: Equatable {
                 type = Self.doneType
             case .cancel:
                 type = Self.cancelType
+            case .remember:
+                type = Self.rememberType
+            case let .rememberCommit(commitment):
+                type = Self.rememberCommitType
+                self.commitment = commitment
+            case let .rememberNonce(nonce):
+                type = Self.rememberNonceType
+                self.nonce = nonce
+            case .rememberConfirm:
+                type = Self.rememberConfirmType
             }
         }
     }

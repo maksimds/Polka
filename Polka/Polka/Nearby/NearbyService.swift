@@ -12,6 +12,8 @@ import SystemConfiguration
 ///
 /// Offers that arrive wait in `offers` for the panel to show them, in the order and at
 /// the pace `NearbyOfferLine` allows; `send` makes an offer to a Mac found nearby.
+/// Offers from a remembered Mac (N4) skip all that and are accepted on their own.
+/// Remembering happens while the Settings Remember sheet is open (`startRemembering`).
 ///
 /// Follows the settings by itself: UserDefaults says when any of them changes.
 @MainActor
@@ -30,13 +32,21 @@ final class NearbyService: ObservableObject {
         /// Its Bonjour name, new each time it starts advertising.
         let id: String
         /// The name it sent. Not verified.
-        let name: String
+        let heardName: String
         let fingerprint: String?
+        /// Its whole public key, from the TLS session.
+        var publicKey: Data? = nil
         let isPeerToPeer: Bool
         /// Its protocol version: below `NearbyProtocol.offerVersion`, it can't be sent to.
         var version = NearbyProtocol.version
+        /// The name it has among the remembered Macs, if its key is one of theirs.
+        var rememberedName: String? = nil
 
+        /// What it's shown as: its remembered name, or the name it sent.
+        var name: String { rememberedName ?? heardName }
+        var isRemembered: Bool { rememberedName != nil }
         var takesOffers: Bool { version >= NearbyProtocol.offerVersion }
+        var canRemember: Bool { version >= NearbyProtocol.rememberVersion }
     }
 
     @Published private(set) var status: Status = .off
@@ -48,10 +58,26 @@ final class NearbyService: ObservableObject {
     @Published private(set) var offers: [NearbyIncomingOffer] = []
     /// Accepted offers still arriving, in the order they were accepted.
     @Published private(set) var receiving: [NearbyReceiving] = []
+    /// The Macs remembered here, in the order they were remembered.
+    @Published private(set) var rememberedMacs: [NearbyRememberedMac] = []
+    /// Where the Remember sheet stands; nil while it's closed.
+    @Published private(set) var rememberPhase: NearbyRememberPhase?
 
     /// What an accepted offer brought, once it has all arrived and checked out, with
-    /// the name the sender gave.
-    var onReceived: ((_ items: [NearbyReceivedItem], _ senderName: String) -> Void)?
+    /// the name the sender gave (a remembered Mac's remembered name), and whether it
+    /// came from a remembered Mac, accepted without asking.
+    var onReceived: ((_ items: [NearbyReceivedItem], _ senderName: String, _ fromRemembered: Bool) -> Void)?
+    /// A remembered Mac's offer was turned away: its files don't fit on the disk with
+    /// `spareSpace` to spare.
+    var onRememberedOfferTooLarge: ((_ senderName: String) -> Void)?
+    /// Where the remembered Macs are kept. Setting it reads them; without it they're
+    /// only kept until Polka quits, as in tests.
+    var rememberedFile: URL? {
+        didSet {
+            remembered = rememberedFile.map(NearbyRememberedList.load(from:)) ?? NearbyRememberedList()
+            rememberedChanged(save: false)
+        }
+    }
     /// An accepted offer that never fully arrived, with the name the sender gave and
     /// why: the sender stopped it, or something went wrong. Nothing from it was kept.
     /// Not called when the person here cancelled.
@@ -82,6 +108,9 @@ final class NearbyService: ObservableObject {
     /// The Settings switch.
     var isEnabled: Bool { settings.nearbySharingEnabled }
 
+    /// This Mac's public key, once it's been read from the Keychain.
+    var thisMacKey: Data? { identity?.publicKey }
+
     /// The name others see right now.
     var displayName: String {
         ShelfSettings.nearbyName(typed: settings.nearbyName, macName: Self.macName)
@@ -96,8 +125,9 @@ final class NearbyService: ObservableObject {
     /// settings change, only once the switch goes off and on.
     private var identityFailed = false
     private var listener: NWListener?
-    /// What the listener was started with, so a change restarts it.
-    private var advertised: (name: String, receiveFrom: NearbyReceiveFrom)?
+    /// What the listener was started with, so a change restarts it: the name, and
+    /// whether every Mac hears it, or only remembered ones.
+    private var advertised: (name: String, visibleToAll: Bool)?
     private var browser: NWBrowser?
     private var browseRequests = 0
     private var exchanges: [ObjectIdentifier: NearbyHelloExchange] = [:]
@@ -109,6 +139,15 @@ final class NearbyService: ObservableObject {
     private let freeSpace: (URL) -> Int64?
     /// Accepted offers still arriving.
     private var accepted: Set<UUID> = []
+    /// Those of them accepted without asking, from remembered Macs.
+    private var acceptedWithoutAsking: Set<UUID> = []
+    private var remembered = NearbyRememberedList()
+    private var rememberSession: NearbyRememberSession?
+    /// Until when the Remember sheet takes a request.
+    private var rememberLooksUntil: Date?
+    private var rememberDeadline: DispatchWorkItem?
+    /// How long the Remember sheet takes requests (PRD: Remembering spam).
+    static let rememberWindow: TimeInterval = 120
     private var line = NearbyOfferLine()
     /// Where each Mac found nearby can be reached, by its Bonjour name.
     private var endpoints: [String: NWEndpoint] = [:]
@@ -223,8 +262,8 @@ final class NearbyService: ObservableObject {
             makeIdentity()
             return
         }
-        let wanted = (name: displayName, receiveFrom: settings.nearbyReceiveFrom)
-        if listener == nil || advertised?.name != wanted.name || advertised?.receiveFrom != wanted.receiveFrom {
+        let wanted = (name: displayName, visibleToAll: isVisibleToAll)
+        if listener == nil || advertised?.name != wanted.name || advertised?.visibleToAll != wanted.visibleToAll {
             startListener(identity, as: wanted)
         }
         if browseRequests > 0 {
@@ -245,6 +284,11 @@ final class NearbyService: ObservableObject {
         outgoing.values.forEach { $0.cancel() }
         outgoing = [:]
         preparing = []
+        let session = rememberSession
+        rememberSession = nil
+        session?.cancel()
+        rememberDeadline?.cancel()
+        if rememberPhase != nil { rememberPhase = .stoppedLooking }
         identityFailed = false
         status = .off
         Log.nearby.info("Nearby Sharing is off")
@@ -280,14 +324,16 @@ final class NearbyService: ObservableObject {
 
     // MARK: - Listener
 
-    private func startListener(_ identity: NearbyIdentity, as wanted: (name: String, receiveFrom: NearbyReceiveFrom)) {
+    private func startListener(_ identity: NearbyIdentity, as wanted: (name: String, visibleToAll: Bool)) {
         listener?.cancel()
         // A new Bonjour name with every change, so Macs browsing see a new service and
-        // ask again, and learn the new name.
+        // ask again, and learn the new name, or that they no longer get one.
         serviceName = Self.randomServiceName()
         // Connections already made stay up through a change of name. Not through
-        // turning to Remembered Macs Only, which shuts everyone else out at once.
-        if advertised?.receiveFrom != wanted.receiveFrom { endIncoming() }
+        // hiding from all but remembered Macs, which shuts everyone else out at once.
+        if advertised?.visibleToAll == true && !wanted.visibleToAll {
+            incoming.values.filter { !remembered.contains($0.peerKey) }.forEach { $0.end(because: nil) }
+        }
         advertised = wanted
         do {
             let listener = try NWListener(using: Self.parameters(identity))
@@ -304,7 +350,7 @@ final class NearbyService: ObservableObject {
             listener.start(queue: .main)
             self.listener = listener
             if status != .on { status = .starting }
-            Log.nearby.info("Advertising as \(self.serviceName, privacy: .public), receiving from \(wanted.receiveFrom.rawValue, privacy: .public)")
+            Log.nearby.info("Advertising as \(self.serviceName, privacy: .public), \(wanted.visibleToAll ? "to everyone" : "to remembered Macs", privacy: .public)")
         } catch {
             self.listener = nil
             status = .failed("Polka couldn't listen for Macs nearby (\(error.logCode)).")
@@ -334,14 +380,12 @@ final class NearbyService: ObservableObject {
             Log.nearby.info("Turned a connection away: too many at once")
             return
         }
-        // Only receiving from remembered Macs: nobody can be remembered yet (N4), so
-        // every caller is closed on without hearing this Mac's name.
-        let hello = advertised?.receiveFrom == .everyone
-            ? NearbyHello(version: NearbyProtocol.version, name: advertised?.name)
-            : nil
-        let session = NearbyIncomingSession(connection: connection, hello: hello)
+        let session = NearbyIncomingSession(connection: connection) { [weak self] key in
+            self?.hello(forCaller: key)
+        }
         incoming[session.id] = session
         session.onOffer = { [weak self] in self?.offered($0) }
+        session.onRememberRequest = { [weak self] in self?.rememberRequested(by: $0) }
         session.onReceived = { [weak self, weak session] items in
             guard let self, let session else { return }
             self.received(items, by: session)
@@ -357,6 +401,20 @@ final class NearbyService: ObservableObject {
 
     private func endIncoming() {
         incoming.values.forEach { $0.end(because: nil) }
+    }
+
+    /// Every Mac hears this Mac's name, or only remembered ones: Receive From says
+    /// which, but while the Remember sheet takes requests, everyone does, so a Mac
+    /// that's to be remembered can find this one.
+    private var isVisibleToAll: Bool {
+        settings.nearbyReceiveFrom == .everyone || rememberPhase == .looking
+    }
+
+    /// What this Mac says to a caller, once its key is known: its name, or nothing at
+    /// all to a Mac it hides from.
+    private func hello(forCaller key: Data?) -> NearbyHello? {
+        guard let advertised, advertised.visibleToAll || remembered.contains(key) else { return nil }
+        return NearbyHello(version: NearbyProtocol.version, name: advertised.name)
     }
 
     // MARK: - Offers to this Mac
@@ -378,21 +436,29 @@ final class NearbyService: ObservableObject {
     @discardableResult
     func accept(_ id: UUID) -> AcceptResult {
         guard let offer = offers.first(where: { $0.id == id }), let session = incoming[id] else { return .gone }
-        let total = offer.offer.totalFileBytes
-        if offer.offer.hasFiles {
-            guard let copies, let free = freeSpace(copies.folder), free >= total + Self.spareSpace else {
-                decline(id)
-                Log.nearby.info("Declined an offer: not enough space")
-                return .notEnoughSpace
-            }
+        guard hasRoom(for: offer.offer) else {
+            decline(id)
+            Log.nearby.info("Declined an offer: not enough space")
+            return .notEnoughSpace
         }
         removeOffer(id)
-        accepted.insert(id)
-        receiving.append(NearbyReceiving(id: id, senderName: offer.senderName, itemCount: offer.offer.items.count,
-                                         receivedBytes: 0, totalBytes: total))
-        session.answer(accept: true, copies: copies)
-        Log.nearby.info("Accepted an offer of \(total, privacy: .public) bytes of files")
+        startReceiving(session, offer.offer, from: offer.senderName)
         return .accepted
+    }
+
+    /// The disk has room for the offer's files and `spareSpace` besides.
+    private func hasRoom(for offer: NearbyOffer) -> Bool {
+        guard offer.hasFiles else { return true }
+        guard let copies, let free = freeSpace(copies.folder) else { return false }
+        return free >= offer.totalFileBytes + Self.spareSpace
+    }
+
+    private func startReceiving(_ session: NearbyIncomingSession, _ offer: NearbyOffer, from name: String) {
+        accepted.insert(session.id)
+        receiving.append(NearbyReceiving(id: session.id, senderName: name, itemCount: offer.items.count,
+                                         receivedBytes: 0, totalBytes: offer.totalFileBytes))
+        session.answer(accept: true, copies: copies)
+        Log.nearby.info("Accepted an offer of \(offer.totalFileBytes, privacy: .public) bytes of files")
     }
 
     /// Stops an accepted offer that's still arriving. Nothing from it is kept.
@@ -417,6 +483,26 @@ final class NearbyService: ObservableObject {
             session.end(because: "offer without a sender")
             return
         }
+        // A remembered Mac's tiles arrive without asking (NS-12), with every check on
+        // what arrives just the same. Remembered is its key, never its name.
+        if let mac = heard(name, from: session.peerKey) {
+            guard hasRoom(for: offer) else {
+                session.answer(accept: false, copies: nil)
+                Log.nearby.info("Turned a remembered Mac's offer away: not enough space")
+                onRememberedOfferTooLarge?(mac.name)
+                return
+            }
+            acceptedWithoutAsking.insert(session.id)
+            startReceiving(session, offer, from: mac.name)
+            return
+        }
+        // Hidden from all but remembered Macs: a stranger only gets this far while the
+        // Remember sheet is open, and that's for remembering, not sharing.
+        guard settings.nearbyReceiveFrom == .everyone else {
+            session.answer(accept: false, copies: nil)
+            Log.nearby.info("Turned an offer away: not from a remembered Mac")
+            return
+        }
         let admission = line.admit(id: session.id, fingerprint: fingerprint)
         guard admission == .admitted else {
             session.answer(accept: false, copies: nil)
@@ -424,7 +510,8 @@ final class NearbyService: ObservableObject {
             return
         }
         offers.append(NearbyIncomingOffer(id: session.id, senderName: name, fingerprint: fingerprint,
-                                          offer: offer, pictures: session.previews))
+                                          offer: offer, pictures: session.previews,
+                                          usesRememberedName: remembered.mac(named: name) != nil))
         Log.nearby.info("""
             Offer of \(offer.items.count, privacy: .public) item(s) from \(name, privacy: .private), \
             \(self.offers.count, privacy: .public) waiting
@@ -440,14 +527,23 @@ final class NearbyService: ObservableObject {
     }
 
     private func received(_ items: [NearbyReceivedItem], by session: NearbyIncomingSession) {
+        let name = senderName(of: session)
         accepted.remove(session.id)
         receiving.removeAll { $0.id == session.id }
-        Log.nearby.info("Received \(items.count, privacy: .public) item(s)")
-        onReceived?(items, session.senderName ?? "")
+        let withoutAsking = acceptedWithoutAsking.remove(session.id) != nil
+        Log.nearby.info("Received \(items.count, privacy: .public) item(s)\(withoutAsking ? " from a remembered Mac" : "", privacy: .public)")
+        onReceived?(items, name, withoutAsking)
+    }
+
+    /// The name an accepted offer is shown under: a remembered Mac's remembered name.
+    private func senderName(of session: NearbyIncomingSession) -> String {
+        receiving.first { $0.id == session.id }?.senderName ?? session.senderName ?? ""
     }
 
     private func incomingEnded(_ session: NearbyIncomingSession) {
+        let name = senderName(of: session)
         incoming[session.id] = nil
+        acceptedWithoutAsking.remove(session.id)
         // Withdrawn: the other Mac went away before an answer.
         if offers.contains(where: { $0.id == session.id }) {
             removeOffer(session.id)
@@ -460,10 +556,10 @@ final class NearbyService: ObservableObject {
                 break
             case .cancelledByThem:
                 Log.nearby.info("The sender stopped an accepted offer")
-                onReceiveFailed?(session.senderName ?? "", true)
+                onReceiveFailed?(name, true)
             case .finished, .failed:
                 Log.nearby.error("An accepted offer didn't fully arrive")
-                onReceiveFailed?(session.senderName ?? "", false)
+                onReceiveFailed?(name, false)
             }
         }
     }
@@ -590,6 +686,194 @@ final class NearbyService: ObservableObject {
         session.start()
     }
 
+    // MARK: - Remembering
+
+    /// Forget: that Mac's offers go back to asking first, at once. The other Mac isn't
+    /// told; each side keeps its own list.
+    func forget(_ key: Data) {
+        guard remembered.forget(key) else { return }
+        rememberedChanged()
+        Log.nearby.info("Forgot a remembered Mac")
+    }
+
+    /// The Remember sheet opened: Macs nearby are looked for, and one of them may ask to
+    /// remember this one, for `rememberWindow`. Pair with `stopRemembering`.
+    func startRemembering() {
+        guard rememberPhase == nil else { return }
+        beginBrowsing()
+        lookForRememberRequests()
+    }
+
+    /// Try Again, after the time ran out or remembering didn't work.
+    func rememberAgain() {
+        guard rememberPhase != nil, rememberSession == nil else { return }
+        lookForRememberRequests()
+    }
+
+    /// The sheet closed: anything going on is cancelled.
+    func stopRemembering() {
+        guard rememberPhase != nil else { return }
+        endRememberSession()
+        rememberDeadline?.cancel()
+        rememberPhase = nil
+        endBrowsing()
+    }
+
+    /// The person here picked a Mac in the sheet: asks it to remember this one.
+    func remember(_ peerID: String) {
+        guard rememberPhase == .looking, let identity,
+              let peer = peers.first(where: { $0.id == peerID }), let endpoint = endpoints[peerID],
+              peer.publicKey != identity.publicKey else { return }
+        guard peer.canRemember else {
+            rememberPhase = .failed(name: peer.name, .tooOld)
+            apply()
+            return
+        }
+        let session = NearbyRememberSession(asking: NWConnection(to: endpoint, using: Self.parameters(identity)),
+                                            hello: NearbyHello(version: NearbyProtocol.version, name: displayName),
+                                            ownKey: identity.publicKey, expectedKey: peer.publicKey)
+        Log.nearby.info("Asking \(peer.name, privacy: .private) to remember this Mac")
+        run(session, name: peer.name)
+    }
+
+    /// Codes Match.
+    func confirmRememberCode() {
+        guard case let .comparing(name, code, askedByThem, false) = rememberPhase,
+              let session = rememberSession else { return }
+        rememberPhase = .comparing(name: name, code: code, askedByThem: askedByThem, confirmedHere: true)
+        session.confirm()
+    }
+
+    /// Cancel while asking or comparing: the other Mac is told, and the sheet goes back
+    /// to the list for another `rememberWindow`.
+    func cancelRemembering() {
+        guard rememberSession != nil else { return }
+        endRememberSession()
+        Log.nearby.info("Cancelled remembering")
+        lookForRememberRequests()
+    }
+
+    private func lookForRememberRequests() {
+        rememberDeadline?.cancel()
+        let deadline = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.rememberPhase == .looking else { return }
+                self.rememberPhase = .stoppedLooking
+                self.apply()
+            }
+        }
+        rememberDeadline = deadline
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.rememberWindow, execute: deadline)
+        rememberPhase = .looking
+        apply()
+    }
+
+    private func endRememberSession() {
+        let session = rememberSession
+        rememberSession = nil
+        session?.cancel()
+    }
+
+    /// A Mac asks to remember this one. Taken only while the sheet lists Macs, one at a
+    /// time; otherwise it hears this Mac isn't ready.
+    private func rememberRequested(by session: NearbyIncomingSession) {
+        guard let identity, let key = session.peerKey, let name = session.senderName,
+              key != identity.publicKey else {
+            session.refuseRemembering()
+            return
+        }
+        if case .connecting(_, false) = rememberPhase, let asking = rememberSession, asking.expectedKey == key {
+            // Both people picked each other at once, so two connections cross. Both
+            // Macs keep the one asked by the Mac with the lower key.
+            guard key.lexicographicallyPrecedes(identity.publicKey) else {
+                session.refuseRemembering()
+                return
+            }
+            endRememberSession()
+        } else if rememberPhase != .looking {
+            session.refuseRemembering()
+            Log.nearby.info("Turned a remember request away: not looking")
+            return
+        }
+        incoming[session.id] = nil
+        let connection = session.handOver()
+        guard let remember = NearbyRememberSession(asked: connection, by: name, ownKey: identity.publicKey) else {
+            connection.end(because: "no key or exporter to bind the code to")
+            return
+        }
+        Log.nearby.info("Asked to remember \(name, privacy: .private)")
+        run(remember, name: remembered.mac(for: key)?.name ?? name)
+    }
+
+    private func run(_ session: NearbyRememberSession, name: String) {
+        rememberSession = session
+        rememberPhase = .connecting(name: name, askedByThem: session.askedByThem)
+        session.onCode = { [weak self, weak session] code in
+            guard let self, let session, self.rememberSession === session else { return }
+            self.rememberPhase = .comparing(name: name, code: code, askedByThem: session.askedByThem,
+                                            confirmedHere: false)
+        }
+        session.onEnd = { [weak self, weak session] outcome in
+            guard let self, let session, self.rememberSession === session else { return }
+            self.rememberSession = nil
+            switch outcome {
+            case let .remembered(key, heardName):
+                self.remembered.remember(key, name: heardName, at: Date())
+                self.rememberedChanged()
+                self.rememberPhase = .remembered(name: self.remembered.mac(for: key)?.name ?? heardName)
+                Log.nearby.info("Remembered a Mac")
+            case .cancelledHere:
+                break
+            case let .failed(reason):
+                self.rememberPhase = .failed(name: name, reason)
+                Log.nearby.info("Remembering didn't work: \(String(describing: reason), privacy: .public)")
+            }
+            self.apply()
+        }
+        apply()
+        session.start()
+    }
+
+    /// A Mac gave this name. If its key is remembered, it's shown by the name from now
+    /// on, unless another remembered Mac goes by it. The remembered Mac, or nil if the
+    /// key isn't one.
+    @discardableResult
+    private func heard(_ name: String, from key: Data?) -> NearbyRememberedMac? {
+        guard let mac = remembered.mac(for: key) else { return nil }
+        if mac.name != name, remembered.rename(mac.publicKey, to: name) {
+            rememberedChanged()
+            Log.nearby.info("A remembered Mac has a new name")
+        }
+        return remembered.mac(for: key)
+    }
+
+    private func rememberedChanged(save: Bool = true) {
+        if save, let rememberedFile {
+            do {
+                try remembered.save(to: rememberedFile)
+            } catch {
+                Log.nearby.error("Remembered Macs couldn't be saved: \(error.logCode, privacy: .public)")
+            }
+        }
+        rememberedMacs = remembered.macs
+        peers = peers.map { peer in
+            var peer = peer
+            peer.rememberedName = remembered.mac(for: peer.publicKey)?.name
+            return peer
+        }.sorted(by: Self.listOrder)
+        // A Mac that hid from this one may not now that they remember each other, so
+        // every Mac nearby that gave no name is asked again.
+        asked = asked.filter { name in peers.contains { $0.id == name } }
+        unanswered = [:]
+        askNames()
+    }
+
+    /// Remembered Macs first, then by name.
+    private static func listOrder(_ first: Peer, _ second: Peer) -> Bool {
+        if first.isRemembered != second.isRemembered { return first.isRemembered }
+        return first.name.localizedStandardCompare(second.name) == .orderedAscending
+    }
+
     // MARK: - Browser
 
     private func startBrowser() {
@@ -648,8 +932,7 @@ final class NearbyService: ObservableObject {
     private func askNames() {
         guard browser != nil, let identity else { return }
         // A Mac that only shares with remembered Macs asks without telling its name.
-        let hello = NearbyHello(version: NearbyProtocol.version,
-                                name: settings.nearbyReceiveFrom == .everyone ? displayName : nil)
+        let hello = NearbyHello(version: NearbyProtocol.version, name: isVisibleToAll ? displayName : nil)
         for (name, endpoint) in endpoints.sorted(by: { $0.key < $1.key }) where !asked.contains(name) {
             guard exchanges.count < Self.maxOutgoing else { break }
             asked.insert(name)
@@ -680,11 +963,13 @@ final class NearbyService: ObservableObject {
     private func answered(_ answer: NearbyHelloExchange.Answer, by serviceName: String) {
         // Gone from the list while it was being asked, or nameless.
         guard asked.contains(serviceName), let name = answer.hello.name else { return }
-        let peer = Peer(id: serviceName, name: name, fingerprint: answer.fingerprint,
-                        isPeerToPeer: answer.isPeerToPeer, version: answer.hello.version)
+        let peer = Peer(id: serviceName, heardName: name, fingerprint: answer.fingerprint,
+                        publicKey: answer.publicKey, isPeerToPeer: answer.isPeerToPeer,
+                        version: answer.hello.version,
+                        rememberedName: heard(name, from: answer.publicKey)?.name)
         peers.removeAll { $0.id == serviceName }
         peers.append(peer)
-        peers.sort { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        peers.sort(by: Self.listOrder)
         Log.nearby.info("""
             Found \(name, privacy: .private), key \(answer.fingerprint ?? "none", privacy: .private), \
             \(answer.isPeerToPeer ? "peer-to-peer" : "shared network", privacy: .public)

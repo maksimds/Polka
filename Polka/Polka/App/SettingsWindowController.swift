@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 /// The Settings window, opened from the menu bar menu or the gear in the panel.
@@ -23,8 +24,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// The room the window last opened in, for refitting it when the tab changes.
     private var area: NSRect?
     private var hasBeenPlaced = false
-    /// Each tab's whole form height, measured once.
+    /// Each tab's whole form height, measured once, and again when the remembered
+    /// Macs change, since each one is a row.
     private var formHeights: [Tab: CGFloat] = [:]
+    private var rememberedCount: AnyCancellable?
     /// Room kept between the window and the screen's edges when it has to shrink.
     private static let screenMargin: CGFloat = 8
     /// Runs once the window has closed. The shelf stays open while Settings is, and
@@ -37,6 +40,20 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.nearby = nearby
         self.focus = focus
         super.init()
+        rememberedCount = nearby.$rememberedMacs
+            .map(\.count)
+            .removeDuplicates()
+            .dropFirst()
+            // `@Published` reports a change before it's made, so measured a tick later.
+            .sink { [weak self] _ in
+                DispatchQueue.main.async { self?.rememberedMacsChanged() }
+            }
+    }
+
+    private func rememberedMacsChanged() {
+        formHeights[.nearby] = nil
+        guard let window, window.isVisible, selectedTab == .nearby else { return }
+        fit(window, animate: true)
     }
 
     /// Opens on `screen` (the pointer's if nil), below `top` if given: the bottom of the

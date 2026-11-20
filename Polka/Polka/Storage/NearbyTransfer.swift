@@ -29,7 +29,8 @@ enum NearbyReceivedItem: Equatable {
 ///
 /// A caller that's only asking this Mac's name (browsing) says hello and closes; one
 /// that wants to share says hello, then makes its offer and sends the pictures it
-/// announced, and waits for the answer.
+/// announced, and waits for the answer. One that wants to remember this Mac asks
+/// instead of offering, and from there `NearbyRememberExchange` takes over.
 struct NearbyIncomingTransfer {
     enum Stage: Equatable {
         case hello
@@ -70,6 +71,8 @@ struct NearbyIncomingTransfer {
         /// Everything accepted has arrived. Links and texts are here; each file is
         /// where its writer put it, in the order of `fileIndices`.
         case complete(links: [Int: URL], texts: [Int: String])
+        /// It asks to remember this Mac: hand the connection to remembering.
+        case rememberRequested
     }
 
     private(set) var stage: Stage = .hello
@@ -114,6 +117,11 @@ struct NearbyIncomingTransfer {
             self.offer = offer
             stage = .previews
             return previewsIfAllIn()
+        case (.offer, .remember):
+            guard senderVersion >= NearbyProtocol.rememberVersion else { throw Failure.tooOld }
+            guard senderName != nil else { throw Failure.nameless }
+            stage = .finished
+            return .rememberRequested
         case let (.previews, .preview(preview)):
             guard let offer, offer.previews.contains(preview.index), previews[preview.index] == nil else {
                 throw Failure.notWhatWasOffered
@@ -456,15 +464,19 @@ struct NearbyIncomingOffer: Identifiable, Equatable {
     /// The pictures the other Mac sent, by the preview tile they belong to. Checked by
     /// their bytes (`NearbyPreviewImage`) but not decoded until Show Preview.
     let pictures: [ShelfItem.ID: Data]
+    /// It goes by the name of a remembered Mac, or one that looks like it, with another
+    /// key: someone claiming to be a Mac this one trusts, or that Mac with a new key.
+    let usesRememberedName: Bool
 
     /// Where an offered file's tile points while it's only an offer: nowhere real,
     /// so nothing reads it, but with the file's name, so its type shows.
     static let placeholderFolder = "/.polka-offered"
 
     init(id: UUID, senderName: String, fingerprint: String, offer: NearbyOffer,
-         pictures: [Int: Data] = [:], arrivedAt: Date = Date()) {
+         pictures: [Int: Data] = [:], usesRememberedName: Bool = false, arrivedAt: Date = Date()) {
         self.id = id
         self.senderName = senderName
+        self.usesRememberedName = usesRememberedName
         self.fingerprint = fingerprint
         self.offer = offer
         previews = offer.items.enumerated().map { index, item in

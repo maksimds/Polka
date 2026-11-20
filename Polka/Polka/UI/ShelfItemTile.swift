@@ -184,9 +184,12 @@ struct ShelfItemTile: View {
             sendTo.isShown = { targets() != nil }
             sendTo.submenu = {
                 (targets() ?? []).map { target in
-                    TileDragView.MenuEntry(title: target.title, isEnabled: target.isEnabled) {
+                    var entry = TileDragView.MenuEntry(title: target.title, isEnabled: target.isEnabled,
+                                                       startsGroup: target.startsGroup) {
                         if let peerID = target.peerID { send(peerID) }
                     }
+                    entry.isHeader = target.isHeader
+                    return entry
                 }
             }
             entries.append(sendTo)

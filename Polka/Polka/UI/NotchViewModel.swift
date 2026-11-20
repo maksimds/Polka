@@ -220,9 +220,30 @@ final class NotchViewModel: ObservableObject {
     }
 
     /// What an accepted offer brought: new tiles at the top, marked with who sent them,
-    /// with the usual duplicate check and message. The shelf scrolls to them.
-    func receiveNearby(_ items: [NearbyReceivedItem], from senderName: String) {
-        reveal(add(items.map { $0.draft(from: senderName) }))
+    /// with the usual duplicate check and message. The shelf scrolls to them. Tiles a
+    /// remembered Mac sent without asking come with a message saying who sent what
+    /// (NS-12), which stays until its ×, like other messages.
+    func receiveNearby(_ items: [NearbyReceivedItem], from senderName: String, withoutAsking: Bool = false) {
+        let drafts = items.map { $0.draft(from: senderName) }
+        let added = add(drafts)
+        if withoutAsking, !drafts.isEmpty {
+            let name = store.items.first { added.contains($0.id) }?.displayName ?? drafts[0].title
+            notice = Self.arrivalMessage(from: senderName, count: drafts.count, added: added.count, firstName: name)
+        }
+        reveal(added)
+    }
+
+    /// "Alex sent \u{201C}report.pdf\u{201D}", "Alex sent 3 items", and what of it was on the
+    /// shelf already.
+    static func arrivalMessage(from sender: String, count: Int, added: Int, firstName: String) -> String {
+        let what = count == 1 ? "\u{201C}\(firstName)\u{201D}" : "\(count) items"
+        let duplicates = count - added
+        if duplicates == 0 { return "\(sender) sent \(what)" }
+        if added == 0 {
+            return count == 1 ? "\(sender) sent \(what), already on the shelf"
+                              : "\(sender) sent \(what), all already on the shelf"
+        }
+        return "\(sender) sent \(what). \(duplicates) \(duplicates == 1 ? "was" : "were") already on the shelf"
     }
 
     // MARK: Sending
@@ -246,6 +267,14 @@ final class NotchViewModel: ObservableObject {
         let ids = selection.contains(id) ? selection : [id]
         let chosen = store.items.filter { ids.contains($0.id) && isSendable($0) }
         return chosen.filter { $0.id == id } + chosen.filter { $0.id != id }
+    }
+
+    /// What of the tiles being dragged can be sent to a Mac nearby (N5), in the drag's
+    /// order: the same as "Send To" leaves in. Empty while no tile is dragged.
+    var tileMoveItemsToSend: [ShelfItem] {
+        guard let tileMove else { return [] }
+        let byID = Dictionary(store.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return tileMove.ids.compactMap { byID[$0] }.filter(isSendable)
     }
 
     /// How many selected tiles "Send To" would offer, for "Send 3 Items To".

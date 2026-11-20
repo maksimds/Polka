@@ -167,6 +167,7 @@ struct NearbySettingsView: View {
     var body: some View {
         Form {
             NearbySection(nearby: nearby)
+            RememberedMacsSection(nearby: nearby)
         }
         .formStyle(.grouped)
         .scrollBounceBehavior(.basedOnSize)
@@ -235,8 +236,70 @@ private struct NearbySection: View {
         default:
             switch receiveFrom {
             case .everyone: return "Anyone nearby with Polka can see you as \u{201C}\(displayName)\u{201D}. \(wifi)"
-            case .remembered: return "Only Macs you've remembered can see you. Others nearby don't get your name. \(wifi)"
+            case .remembered: return "Only Macs you've remembered can see you and send to you. Others nearby don't get your name. \(wifi)"
             }
+        }
+    }
+}
+
+/// The Macs remembered here (NS-13), each with Forget, and the button that opens the
+/// Remember sheet (NS-11). Forget asks first: remembering a Mac again takes both people,
+/// in person.
+private struct RememberedMacsSection: View {
+    @ObservedObject var nearby: NearbyService
+    @AppStorage(ShelfSettings.nearbySharingKey) private var isOn = false
+    @State private var isRemembering = false
+    @State private var macToForget: NearbyRememberedMac?
+
+    private var macs: [NearbyRememberedMac] {
+        nearby.rememberedMacs.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    var body: some View {
+        Section {
+            if macs.isEmpty {
+                Text("No remembered Macs yet")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(macs) { mac in
+                HStack(spacing: 10) {
+                    Image(systemName: "laptopcomputer")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(mac.name)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Text("Remembered \(mac.rememberedAt.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Forget") { macToForget = mac }
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Remember a Nearby Mac\u{2026}") { isRemembering = true }
+                    .disabled(!isOn || nearby.status != .on)
+            }
+        } header: {
+            Text("Remembered Macs")
+        } footer: {
+            SettingsFootnote(text: "Tiles from a remembered Mac arrive without asking. To remember one, you both choose Remember a Nearby Mac\u{2026} and check that your screens show the same code.")
+                .padding(.bottom, 10)
+        }
+        .sheet(isPresented: $isRemembering) {
+            RememberMacSheet(nearby: nearby)
+        }
+        .alert("Forget \u{201C}\(macToForget?.name ?? "")\u{201D}?",
+               isPresented: Binding(get: { macToForget != nil }, set: { if !$0 { macToForget = nil } }),
+               presenting: macToForget) { mac in
+            Button("Cancel", role: .cancel) {}
+            Button("Forget", role: .destructive) { nearby.forget(mac.publicKey) }
+        } message: { _ in
+            Text("Its tiles will ask first again. To remember it again, you\u{2019}ll both need to compare codes.")
         }
     }
 }

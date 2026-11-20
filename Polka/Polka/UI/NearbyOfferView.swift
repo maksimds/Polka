@@ -56,7 +56,9 @@ struct NearbyOfferView: View {
     }
 
     /// "Alex wants to share 3 items", with "Not verified" beside it, since anyone can
-    /// call themselves anything. A long name is cut short; the rest always shows.
+    /// call themselves anything. A long name is cut short; the rest always shows. A Mac
+    /// using a remembered Mac's name with another key gets a yellow "Not the
+    /// Remembered Mac" instead, as SSH warns of a changed host key.
     private var titleLine: some View {
         HStack(spacing: 6) {
             Text(offer.senderName)
@@ -70,12 +72,14 @@ struct NearbyOfferView: View {
                     .foregroundStyle(.white.opacity(0.6))
                     .fixedSize()
             }
-            Text("Not verified")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.white.opacity(0.6))
+            Text(offer.usesRememberedName ? "Not the Remembered Mac" : "Not verified")
+                .font(.system(size: 10, weight: offer.usesRememberedName ? .semibold : .medium))
+                .foregroundStyle(offer.usesRememberedName ? NearbyOfferTile.warningColor : .white.opacity(0.6))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 1.5)
-                .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 0.75))
+                .overlay(Capsule().strokeBorder(offer.usesRememberedName ? NearbyOfferTile.warningColor.opacity(0.7)
+                                                                         : .white.opacity(0.25),
+                                                lineWidth: 0.75))
                 .fixedSize()
         }
         .font(.system(size: 13))

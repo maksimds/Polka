@@ -19,6 +19,11 @@ struct ShelfLocations {
         folder.appendingPathComponent("Copies", isDirectory: true)
     }
 
+    /// The Macs remembered for Nearby Sharing: their public keys, names and when.
+    var rememberedMacsFile: URL {
+        folder.appendingPathComponent("remembered-macs.json")
+    }
+
     /// Where macOS saves screenshots while "Save Screenshots to Polka" is on. Each one
     /// is moved on into a copy folder as soon as it arrives. The name is what the
     /// Screenshot toolbar's Options menu shows as the save location.

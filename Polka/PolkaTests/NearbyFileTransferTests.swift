@@ -531,7 +531,7 @@ struct NearbyFileSendingTests {
         }
         let peerID = try await found(receiver, from: sender)
         var received: [NearbyReceivedItem] = []
-        receiver.service.onReceived = { items, _ in received = items }
+        receiver.service.onReceived = { items, _, _ in received = items }
         var progress: [Double] = []
         let observer = receiver.service.$receiving.sink { progress += $0.map(\.fraction) }
         defer { observer.cancel() }
@@ -577,7 +577,7 @@ struct NearbyFileSendingTests {
         var failures: [Bool] = []
         receiver.service.onReceiveFailed = { _, byThem in failures.append(byThem) }
         var received = 0
-        receiver.service.onReceived = { _, _ in received += 1 }
+        receiver.service.onReceived = { _, _, _ in received += 1 }
         let file = try scratch.file("big.bin", bytes: randomBytes(40_000_000))
 
         // The receiver stops it: no message for them, nothing kept.

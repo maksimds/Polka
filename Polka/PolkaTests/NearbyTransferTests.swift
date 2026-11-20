@@ -490,7 +490,7 @@ struct NearbySendingTests {
         }
         let peerID = try await found(receiver, from: sender, named: "Receiver \(Int.random(in: 1000...9999))")
         var received: [(items: [NearbyReceivedItem], from: String)] = []
-        receiver.service.onReceived = { received.append(($0, $1)) }
+        receiver.service.onReceived = { items, from, _ in received.append((items, from)) }
         let longText = String(repeating: "Привет, мир! 👋 ", count: 300)
 
         // Accepted: both items arrive, and the sender hears they did.

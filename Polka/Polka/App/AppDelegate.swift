@@ -68,6 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let locations {
             nearby.copies = ShelfCopies(folder: locations.copiesFolder)
             nearby.previewsFolder = locations.previewsFolder
+            nearby.rememberedFile = locations.rememberedMacsFile
         }
 
         let images = ShelfItemImages(previewsFolder: locations?.previewsFolder)

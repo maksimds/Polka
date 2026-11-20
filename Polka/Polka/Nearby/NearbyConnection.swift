@@ -117,17 +117,34 @@ final class NearbyConnection {
         onReady = nil
     }
 
-    /// The other side's key fingerprint, from the TLS session.
-    var peerFingerprint: String? {
-        guard let metadata = connection.metadata(definition: NWProtocolTLS.definition) as? NWProtocolTLS.Metadata else {
-            return nil
-        }
+    /// The other side's public key, from its certificate in the TLS session.
+    var peerPublicKey: Data? {
+        guard let metadata = tlsMetadata else { return nil }
         var key: Data?
         _ = sec_protocol_metadata_access_peer_certificate_chain(metadata.securityProtocolMetadata) { certificate in
             guard key == nil else { return }
             key = NearbyIdentity.publicKey(of: sec_certificate_copy_ref(certificate).takeRetainedValue())
         }
-        return key.map(NearbyIdentity.fingerprint(of:))
+        return key
+    }
+
+    /// The other side's key fingerprint, from the TLS session.
+    var peerFingerprint: String? {
+        peerPublicKey.map(NearbyIdentity.fingerprint(of:))
+    }
+
+    /// A secret only the two ends of this TLS session can work out (TLS 1.3's exporter),
+    /// the same on both, different on every session.
+    func exportedSecret(label: String, count: Int) -> Data? {
+        guard let metadata = tlsMetadata else { return nil }
+        let secret = label.withCString {
+            sec_protocol_metadata_create_secret(metadata.securityProtocolMetadata, label.utf8.count, $0, count)
+        }
+        return secret.map { Data($0 as DispatchData) }
+    }
+
+    private var tlsMetadata: NWProtocolTLS.Metadata? {
+        connection.metadata(definition: NWProtocolTLS.definition) as? NWProtocolTLS.Metadata
     }
 
     /// Over peer-to-peer Wi-Fi (AWDL) rather than a shared network. AWDL's interfaces

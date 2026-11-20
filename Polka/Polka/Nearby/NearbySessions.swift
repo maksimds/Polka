@@ -6,6 +6,8 @@ import Network
 /// then makes its offer, sends the pictures it announced, and the connection waits for
 /// the person here to answer. After Accept, texts and files arrive; files are written
 /// by a `NearbyFileSink`. The rules for what may arrive are `NearbyIncomingTransfer`'s.
+/// A Mac that wants to remember this one asks instead of offering, and the connection
+/// is handed to a `NearbyRememberSession`.
 @MainActor
 final class NearbyIncomingSession {
     /// How it ended, for what the panel says.
@@ -24,6 +26,9 @@ final class NearbyIncomingSession {
     let id = UUID()
     /// An offer arrived, with all its pictures, and checks out.
     var onOffer: ((NearbyIncomingSession) -> Void)?
+    /// It asks to remember this Mac. Answer at once with `handOver` or
+    /// `refuseRemembering`.
+    var onRememberRequest: ((NearbyIncomingSession) -> Void)?
     /// Bytes of files in so far, of how many, after Accept.
     var onProgress: ((_ done: Int64, _ total: Int64) -> Void)?
     /// Everything accepted arrived and checks out. Store it now: the other Mac is told
@@ -36,13 +41,16 @@ final class NearbyIncomingSession {
     private(set) var ending: Ending = .finished
     var senderName: String? { rules.senderName }
     var offer: NearbyOffer? { rules.offer }
+    /// The other Mac's whole public key, once the TLS handshake is done.
+    var peerKey: Data? { connection.peerPublicKey }
     /// The offer's pictures, by place, undecoded.
     private(set) var previews: [Int: Data] = [:]
 
     private let connection: NearbyConnection
-    /// What this side says, or nil to close without a word: a Mac that only receives
-    /// from remembered Macs (none can be remembered before N4).
-    private let hello: NearbyHello?
+    /// What this side says to the Mac with this key, once the handshake shows it, or
+    /// nil to close without a word: a Mac that only receives from remembered Macs does
+    /// that to everyone else.
+    private let hello: (Data?) -> NearbyHello?
     private var rules = NearbyIncomingTransfer()
     private var sink: NearbyFileSink?
     private var hasEnded = false
@@ -52,7 +60,7 @@ final class NearbyIncomingSession {
     /// How long to wait for the next text, picture or piece.
     static let dataTimeout: TimeInterval = 30
 
-    init(connection: NWConnection, hello: NearbyHello?) {
+    init(connection: NWConnection, hello: @escaping (Data?) -> NearbyHello?) {
         self.connection = NearbyConnection(connection, isIncoming: true)
         self.hello = hello
     }
@@ -60,7 +68,7 @@ final class NearbyIncomingSession {
     func start() {
         connection.onReady = { [weak self] in
             guard let self else { return }
-            guard let hello = self.hello else {
+            guard let hello = self.hello(self.connection.peerPublicKey) else {
                 self.connection.end(because: "this Mac receives only from remembered Macs")
                 return
             }
@@ -135,6 +143,23 @@ final class NearbyIncomingSession {
         connection.end(because: reason)
     }
 
+    /// Gives the connection to remembering. This session hears nothing more of it, and
+    /// doesn't report its end.
+    func handOver() -> NearbyConnection {
+        hasEnded = true
+        connection.onMessage = nil
+        connection.onPiece = nil
+        connection.onEnd = nil
+        onEnd = nil
+        return connection
+    }
+
+    /// Nobody here is waiting to remember a Mac, or remembering is busy with another.
+    func refuseRemembering() {
+        connection.send([.decline]) { [weak self] in self?.connection.end(because: nil) }
+        connection.setTimeout(2)
+    }
+
     private func read(_ message: NearbyMessage) throws {
         let event: NearbyIncomingTransfer.Event
         do {
@@ -144,6 +169,8 @@ final class NearbyIncomingSession {
             throw NearbyIncomingTransfer.Failure.cancelled
         }
         switch event {
+        case .rememberRequested:
+            onRememberRequest?(self)
         case .nothing:
             if rules.stage == .previews || rules.stage == .receiving {
                 connection.setTimeout(Self.dataTimeout)

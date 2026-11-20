@@ -11,6 +11,8 @@ final class NearbyHelloExchange {
         let hello: NearbyHello
         /// Their key's fingerprint, from the TLS session.
         let fingerprint: String?
+        /// Their whole public key, from the TLS session.
+        let publicKey: Data?
         /// Over peer-to-peer Wi-Fi (AWDL) rather than a shared network.
         let isPeerToPeer: Bool
     }
@@ -50,8 +52,9 @@ final class NearbyHelloExchange {
                 throw NearbyMessage.Failure.unreadable
             }
             self.hasReceived = true
-            self.onAnswer?(Answer(hello: hello, fingerprint: self.connection.peerFingerprint,
-                                  isPeerToPeer: self.connection.isPeerToPeer))
+            let key = self.connection.peerPublicKey
+            self.onAnswer?(Answer(hello: hello, fingerprint: key.map(NearbyIdentity.fingerprint(of:)),
+                                  publicKey: key, isPeerToPeer: self.connection.isPeerToPeer))
             self.finishIfDone()
         }
         connection.onEnd = { [weak self] reason in
