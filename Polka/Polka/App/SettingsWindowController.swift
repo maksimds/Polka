@@ -5,7 +5,7 @@ import SwiftUI
 /// The Settings window, opened from the menu bar menu or the gear in the panel.
 ///
 /// It's a plain AppKit window rather than a SwiftUI `Settings` scene so that Polka
-/// controls how it comes forward and goes away. Its tabs are a SwiftUI capsule bar at
+/// controls how it comes forward and goes away. Its tabs are a SwiftUI segmented bar at
 /// the top (`SettingsTabBar`), under a title bar that shows no title, and the window
 /// takes each tab's height.
 @MainActor
