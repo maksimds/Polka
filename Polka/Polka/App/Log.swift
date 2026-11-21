@@ -18,6 +18,7 @@ enum Log {
     static let input = Logger(subsystem: subsystem, category: "input")
     static let drop = Logger(subsystem: subsystem, category: "drop")
     static let storage = Logger(subsystem: subsystem, category: "storage")
+    static let nearby = Logger(subsystem: subsystem, category: "nearby")
 }
 
 extension Error {

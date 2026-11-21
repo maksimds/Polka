@@ -3,49 +3,10 @@ import Foundation
 /// Preferences kept in UserDefaults and changed in the Settings window. They can also
 /// be set with `defaults write com.maksimds.Polka <key> <value>`.
 struct ShelfSettings {
-    static let temporaryLifetimeKey = "temporaryLifetimeSeconds"
-    static let defaultTemporaryLifetime: TimeInterval = 24 * 60 * 60
-
-    private static let hour: TimeInterval = 60 * 60
-
-    /// The lifetimes Settings offers, in hours: 1, 6 and 12 hours, 1 and 3 days, 1 week.
-    static let standardTemporaryLifetimes: [TimeInterval] = [1, 6, 12, 24, 72, 168].map { $0 * hour }
-
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-    }
-
-    /// How long an item lasts after it is made temporary. Changing it doesn't touch
-    /// items that are already temporary: each one keeps the expiry it was given.
-    var temporaryLifetime: TimeInterval {
-        get { Self.temporaryLifetime(stored: defaults.double(forKey: Self.temporaryLifetimeKey)) }
-        nonmutating set { defaults.set(newValue, forKey: Self.temporaryLifetimeKey) }
-    }
-
-    /// The lifetime a stored value stands for. Zero (nothing stored) or less means the default.
-    static func temporaryLifetime(stored: Double) -> TimeInterval {
-        stored > 0 ? stored : defaultTemporaryLifetime
-    }
-
-    /// The choices to show in Settings: the standard ones, plus the current lifetime
-    /// if it was set to something else with `defaults write`, so it isn't lost.
-    static func temporaryLifetimeChoices(current: TimeInterval) -> [TimeInterval] {
-        if standardTemporaryLifetimes.contains(current) {
-            return standardTemporaryLifetimes
-        }
-        return (standardTemporaryLifetimes + [current]).sorted()
-    }
-
-    /// A lifetime written out for Settings: "6 hours", "1 day", "1 week",
-    /// or "1 day, 6 hours" for a lifetime set by hand.
-    static func label(forLifetime seconds: TimeInterval) -> String {
-        let formatter = DateComponentsFormatter()
-        formatter.unitsStyle = .full
-        formatter.allowedUnits = [.weekOfMonth, .day, .hour, .minute, .second]
-        formatter.maximumUnitCount = 2
-        return formatter.string(from: seconds) ?? "\(Int(seconds)) seconds"
     }
 
     // MARK: - Hover
@@ -64,7 +25,7 @@ struct ShelfSettings {
     }
 
     /// The delay a stored value stands for. Nothing stored means the default; zero is
-    /// a real choice here, unlike for the lifetime.
+    /// a real choice, opening at once.
     static func hoverDelay(stored: Int?) -> Int {
         guard let stored else { return defaultHoverDelay }
         return min(max(stored, hoverDelayRange.lowerBound), hoverDelayRange.upperBound)
@@ -130,6 +91,52 @@ struct ShelfSettings {
     var shelfSort: ShelfSort {
         get { defaults.string(forKey: Self.shelfSortKey).flatMap(ShelfSort.init(rawValue:)) ?? .none }
         nonmutating set { defaults.set(newValue.rawValue, forKey: Self.shelfSortKey) }
+    }
+
+    // MARK: - Nearby Sharing
+
+    static let nearbySharingKey = "nearbySharingEnabled"
+    static let nearbyNameKey = "nearbyDisplayName"
+    static let nearbyReceiveFromKey = "nearbyReceiveFrom"
+
+    /// Nearby Sharing's switch (NS-1). Off by default: until it's turned on, Polka
+    /// doesn't advertise, browse or listen, and nobody nearby can see or reach it.
+    var nearbySharingEnabled: Bool {
+        get { defaults.bool(forKey: Self.nearbySharingKey) }
+        nonmutating set { defaults.set(newValue, forKey: Self.nearbySharingKey) }
+    }
+
+    /// The name others see, as typed in Settings (NS-2). Empty means the Mac's name.
+    var nearbyName: String {
+        get { defaults.string(forKey: Self.nearbyNameKey) ?? "" }
+        nonmutating set { defaults.set(newValue, forKey: Self.nearbyNameKey) }
+    }
+
+    /// Who can see this Mac and send to it (NS-3). Everyone by default.
+    var nearbyReceiveFrom: NearbyReceiveFrom {
+        get { defaults.string(forKey: Self.nearbyReceiveFromKey).flatMap(NearbyReceiveFrom.init(rawValue:)) ?? .everyone }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: Self.nearbyReceiveFromKey) }
+    }
+
+    /// The name others see: what was typed, cleaned as any name is, or else the Mac's
+    /// name, or else "Mac".
+    static func nearbyName(typed: String, macName: String) -> String {
+        NearbyName.clean(typed) ?? NearbyName.clean(macName) ?? "Mac"
+    }
+}
+
+/// Settings' "Receive From" for Nearby Sharing.
+enum NearbyReceiveFrom: String, CaseIterable {
+    /// Anyone nearby with Polka can see this Mac's name and send to it.
+    case everyone
+    /// Only remembered Macs can. Everyone else gets no name and no answer.
+    case remembered
+
+    var title: String {
+        switch self {
+        case .everyone: return "Everyone"
+        case .remembered: return "Remembered Macs Only"
+        }
     }
 }
 

@@ -15,7 +15,7 @@ struct LinkSafetyTests {
 
     private func linkItem(_ string: String, at sortOrder: Int) -> ShelfItem {
         ShelfItem(id: UUID(), kind: .link, title: string, source: .link(url(string)),
-                  storageMode: .reference, createdAt: Date(), expiresAt: nil, sortOrder: sortOrder)
+                  storageMode: .reference, createdAt: Date(), sortOrder: sortOrder)
     }
 
     private func pasteboard(holding urls: [URL]) -> NSPasteboard {

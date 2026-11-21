@@ -39,6 +39,12 @@ struct NotchGeometry {
         NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.main
     }
 
+    /// Where Settings opens, with the shelf beside it: the built-in notch display, or
+    /// the main display (the one with the menu bar) when the lid is closed.
+    static func settingsScreen() -> NSScreen? {
+        NSScreen.screens.first { $0.safeAreaInsets.top > 0 } ?? NSScreen.screens.first
+    }
+
     /// The screen the pointer is on, or nil if it's on none of them.
     static func screen(containing point: CGPoint) -> NSScreen? {
         let screens = NSScreen.screens

@@ -158,12 +158,12 @@ final class ShelfItemImages {
     /// How a link's tile shows its site's icon, or nil when the link has no icon of
     /// its own. Worked out once per icon.
     func siteIconStyle(for item: ShelfItem) -> SiteIconStyle? {
-        guard let name = item.linkPreview?.iconFileName, let icon = siteIcon(for: item) else { return nil }
-        if let known = siteIconStyles[name] { return known }
+        guard let key = Self.siteIconKey(for: item), let icon = siteIcon(for: item) else { return nil }
+        if let known = siteIconStyles[key] { return known }
         let isLarge = Self.isLargeSiteIcon(icon)
         let style = icon.cgImage(forProposedRect: nil, context: nil, hints: nil)
             .map { Self.style(of: $0, isLarge: isLarge) } ?? (isLarge ? .tile : .logo)
-        siteIconStyles[name] = style
+        siteIconStyles[key] = style
         return style
     }
 
@@ -216,11 +216,19 @@ final class ShelfItemImages {
     }
 
     private func siteIcon(for item: ShelfItem) -> NSImage? {
-        guard let name = item.linkPreview?.iconFileName, let previewsFolder else { return nil }
-        if let cached = siteIcons.object(forKey: name as NSString) { return cached }
+        guard let preview = item.linkPreview, let name = preview.iconFileName,
+              let key = Self.siteIconKey(for: item), let previewsFolder else { return nil }
+        if let cached = siteIcons.object(forKey: key as NSString) { return cached }
         guard let image = NSImage(contentsOf: previewsFolder.appendingPathComponent(name)) else { return nil }
-        siteIcons.setObject(image, forKey: name as NSString)
+        siteIcons.setObject(image, forKey: key as NSString)
         return image
+    }
+
+    /// An icon file keeps its name when "Edit Address" points the link at another
+    /// site, so the icon is remembered by its name and when it was fetched.
+    private static func siteIconKey(for item: ShelfItem) -> String? {
+        guard let preview = item.linkPreview, let name = preview.iconFileName else { return nil }
+        return "\(name) \(preview.fetchedAt.timeIntervalSinceReferenceDate)"
     }
 
     private func makeIcon(for item: ShelfItem) -> NSImage {
@@ -228,8 +236,23 @@ final class ShelfItemImages {
         case .file(let path, _): return NSWorkspace.shared.icon(forFile: path)
         case .link: return NSWorkspace.shared.icon(for: .internetLocation)
         case .text(let text): return Self.textPage(for: text)
+        case .shelfFolder: return Self.shelfFolderPicture
         }
     }
+
+    // MARK: - Shelf folders
+
+    /// A shelf folder's picture (FR-26): Finder's own folder icon in light grey glass,
+    /// so it reads as a folder at a glance but isn't mistaken for a blue folder on
+    /// disk. Made once, from the icon of whichever macOS this is.
+    static let shelfFolderPicture: NSImage = {
+        let side = ShelfFolderPicture.pixels
+        guard let image = ShelfFolderPicture.make(from: NSWorkspace.shared.icon(for: .folder), pixels: side) else {
+            return NSWorkspace.shared.icon(for: .folder)
+        }
+        let points = CGFloat(side) / ShelfFolderPicture.scale
+        return NSImage(cgImage: image, size: NSSize(width: points, height: points))
+    }()
 
     // MARK: - Text
 
@@ -278,4 +301,103 @@ enum SiteIconStyle: Equatable {
     /// A logo or favicon that's dark: on the light card instead, since dark glass
     /// would hide it.
     case darkLogo
+}
+
+/// Turns Finder's folder icon into a shelf folder's light grey glass (FR-26), the way
+/// Polka's other light glass looks (the remove badge, the light card): each part of the
+/// folder keeps its own shading, the back and tab a little darker than the front, but
+/// in grey, by brightness; a sharp line of light runs along every edge that faces up
+/// and a touch of shade along every edge that faces down; a soft sheen lights the top;
+/// and it's a little see-through, so a colored panel tints it. The icon's shadow stays
+/// black.
+enum ShelfFolderPicture {
+    /// The picture square, as `ShelfItemTile.imageSide`.
+    static let points: CGFloat = 52
+    /// Drawn at four times the picture square and scaled down to the screen.
+    static let scale: CGFloat = 4
+    static let pixels = Int(points * scale)
+
+    /// The greys the folder's darkest and brightest parts become.
+    static let darkGrey = 0.66
+    static let lightGrey = 0.94
+    /// How opaque the glass is.
+    static let opacity = 0.94
+    /// How bright the light along the top edges is, how strong the sheen across the
+    /// top, and how dark the shade along the bottom edges, each from 0 to 1.
+    static let rimLight = 0.9
+    static let sheen = 0.35
+    static let shade = 0.12
+
+    /// The brightness, from 0 to 1, of the blue icon's darkest and brightest parts,
+    /// the back and the top of the front, which become `darkGrey` and `lightGrey`.
+    private static let darkestIcon = 0.40
+    private static let brightestIcon = 0.78
+
+    /// `icon` drawn `pixels` wide and made glass. Nil if there's nothing to draw into.
+    nonisolated static func make(from icon: NSImage, pixels side: Int) -> CGImage? {
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8,
+                                      bytesPerRow: side * 4, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            return nil
+        }
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        icon.draw(in: NSRect(x: 0, y: 0, width: side, height: side))
+        NSGraphicsContext.restoreGraphicsState()
+        guard let data = context.data else { return nil }
+        let pixels = data.bindMemory(to: UInt8.self, capacity: side * side * 4)
+        let count = side * side
+
+        // The folder's own coverage and grey, apart from its shadow's.
+        var folderAlpha = [Double](repeating: 0, count: count)
+        var shadowAlpha = [Double](repeating: 0, count: count)
+        var grey = [Double](repeating: 0, count: count)
+        var top = side, bottom = 0
+        for index in 0..<count {
+            let alpha = Double(pixels[index * 4 + 3]) / 255
+            guard alpha > 0 else { continue }
+            // Stored multiplied by their opacity.
+            let red = Double(pixels[index * 4]) / 255 / alpha
+            let green = Double(pixels[index * 4 + 1]) / 255 / alpha
+            let blue = Double(pixels[index * 4 + 2]) / 255 / alpha
+            // The shadow is black; the folder is bright blue.
+            let shadow = min(max(1 - max(red, green, blue) / 0.47, 0), 1)
+            let brightness = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+            let share = min(max((brightness - darkestIcon) / (brightestIcon - darkestIcon), 0), 1)
+            grey[index] = darkGrey + (lightGrey - darkGrey) * share
+            folderAlpha[index] = alpha * (1 - shadow)
+            shadowAlpha[index] = alpha * shadow
+            if folderAlpha[index] > 0.5 {
+                top = min(top, index / side)
+                bottom = max(bottom, index / side)
+            }
+        }
+
+        // The edges are found by comparing each pixel with the one 0.75 pt above or
+        // below, as glass lettering finds its strokes' edges (`GlassGlyph`).
+        let edge = max(Int((Glass.rimWidth * CGFloat(side) / points).rounded()), 1)
+        let height = Double(max(bottom - top, 1))
+        for index in 0..<count where folderAlpha[index] > 0 || shadowAlpha[index] > 0 {
+            let row = index / side
+            let alpha = folderAlpha[index]
+            var value = grey[index]
+            // Brightest at the top, gone by the middle.
+            let depth = Double(row - top) / height
+            value += sheen * max(0, 0.5 - depth) / 0.5 * (1 - value)
+            let above = row >= edge ? folderAlpha[index - edge * side] : 0
+            let below = row + edge < side ? folderAlpha[index + edge * side] : 0
+            value += (1 - value) * max(0, alpha - above) * rimLight
+            value *= 1 - max(0, alpha - below) * shade
+            // The glass over its black shadow.
+            let glass = alpha * opacity
+            let total = glass + shadowAlpha[index] * (1 - glass)
+            let stored = UInt8(min(max(value * glass, 0), 1) * 255)
+            pixels[index * 4] = stored
+            pixels[index * 4 + 1] = stored
+            pixels[index * 4 + 2] = stored
+            pixels[index * 4 + 3] = UInt8(min(max(total, 0), 1) * 255)
+        }
+        return context.makeImage()
+    }
 }

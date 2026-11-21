@@ -5,9 +5,9 @@ import Quartz
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchController: NotchPanelController?
-    private var expirySweeper: ExpirySweeper?
     private var copyKeeper: CopyKeeper?
     private var pdfConverter: PDFConverter?
+    private var folderCompressor: FolderCompressor?
     private var linkPreviewFetcher: LinkPreviewFetcher?
     private var screenshotCatcher: ScreenshotCatcher?
     private var settingsWindow: SettingsWindowController?
@@ -19,13 +19,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var quickLook = QuickLookController(focus: focus)
     private lazy var share = ShareController(focus: focus)
     private lazy var fileChooser = FileChooser(focus: focus)
+    /// Nearby Sharing's discovery, running while its Settings switch is on.
+    private lazy var nearby = NearbyService()
 
+    /// Settings opens on the built-in screen, below the shelf, which opens with it and
+    /// stays open until Settings closes, so changes to its look show as they're made.
     func showSettings() {
         let controller = settingsWindow ?? SettingsWindowController(loginItem: loginItem,
                                                                     screenshots: screenshotCatcher,
+                                                                    nearby: nearby,
                                                                     focus: focus)
+        controller.onClose = { [weak self] in self?.notchController?.settingsClosed() }
         settingsWindow = controller
-        controller.show()
+        let screen = NotchGeometry.settingsScreen()
+        let shelfBottom = notchController?.openForSettings(on: screen)
+        controller.show(on: screen, below: shelfBottom)
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -37,19 +45,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let store = makeStore(locations: locations)
         store.refreshReferences()
 
-        // Before the sweeper, so a copy whose item expires while Polka was closed is
-        // deleted right away.
         if let locations {
             let keeper = CopyKeeper(store: store, copies: ShelfCopies(folder: locations.copiesFolder))
             keeper.start()
             copyKeeper = keeper
             // PDFs are drawn in a copy folder before they move next to their documents.
             pdfConverter = PDFConverter(store: store, copies: ShelfCopies(folder: locations.copiesFolder))
+            // A shelf folder's zip is laid out and made in copy folders too.
+            folderCompressor = FolderCompressor(store: store, copies: ShelfCopies(folder: locations.copiesFolder))
         }
-
-        let sweeper = ExpirySweeper(store: store)
-        sweeper.start()
-        expirySweeper = sweeper
 
         if let locations {
             let fetcher = LinkPreviewFetcher(store: store, previewsFolder: locations.previewsFolder)
@@ -57,14 +61,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             linkPreviewFetcher = fetcher
         }
 
+        if let locations {
+            nearby.copies = ShelfCopies(folder: locations.copiesFolder)
+            nearby.previewsFolder = locations.previewsFolder
+            nearby.rememberedFile = locations.rememberedMacsFile
+        }
+
         let images = ShelfItemImages(previewsFolder: locations?.previewsFolder)
         let controller = NotchPanelController(store: store,
                                               images: images,
                                               copies: copyKeeper,
                                               converter: pdfConverter,
+                                              compressor: folderCompressor,
                                               quickLook: quickLook,
                                               share: share,
                                               fileChooser: fileChooser,
+                                              nearby: nearby,
                                               openSettings: { [weak self] in self?.showSettings() })
         controller.start()
         notchController = controller
@@ -80,6 +92,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             catcher.start()
             screenshotCatcher = catcher
         }
+
+        nearby.start()
     }
 
     // MARK: - Quick Look control

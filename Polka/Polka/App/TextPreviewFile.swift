@@ -42,7 +42,7 @@ enum TextPreviewFile {
     /// Tells Quick Look the file is UTF-8. Without this note it guesses, and gets
     /// Cyrillic or accented text wrong. TextEdit reads the same note. The number is
     /// UTF-8's code among Core Foundation's encodings.
-    private static func markAsUTF8(_ file: URL) {
+    static func markAsUTF8(_ file: URL) {
         let value = "utf-8;134217984"
         _ = file.withUnsafeFileSystemRepresentation { path in
             value.withCString { setxattr(path, "com.apple.TextEncoding", $0, strlen($0), 0, 0) }

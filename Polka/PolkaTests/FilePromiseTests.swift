@@ -76,8 +76,8 @@ struct FilePromiseTests {
         let view = DropTargetView(frame: .zero)
         var promisesSeenDuringDrop = 0
         var dropReported = false
-        view.onPromisesDropped = { promisesSeenDuringDrop = $0.count }
-        view.onDrop = { _ in dropReported = true }
+        view.onPromisesDropped = { promises, _ in promisesSeenDuringDrop = promises.count }
+        view.onDrop = { _, _ in dropReported = true }
         let drag = FakeDrag(pasteboard: pasteboard(holding: [promise(of: "public.png")]), source: nil)
 
         #expect(view.performDragOperation(drag))

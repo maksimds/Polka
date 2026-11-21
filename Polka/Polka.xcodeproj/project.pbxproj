@@ -397,11 +397,12 @@
 				CODE_SIGN_ENTITLEMENTS = Polka/Polka.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = KXNCBL43P3;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Polka-Info.plist";
 				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Polka saves the PDFs you convert next to their documents, and reads the files you keep on its shelf.";
 				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Polka saves the PDFs you convert next to their documents, and reads the files you keep on its shelf.";
 				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Polka saves the PDFs you convert next to their documents, and reads the files you keep on its shelf.";
@@ -411,7 +412,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.maksimds.Polka;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -428,11 +429,12 @@
 				CODE_SIGN_ENTITLEMENTS = Polka/Polka.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_TEAM = KXNCBL43P3;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "Polka-Info.plist";
 				INFOPLIST_KEY_NSDesktopFolderUsageDescription = "Polka saves the PDFs you convert next to their documents, and reads the files you keep on its shelf.";
 				INFOPLIST_KEY_NSDocumentsFolderUsageDescription = "Polka saves the PDFs you convert next to their documents, and reads the files you keep on its shelf.";
 				INFOPLIST_KEY_NSDownloadsFolderUsageDescription = "Polka saves the PDFs you convert next to their documents, and reads the files you keep on its shelf.";
@@ -442,7 +444,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.maksimds.Polka;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;

@@ -84,6 +84,10 @@ final class ShelfDragSource: NSObject, NSDraggingSource {
             let pasteboardItem = NSPasteboardItem()
             pasteboardItem.setString(text, forType: .string)
             return pasteboardItem
+        case .shelfFolder:
+            // Only on the shelf, so nothing another app could take: a shelf folder is
+            // never dragged or copied out (`NotchViewModel.dragContents`).
+            return shelfOnlyWriter(for: item)
         }
     }
 

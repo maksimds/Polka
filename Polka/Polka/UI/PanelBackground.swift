@@ -119,7 +119,7 @@ extension Color {
 
 /// AppKit's material view, the one behind Finder's sidebar, set to blur what's behind
 /// the window (the desktop, other apps, the menu bar) rather than what's in it.
-private struct PanelGlass: NSViewRepresentable {
+struct PanelGlass: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = PanelGlassView()
         view.material = .sidebar

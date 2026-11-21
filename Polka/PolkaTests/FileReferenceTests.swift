@@ -161,7 +161,7 @@ struct FileReferenceTests {
             let file = try makeFile("report.txt", in: folder)
             let saved = ShelfItem(id: UUID(), kind: .file, title: "report.txt",
                                   source: .file(path: file.path, bookmark: nil),
-                                  storageMode: .reference, createdAt: Date(), expiresAt: nil, sortOrder: 0)
+                                  storageMode: .reference, createdAt: Date(), sortOrder: 0)
             let store = ShelfStore(persistence: InMemoryShelfPersistence(items: [saved]))
 
             store.refreshReferences()

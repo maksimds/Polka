@@ -2,21 +2,28 @@ import AppKit
 import SwiftUI
 
 /// The + in the panel's header, left of the sort button. It opens an "Add New" menu
-/// for adding a link or files without dragging them in, or what's on the clipboard.
+/// for adding a link or files without dragging them in, a shelf folder to sort tiles
+/// into, or what's on the clipboard.
 struct AddMenuButton: View {
     /// The header's height, so the symbol is centered on it like the gear.
     let height: CGFloat
+    /// The shelf is open, so hover counts.
+    let isActive: Bool
     let onAddLink: @MainActor () -> Void
     let onAddFiles: @MainActor () -> Void
+    /// "Folder", or nil to leave it out, as inside a shelf folder.
+    let onAddFolder: (@MainActor () -> Void)?
     /// What "Paste" would add, read as the menu opens. Nil greys the item out.
     let pasteable: @MainActor () -> Pasteable?
     let onPaste: @MainActor (Pasteable) -> Void
 
     var body: some View {
-        HeaderMenuButton(systemName: "plus",
-                         height: height,
-                         label: "Add New",
-                         makeMenu: makeMenu)
+        // The + turns into an × while its menu is open.
+        HeaderMenuButton(label: "Add New", isActive: isActive, makeMenu: makeMenu) { isOpen, isGlowing in
+            GlassHeaderGlyph(height: height, isGlowing: isGlowing) {
+                PlusCrossGlyph(isCross: isOpen)
+            }
+        }
     }
 
     private func makeMenu() -> NSMenu {
@@ -25,18 +32,30 @@ struct AddMenuButton: View {
         menu.addItem(.sectionHeader(title: "Add New"))
         menu.addItem(NSMenuItem(title: "Link", action: onAddLink))
         menu.addItem(NSMenuItem(title: "File", action: onAddFiles))
-        menu.addItem(.separator())
-        // Named after what's on the clipboard ("Paste 3 Files", "Paste Image"), so you
-        // know what you'll get. The ⌘V says the same works with the pointer over the
-        // shelf (`PasteShortcut`); pressed while this menu is open, it chooses this item.
-        let contents = pasteable()
-        let pasteItem = NSMenuItem(title: contents?.menuTitle ?? "Paste") { [onPaste] in
-            if let contents { onPaste(contents) }
+        if let onAddFolder {
+            menu.addItem(NSMenuItem(title: "Folder", action: onAddFolder))
         }
-        pasteItem.keyEquivalent = "v"
-        pasteItem.keyEquivalentModifierMask = .command
-        pasteItem.isEnabled = contents != nil
-        menu.addItem(pasteItem)
+        menu.addItem(.separator())
+        menu.addItem(.paste(pasteable(), action: onPaste))
         return menu
+    }
+}
+
+extension NSMenuItem {
+    /// "Paste", as the + menu and the shelf's free space menu show it: named after
+    /// what's on the clipboard ("Paste 3 Files", "Paste Image"), so you know what
+    /// you'll get, and greyed out when there's nothing Polka can keep. The ⌘V says
+    /// the same works with the pointer over the shelf (`ShelfShortcuts`); pressed
+    /// while the menu is open, it chooses this item. Its menu needs
+    /// `autoenablesItems` off, or AppKit decides whether it can be chosen.
+    @MainActor
+    static func paste(_ contents: Pasteable?, action: @escaping @MainActor (Pasteable) -> Void) -> NSMenuItem {
+        let item = NSMenuItem(title: contents?.menuTitle ?? "Paste") {
+            if let contents { action(contents) }
+        }
+        item.keyEquivalent = "v"
+        item.keyEquivalentModifierMask = .command
+        item.isEnabled = contents != nil
+        return item
     }
 }

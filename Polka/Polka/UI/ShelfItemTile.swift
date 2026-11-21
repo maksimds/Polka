@@ -17,6 +17,15 @@ struct ShelfItemTile: View {
     /// True while the tile is being moved, or has just been dropped and its picture
     /// is still gliding into place. It shows as an empty gap.
     let isLifted: Bool
+    /// For a shelf folder, how many tiles it holds, for its type line ("3 Items").
+    var folderItemCount = 0
+    /// For a shelf folder, true while its zip is being made ("Compress").
+    var isCompressing = false
+    /// "Compress", for a shelf folder. Nil when Polka has nowhere to make zips.
+    var onCompress: (@MainActor () -> Void)?
+    /// For a shelf folder, true while dragged tiles are over it and would go in: it
+    /// lights up and swells a little, as a folder on iPhone does.
+    var isDropTarget = false
     /// False while the panel is closed or a drag out is running.
     let isActive: Bool
     let images: ShelfItemImages
@@ -28,6 +37,13 @@ struct ShelfItemTile: View {
     let onDelete: @MainActor () -> Void
     /// The menu's "Remove": this item, or the whole selection if this item is in it.
     let onRemoveFromMenu: @MainActor () -> Void
+    /// Where "Move To" can send this tile, read as the menu opens. Empty leaves it out.
+    var moveDestinations: @MainActor () -> [NotchViewModel.MoveDestination] = { [] }
+    /// How many selected tiles "Move To" would move, for "Move 3 Items To".
+    var movableSelectionCount = 0
+    /// "Move To" > a place: this item, or the whole selection if this item is in it,
+    /// into that shelf folder, or onto the shelf with nil.
+    var onMove: @MainActor (ShelfItem.ID?) -> Void = { _ in }
     /// Set as the tile is removed from the open shelf: it takes a picture of what's
     /// drawn of it, hands it over, and hides, and dust takes its place.
     let isDissolving: Bool
@@ -36,7 +52,6 @@ struct ShelfItemTile: View {
     let onDissolve: @MainActor (CGImage?, CGFloat) -> Void
     /// How many items are selected, for the menu's "Remove 3 Items".
     let selectionCount: Int
-    let onToggleTemporary: @MainActor () -> Void
     /// "Pin" or "Unpin": this item alone.
     let onTogglePinned: @MainActor () -> Void
     /// Nil when Polka has nowhere to keep copies.
@@ -53,15 +68,36 @@ struct ShelfItemTile: View {
     let onQuickLook: @MainActor () -> Void
     /// This item, or the whole selection if this item is in it.
     let onShowInfo: @MainActor () -> Void
-    /// A text item's "Copy": its text onto the clipboard. This item alone.
+    /// How many selected tiles "Copy" would copy, for the menu's "Copy 3 Items".
+    let copyableSelectionCount: Int
+    /// Counts this tile's copies; each new one pulses its picture once.
+    let copyPulses: Int
+    /// "Copy": this item, or the whole selection if this item is in it, onto the
+    /// clipboard as a drag out would carry it.
     let onCopy: @MainActor () -> Void
     /// "Share": this item, or the whole selection if this item is in it, with the
     /// popover pointing at this tile (its drag layer, and the tile as drawn in it).
     let onShare: @MainActor (NSView, NSRect) -> Void
+    /// How a Send To of this tile is going ("Waiting for Alex…", "Sent"), shown in
+    /// place of the type line. Nil when it isn't being sent.
+    let sendingLabel: String?
+    /// How many selected tiles "Send To" would offer, for "Send 3 Items To".
+    let sendableSelectionCount: Int
+    /// The Macs "Send To" lists, read as it opens; nil leaves it out (Nearby Sharing off).
+    let sendTargets: @MainActor () -> [NearbySendTarget]?
+    /// "Send To" > a Mac: this item, or what can be sent of the selection if this item
+    /// is in it.
+    let onSend: @MainActor (String) -> Void
+    /// True while a Send To of this tile hasn't finished: "Stop Sending" takes Send
+    /// To's place.
+    let isSending: Bool
+    let onStopSending: @MainActor () -> Void
     /// True while the name is a field being typed in ("Rename").
     let isRenaming: Bool
-    /// The menu's "Rename": this item alone.
-    let onRename: @MainActor () -> Void
+    /// What the field edits while `isRenaming`: the label, the file name or the address.
+    let renameKind: RenameKind
+    /// A choice from the menu's "Rename": this item alone.
+    let onRename: @MainActor (RenameKind) -> Void
     /// The edit ended keeping what's typed: Return, Tab or a click elsewhere.
     let onRenameFinished: @MainActor (String) -> Void
     /// Esc, or the tile went away mid-edit: the name stays as it was.
@@ -73,6 +109,7 @@ struct ShelfItemTile: View {
     /// to the right place. Every tile lays out the same way.
     let onPictureInSlotMeasured: @MainActor (CGRect) -> Void
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var loadedThumbnail: NSImage?
     @State private var isHovering = false
     /// The picture and text together, within the tile, for placing the picture.
@@ -95,30 +132,39 @@ struct ShelfItemTile: View {
     /// square, which reaches 5 pt past the picture, comes along whole.
     static let snapshotMargin: CGFloat = 8
 
+    /// How much a shelf folder swells while it would take dragged tiles.
+    static let dropTargetScale: CGFloat = 1.1
+
     /// The name's font, as AppKit needs it for the rename field and for measuring.
     /// The same as the `Text` under the picture.
-    private static let nameFont = NSFont.systemFont(ofSize: 11, weight: .medium)
+    static let nameFont = NSFont.systemFont(ofSize: 11, weight: .medium)
 
     private var image: NSImage {
         loadedThumbnail ?? images.image(for: item)
     }
 
     private var detailLine: String {
+        if item.isShelfFolder {
+            return isCompressing ? "Compressing…" : Self.folderLine(count: folderItemCount)
+        }
         if isCopying { return "Copying…" }
         if isConverting { return "Converting…" }
+        if let sendingLabel { return sendingLabel }
         guard isAvailable else { return "Unavailable" }
-        return [item.typeLabel, item.storageMode == .copy ? "Copy" : nil, item.timeLeftLabel(now: Date())]
+        return [item.typeLabel, item.storageMode == .copy ? "Copy" : nil]
             .compactMap { $0 }
             .joined(separator: " · ")
     }
 
-    /// Quick Look and Get Info for files and folders, and "Rename" for every tile,
-    /// right after Get Info as in Finder. Text has no file to get info on, so it gets
-    /// Quick Look and "Copy". "Share" closes the group for every tile: macOS's share
-    /// popover takes files as Finder does, links as Safari does, and text as Notes
-    /// does. Then how Polka keeps the item: "Pin", which reads "Unpin"
-    /// on a pinned tile as in Notes and Messages, "Temporary", checked while it has an
-    /// expiry, and for files and folders "Keep a Copy", checked for a copy.
+    /// Quick Look and Get Info for files and folders, and Quick Look for text, which has
+    /// no file to get info on. Then "Copy" and "Rename" for every tile, Rename right
+    /// after Get Info and Copy as in Finder. "Share": macOS's share popover takes files as
+    /// Finder does, links as Safari does, and text as Notes does. "Send To" (Nearby
+    /// Sharing) right after it, for files, links and text but not folders, closes the
+    /// group; while the tile is being sent, "Stop Sending" is there instead. Then where
+    /// the tile is and how Polka keeps it: "Move To", "Pin", which reads "Unpin" on a
+    /// pinned tile as in Notes and Messages, and for files and folders "Keep a Copy",
+    /// checked for a copy.
     /// Links and text have no file to show or copy, so they skip those. "Remove" comes
     /// last, set apart. Unchecking "Keep a Copy" goes back to the original, so it can't
     /// be unchecked for a promised file, a pasted picture or a screenshot, which have
@@ -126,6 +172,7 @@ struct ShelfItemTile: View {
     /// group of its own, since it makes a new file rather than changing how Polka keeps
     /// this one.
     private var menuEntries: [TileDragView.MenuEntry] {
+        if item.isShelfFolder { return folderMenuEntries }
         let isFile = item.kind == .file || item.kind == .folder
         var entries: [TileDragView.MenuEntry] = []
         if isFile {
@@ -133,22 +180,50 @@ struct ShelfItemTile: View {
             entries.append(TileDragView.MenuEntry(title: "Get Info", isEnabled: isAvailable, action: onShowInfo))
         } else if item.kind == .text {
             entries.append(TileDragView.MenuEntry(title: "Quick Look", action: onQuickLook))
-            entries.append(TileDragView.MenuEntry(title: "Copy", action: onCopy))
         }
-        // Only the tile's label changes, so a missing file can be renamed too.
-        entries.append(TileDragView.MenuEntry(title: "Rename", action: onRename))
+        // A file that can't be found has nothing to copy; in a selection, it stays
+        // behind, as in a drag. The ⌘C says the same works over the shelf.
+        let copyCount = isSelected ? max(copyableSelectionCount, 1) : 1
+        entries.append(TileDragView.MenuEntry(title: copyCount > 1 ? "Copy \(copyCount) Items" : "Copy",
+                                              isEnabled: !isFile || isAvailable,
+                                              keyEquivalent: "c",
+                                              action: onCopy))
+        entries.append(renameEntry)
         // A file that can't be found has nothing to send. In a selection, missing
         // files stay behind, as in a drag.
         entries.append(TileDragView.MenuEntry(title: "Share",
                                               isEnabled: !isFile || isAvailable,
                                               pointingAtTile: onShare))
+        // Nearby Sharing: files, links and text, not folders. In a selection, what
+        // can't be sent stays behind. Left out while Nearby Sharing is off.
+        if isSending {
+            entries.append(TileDragView.MenuEntry(title: "Stop Sending", action: onStopSending))
+        } else if item.kind != .folder {
+            let sendCount = isSelected ? max(sendableSelectionCount, 1) : 1
+            var sendTo = TileDragView.MenuEntry(title: sendCount > 1 ? "Send \(sendCount) Items To" : "Send To",
+                                                isEnabled: item.kind != .file || isAvailable,
+                                                action: {})
+            let targets = sendTargets
+            let send = onSend
+            sendTo.isShown = { targets() != nil }
+            sendTo.submenu = {
+                (targets() ?? []).map { target in
+                    var entry = TileDragView.MenuEntry(title: target.title, isEnabled: target.isEnabled,
+                                                       startsGroup: target.startsGroup) {
+                        if let peerID = target.peerID { send(peerID) }
+                    }
+                    entry.isHeader = target.isHeader
+                    return entry
+                }
+            }
+            entries.append(sendTo)
+        }
+        // Where the tile is on the shelf, then how Polka keeps it. Left out when
+        // there's nowhere to move it, and Pin starts the group instead.
+        entries.append(moveToEntry)
         // Always enabled: past the limit, choosing it says why nothing was pinned.
         entries.append(TileDragView.MenuEntry(title: item.isPinned ? "Unpin" : "Pin",
-                                              startsGroup: true,
                                               action: onTogglePinned))
-        entries.append(TileDragView.MenuEntry(title: "Temporary",
-                                              isChecked: item.isTemporary,
-                                              action: onToggleTemporary))
         if isFile, let onToggleKeepCopy {
             let isCopy = item.storageMode == .copy
             entries.append(TileDragView.MenuEntry(title: "Keep a Copy",
@@ -172,6 +247,84 @@ struct ShelfItemTile: View {
         return entries
     }
 
+    /// A shelf folder's menu (FR-26): "Open", which double-click does too, "Rename" for
+    /// its name, which is all it has, and "Compress \u{201C}Work\u{201D}", as Finder names it,
+    /// greyed out while it's empty or already being compressed; "Pin"; and "Remove",
+    /// which puts its tiles back on the shelf. It isn't a file, so it has no Quick
+    /// Look, Copy or Share.
+    private var folderMenuEntries: [TileDragView.MenuEntry] {
+        let onRename = onRename
+        let removeCount = isSelected ? max(selectionCount, 1) : 1
+        var entries = [
+            TileDragView.MenuEntry(title: "Open", action: onOpen),
+            TileDragView.MenuEntry(title: "Rename", action: { onRename(.label) }),
+        ]
+        if let onCompress {
+            entries.append(TileDragView.MenuEntry(title: "Compress \u{201C}\(item.displayName)\u{201D}",
+                                                  isEnabled: folderItemCount > 0 && !isCompressing,
+                                                  action: onCompress))
+        }
+        return entries + [
+            TileDragView.MenuEntry(title: item.isPinned ? "Unpin" : "Pin", startsGroup: true, action: onTogglePinned),
+            TileDragView.MenuEntry(title: removeCount > 1 ? "Remove \(removeCount) Items" : "Remove",
+                                   startsGroup: true,
+                                   action: onRemoveFromMenu),
+        ]
+    }
+
+    /// "Move To", a submenu listing the shelf folders, and "Shelf" while this tile is
+    /// in one. Left out when there's nowhere to go, as on a shelf without folders.
+    /// Read as the menu opens, so it lists the folders as they are then.
+    private var moveToEntry: TileDragView.MenuEntry {
+        let destinations = moveDestinations
+        let move = onMove
+        let count = isSelected ? max(movableSelectionCount, 1) : 1
+        var entry = TileDragView.MenuEntry(title: count > 1 ? "Move \(count) Items To" : "Move To",
+                                           startsGroup: true,
+                                           action: {})
+        entry.isShown = { !destinations().isEmpty }
+        entry.submenu = {
+            destinations().map { destination in
+                TileDragView.MenuEntry(title: destination.title) { move(destination.folderID) }
+            }
+        }
+        return entry
+    }
+
+    /// A shelf folder's type line: "Empty", "1 Item" or "3 Items".
+    static func folderLine(count: Int) -> String {
+        switch count {
+        case 0: return "Empty"
+        case 1: return "1 Item"
+        default: return "\(count) Items"
+        }
+    }
+
+    /// "Rename", a submenu like "Send To" for a file, folder or link: "Rename Label"
+    /// changes only the tile's name, so a missing file can have one too; "Rename File"
+    /// (or "Rename Folder") changes the name on disk, and "Edit Address" the link's web
+    /// address. A file that can't be found, or is being copied or converted, can't be
+    /// renamed on disk. Text has nothing underneath, so its "Rename" is the label alone,
+    /// with no submenu.
+    private var renameEntry: TileDragView.MenuEntry {
+        let onRename = onRename
+        let underneath: TileDragView.MenuEntry
+        switch item.kind {
+        case .file, .folder:
+            underneath = TileDragView.MenuEntry(title: item.kind == .folder ? "Rename Folder" : "Rename File",
+                                                isEnabled: isAvailable && !isCopying && !isConverting,
+                                                action: { onRename(.file) })
+        case .link:
+            underneath = TileDragView.MenuEntry(title: "Edit Address", action: { onRename(.address) })
+        case .text, .shelfFolder:
+            return TileDragView.MenuEntry(title: "Rename", action: { onRename(.label) })
+        }
+        let label = TileDragView.MenuEntry(title: "Rename Label", action: { onRename(.label) })
+        var entry = TileDragView.MenuEntry(title: "Rename", action: {})
+        entry.submenu = { [label, underneath] }
+        return entry
+    }
+
     /// What's drawn of the tile: its picture, name and type line. The tile itself also
     /// measures the name and type line, and hides the name while it's being renamed.
     /// The picture the dust starts from does neither.
@@ -191,11 +344,18 @@ struct ShelfItemTile: View {
                 .animation(.easeOut(duration: 0.15), value: item.isPinned)
                 .saturation(isAvailable ? 1 : 0)
                 .opacity(isAvailable ? 1 : 0.35)
-                // Selected, as in Finder: a soft square behind the picture...
+                // Copied: a quick brighten, the one sign a copy worked.
+                .modifier(CopyPulse(trigger: isLive ? copyPulses : 0))
+                // Taking dragged tiles: a touch larger, as a folder on iPhone grows.
+                .scaleEffect(isLive && isDropTarget && !reduceMotion ? Self.dropTargetScale : 1)
+                .animation(.spring(duration: 0.25, bounce: 0.3), value: isDropTarget)
+                // Selected, as in Finder: a soft square behind the picture, brighter
+                // while it would take dragged tiles...
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.white.opacity(isSelected ? 0.16 : 0))
+                        .fill(Color.white.opacity(isLive && isDropTarget ? 0.26 : isSelected ? 0.16 : 0))
                         .padding(-5)
+                        .animation(.easeOut(duration: 0.12), value: isDropTarget)
                 )
                 .padding(.bottom, 4)
             Text(item.displayName)
@@ -389,6 +549,11 @@ struct ShelfItemTile: View {
     /// square's corner the badge would float above the folder.
     private static let folderBadgeDrop: CGFloat = 0.15
 
+    /// A folder on disk, or a shelf folder, which is drawn from the same icon.
+    private var isFolderShaped: Bool {
+        item.kind == .folder || item.isShelfFolder
+    }
+
     /// The part of the picture square the picture covers. A link's icon or card fills
     /// it; a file's thumbnail or icon is fitted, so a page is narrower than it's tall.
     private var visiblePicture: CGRect {
@@ -411,7 +576,7 @@ struct ShelfItemTile: View {
     private var removeBadgeCenter: CGPoint? {
         guard let pressArea else { return nil }
         let picture = visiblePicture
-        let drop = item.kind == .folder ? picture.height * Self.folderBadgeDrop : 0
+        let drop = isFolderShaped ? picture.height * Self.folderBadgeDrop : 0
         return CGPoint(x: pressArea.midX - Self.imageSide / 2 + picture.maxX - Self.removeBadgeInset,
                        y: pressArea.minY + picture.minY + Self.removeBadgeInset + drop)
     }
@@ -425,7 +590,7 @@ struct ShelfItemTile: View {
     /// folder.
     private var pinBadgeCenter: CGPoint {
         let picture = visiblePicture
-        let drop = item.kind == .folder ? picture.height * Self.folderBadgeDrop : 0
+        let drop = isFolderShaped ? picture.height * Self.folderBadgeDrop : 0
         return CGPoint(x: picture.minX + Self.pinBadgeInset,
                        y: picture.minY + Self.pinBadgeInset + drop)
     }
@@ -491,14 +656,31 @@ struct ShelfItemTile: View {
     /// The field the name turns into, like Finder's: a dark box with a focus ring,
     /// as wide as what's typed, and at most as wide as the tile, ring included, so
     /// the grid's edge never cuts the ring off. A longer name scrolls inside it.
+    /// What the rename field starts with: the tile's label, the file's name on disk
+    /// (the original's, for a kept copy), or the link's address.
+    private var renameStartText: String {
+        switch renameKind {
+        case .label: return item.displayName
+        case .file: return item.urlToOpen().lastPathComponent
+        case .address: return item.url.absoluteString
+        }
+    }
+
+    /// Left out of the first selection: a file's extension, for its label or its name.
+    /// An address is selected whole.
+    private var renameExtension: String? {
+        guard item.kind == .file, renameKind != .address else { return nil }
+        return item.url.pathExtension
+    }
+
     private var renameField: some View {
-        let text = typedName ?? item.displayName
+        let text = typedName ?? renameStartText
         let textWidth = ceil((text as NSString).size(withAttributes: [.font: Self.nameFont]).width)
         // A little extra for the caret at the end, and never so narrow it's hard to click.
         let width = min(max(textWidth + 4 + Self.renameInset.width * 2, 32), max(tileWidth - 8, 32))
         let shape = RoundedRectangle(cornerRadius: 4, style: .continuous)
-        return TileNameEditor(name: item.displayName,
-                              fileExtension: item.kind == .file ? item.url.pathExtension : nil,
+        return TileNameEditor(name: renameStartText,
+                              fileExtension: renameExtension,
                               font: Self.nameFont,
                               onTextChange: { typedName = $0 },
                               onFinish: onRenameFinished,
@@ -513,6 +695,34 @@ struct ShelfItemTile: View {
                     .strokeBorder(Color(nsColor: .keyboardFocusIndicatorColor), lineWidth: 3)
                     .padding(-3)
             )
+    }
+}
+
+/// A copied tile's picture brightens for a moment and swells a touch, then settles,
+/// in about a third of a second. A keyframe animation, so it plays even when the copy
+/// came from the right-click menu as it closes. With Reduce Motion it only brightens.
+private struct CopyPulse: ViewModifier {
+    let trigger: Int
+
+    static let brightness = 0.22
+    static let swell = 0.06
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        let brightness = Self.brightness
+        let swell = reduceMotion ? 0 : Self.swell
+        return content.keyframeAnimator(initialValue: 0.0, trigger: trigger) { view, pulse in
+            view
+                .brightness(brightness * pulse)
+                .scaleEffect(1 + swell * pulse)
+        } keyframes: { _ in
+            KeyframeTrack(\.self) {
+                MoveKeyframe(0)
+                CubicKeyframe(1, duration: 0.1, startVelocity: 0, endVelocity: 0)
+                CubicKeyframe(0, duration: 0.25, startVelocity: 0, endVelocity: 0)
+            }
+        }
     }
 }
 
@@ -565,7 +775,7 @@ extension ShelfItem {
     /// The short type line under a tile's name.
     var typeLabel: String {
         switch kind {
-        case .folder:
+        case .folder, .shelfFolder:
             return "Folder"
         case .link:
             return "Link"
@@ -575,17 +785,5 @@ extension ShelfItem {
             let fileExtension = url.pathExtension.uppercased()
             return fileExtension.isEmpty ? "File" : fileExtension
         }
-    }
-
-    /// How long a temporary item has left, rounded up: "45m", "23h" or "3d".
-    /// Nil for permanent items.
-    func timeLeftLabel(now: Date) -> String? {
-        guard let expiresAt else { return nil }
-        let seconds = expiresAt.timeIntervalSince(now)
-        let minutes = Int((seconds / 60).rounded(.up))
-        if minutes < 60 { return "\(max(minutes, 1))m" }
-        let hours = Int((seconds / 3600).rounded(.up))
-        if hours < 48 { return "\(hours)h" }
-        return "\(Int((seconds / 86_400).rounded(.up)))d"
     }
 }

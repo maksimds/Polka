@@ -3,7 +3,7 @@ import Combine
 
 /// "Save Screenshots to Polka" in Settings (FR-20). While it's on, macOS saves new
 /// screenshots and screen recordings into Polka's own folder instead of the Desktop,
-/// and each one goes on the shelf as a temporary item.
+/// and each one goes on the shelf, where it stays until it's removed.
 ///
 /// It works through macOS's own setting: the save location that the Screenshot
 /// toolbar (Cmd-Shift-5) sets under Options, stored as `location` in
@@ -14,7 +14,7 @@ import Combine
 ///
 /// Each file that arrives is moved on into a copy folder of its own, like a promised
 /// file, and marked as a screenshot, so it goes to the Trash rather than being deleted
-/// when it expires or is removed (see `CopyKeeper`). Files that arrived while Polka
+/// when it's removed (see `CopyKeeper`). Files that arrived while Polka
 /// wasn't running are picked up when it starts.
 @MainActor
 final class ScreenshotCatcher: ObservableObject {
@@ -38,7 +38,6 @@ final class ScreenshotCatcher: ObservableObject {
     private let copies: ShelfCopies
     private let system: UserDefaults
     private let defaults: UserDefaults
-    private let lifetime: () -> TimeInterval
     /// How long a file has to sit unchanged before it's taken, in case macOS is still
     /// writing it.
     private let settleTime: TimeInterval
@@ -50,14 +49,12 @@ final class ScreenshotCatcher: ObservableObject {
          inbox: URL,
          system: UserDefaults,
          defaults: UserDefaults = .standard,
-         lifetime: @escaping () -> TimeInterval = { ShelfSettings().temporaryLifetime },
          settleTime: TimeInterval = 0.5) {
         self.store = store
         self.copies = copies
         self.inbox = inbox
         self.system = system
         self.defaults = defaults
-        self.lifetime = lifetime
         self.settleTime = settleTime
     }
 
@@ -173,8 +170,8 @@ final class ScreenshotCatcher: ObservableObject {
         }
     }
 
-    /// Moves every file that has finished arriving onto the shelf, newest first, as
-    /// temporary items. One still being written is left for a moment and tried again.
+    /// Moves every file that has finished arriving onto the shelf, newest first. One
+    /// still being written is left for a moment and tried again.
     func sweep() {
         let keys: Set<URLResourceKey> = [.isRegularFileKey, .contentModificationDateKey, .creationDateKey]
         guard let files = try? FileManager.default.contentsOfDirectory(at: inbox,
@@ -198,13 +195,11 @@ final class ScreenshotCatcher: ObservableObject {
         }
         guard !arrived.isEmpty else { return }
 
-        let lifetime = lifetime()
         // The first draft becomes the first tile.
         let drafts = arrived.sorted { $0.created > $1.created }.compactMap { arrival -> ShelfItem.Draft? in
             do {
                 var draft = ShelfItem.Draft(fileURL: try copies.moveIn(arrival.file), storageMode: .copy)
                 draft.origin = .screenshot
-                draft.lifetime = lifetime
                 return draft
             } catch {
                 Log.app.error("""

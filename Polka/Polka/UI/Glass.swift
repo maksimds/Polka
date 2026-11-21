@@ -106,15 +106,64 @@ struct GlassHeaderSymbol: View {
     /// The header's height.
     let height: CGFloat
 
+    /// Glows a little, as the header's buttons do under the pointer.
+    var isGlowing = false
+
     /// A little softer than full gloss, so the symbols don't outshine the shelf.
     static let gloss = 0.85
+    static let font = Font.system(size: 14, weight: .semibold)
 
     var body: some View {
-        GlassGlyph(gloss: Self.gloss, tint: tint) {
+        GlassHeaderGlyph(tint: tint, height: height, isGlowing: isGlowing) {
             Image(systemName: systemName)
-                .font(.system(size: 14, weight: .semibold))
+                .font(Self.font)
         }
-        .frame(height: height)
+    }
+}
+
+/// A header symbol's glass around any glyph, so a symbol that moves (the + turning
+/// into an ×, the sort arrows, the gear) moves inside the glass, and the light stays
+/// on top while it does.
+///
+/// Under the pointer it glows, barely: a soft halo of its own color around it and a
+/// slightly brighter body, faded in and out. `flash` is the same glow for a moment,
+/// driven by a press, for when Reduce Motion keeps the symbol still.
+struct GlassHeaderGlyph<Glyph: View>: View {
+    var tint: Color?
+    let height: CGFloat
+    var isGlowing = false
+    /// 0 to 1, on top of the hover glow.
+    var flash: Double = 0
+    /// The symbols' gloss, or the title's, for "Polka" as a button back to the shelf.
+    var gloss = GlassHeaderSymbol.gloss
+    @ViewBuilder let glyph: Glyph
+
+    /// How far the halo spreads, and how strong it and the brighter body are at full
+    /// glow. Kept low on purpose: noticed, not seen.
+    static var haloRadius: CGFloat { 3.5 }
+    static var haloOpacity: Double { 0.10 }
+    static var washOpacity: Double { 0.04 }
+
+    var body: some View {
+        let glow = min((isGlowing ? 1 : 0) + flash, 1)
+        GlassGlyph(gloss: gloss, tint: tint) { glyph }
+            .background {
+                glyph
+                    .foregroundStyle(tint ?? .white)
+                    .blur(radius: Self.haloRadius)
+                    .opacity(Self.haloOpacity * glow)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            .overlay {
+                (tint ?? .white)
+                    .mask { glyph }
+                    .opacity(Self.washOpacity * glow)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
+            .frame(height: height)
+            .animation(.easeOut(duration: 0.2), value: isGlowing)
     }
 }
 
@@ -245,13 +294,28 @@ struct GlassGlyph<Glyph: View>: View {
 /// lighter letters. Never squeezed by its frame.
 struct GlassTitle: View {
     let text: String
+    /// Cut short with "…" when its frame is too narrow, as a shelf folder's name in
+    /// the header is before it reaches the notch, rather than running on.
+    var truncates = false
+
+    static let font = Font.system(size: 15, weight: .bold)
+    static let gloss = 0.5
 
     var body: some View {
-        GlassGlyph(gloss: 0.5) {
-            Text(text)
-                .font(.system(size: 15, weight: .bold))
+        if truncates {
+            GlassGlyph(gloss: Self.gloss) {
+                Text(text)
+                    .font(Self.font)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        } else {
+            GlassGlyph(gloss: Self.gloss) {
+                Text(text)
+                    .font(Self.font)
+            }
+            .fixedSize()
         }
-        .fixedSize()
     }
 }
 

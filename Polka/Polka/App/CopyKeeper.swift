@@ -3,8 +3,8 @@ import Combine
 
 /// Keeps Polka's copies in step with the shelf. It makes a copy when an item is set to
 /// keep one, receives the files apps hand over by promise, saves pictures pasted from
-/// the clipboard, and deletes a copy once no item uses it: when the item is removed,
-/// expires, or goes back to its original. A screenshot goes to the Trash instead, so
+/// the clipboard, and deletes a copy once no item uses it: when the item is removed or
+/// goes back to its original. A screenshot goes to the Trash instead, so
 /// one that was still needed can be found again.
 ///
 /// Originals are never deleted. Only copy folders inside Polka's Copies folder are.
@@ -84,7 +84,10 @@ final class CopyKeeper {
     ///
     /// Call it during the drop itself (`performDragOperation`): a promise has to be
     /// asked for while the drag is still going.
+    ///
+    /// They go into the shelf folder `folderID` (FR-26), or onto the shelf with nil.
     func receive(_ promises: [NSFilePromiseReceiver],
+                 in folderID: ShelfItem.ID? = nil,
                  onFailure: @escaping @MainActor (_ fileName: String?) -> Void) {
         for promise in promises {
             let destination: URL
@@ -101,7 +104,7 @@ final class CopyKeeper {
                                          operationQueue: promiseQueue) { [weak self] url, error in
                 let failure = error?.localizedDescription
                 Task { @MainActor in
-                    self?.promisedFileArrived(at: url, failure: failure, onFailure: onFailure)
+                    self?.promisedFileArrived(at: url, failure: failure, in: folderID, onFailure: onFailure)
                 }
             }
         }
@@ -111,6 +114,7 @@ final class CopyKeeper {
     /// folder is cleared away at the next launch.
     func promisedFileArrived(at url: URL,
                              failure: String?,
+                             in folderID: ShelfItem.ID? = nil,
                              onFailure: @MainActor (_ fileName: String?) -> Void) {
         let name = url.lastPathComponent.isEmpty ? nil : url.lastPathComponent
         if let failure {
@@ -127,15 +131,19 @@ final class CopyKeeper {
         // ever referenced, so Polka never deletes it.
         let mode: ShelfItem.StorageMode = copies.folderName(containing: url.path) != nil ? .copy : .reference
         Log.drop.info("Received promised file \(url.lastPathComponent, privacy: .private)")
-        store.add([ShelfItem.Draft(fileURL: url, storageMode: mode)])
+        // A folder removed meanwhile means the shelf itself.
+        store.add([ShelfItem.Draft(fileURL: url, storageMode: mode)], in: folderID)
     }
 
     // MARK: - Pasted pictures
 
     /// "Paste Image": saves a picture from the clipboard into a new copy folder in the
     /// background, then adds it to the shelf like a photo dragged in from Photos: a copy
-    /// with no original. Returns the new item, or nil if the picture couldn't be saved.
-    func addPastedImage(_ image: PastedImage, at date: Date = Date()) async -> ShelfItem? {
+    /// with no original, in the shelf folder `folderID` if one was open (FR-26).
+    /// Returns the new item, or nil if the picture couldn't be saved.
+    func addPastedImage(_ image: PastedImage,
+                        in folderID: ShelfItem.ID? = nil,
+                        at date: Date = Date()) async -> ShelfItem? {
         let copies = self.copies
         // Turning a large TIFF into a PNG takes a moment, so it runs off the main thread.
         let result = await Task.detached(priority: .userInitiated) { () -> Result<URL, Error> in
@@ -148,7 +156,7 @@ final class CopyKeeper {
         switch result {
         case .success(let file):
             Log.drop.info("Pasted picture saved as \(file.lastPathComponent, privacy: .private)")
-            return store.add([ShelfItem.Draft(fileURL: file, storageMode: .copy)]).added.first
+            return store.add([ShelfItem.Draft(fileURL: file, storageMode: .copy)], in: folderID).added.first
         case .failure(let error):
             Log.drop.error("Could not save a pasted picture: \(error.logCode, privacy: .public), \(error.localizedDescription, privacy: .private)")
             return nil

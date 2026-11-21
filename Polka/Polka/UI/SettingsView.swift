@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The contents of the Settings window.
+/// The Settings window's General tab.
 struct SettingsView: View {
     @ObservedObject var loginItem: LoginItem
     /// Nil when Polka has no folder of its own to save screenshots in.
@@ -8,16 +8,10 @@ struct SettingsView: View {
 
     /// The raw stored value, watched by SwiftUI, so a change made with
     /// `defaults write` while the window is open shows up too.
-    @AppStorage(ShelfSettings.temporaryLifetimeKey) private var storedLifetime: Double = 0
     @AppStorage(ShelfSettings.hoverDelayKey) private var storedHoverDelay = ShelfSettings.defaultHoverDelay
     @AppStorage(ShelfSettings.hoverAreaKey) private var hoverArea = ShelfSettings.defaultHoverArea
     @AppStorage(ShelfSettings.panelTransparencyKey) private var storedTransparency = ShelfSettings.defaultPanelTransparency
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
-    private var lifetime: Binding<TimeInterval> {
-        Binding(get: { ShelfSettings.temporaryLifetime(stored: storedLifetime) },
-                set: { storedLifetime = $0 })
-    }
 
     private var hoverDelay: Int {
         ShelfSettings.hoverDelay(stored: storedHoverDelay)
@@ -105,19 +99,6 @@ struct SettingsView: View {
                 Text("Hover")
             } footer: {
                 SettingsFootnote(text: "A larger area or a shorter wait means more accidental opens.")
-            }
-
-            Section {
-                Picker("Temporary items last", selection: lifetime) {
-                    ForEach(ShelfSettings.temporaryLifetimeChoices(current: lifetime.wrappedValue),
-                            id: \.self) { seconds in
-                        Text(ShelfSettings.label(forLifetime: seconds)).tag(seconds)
-                    }
-                }
-            } header: {
-                Text("Shelf")
-            } footer: {
-                SettingsFootnote(text: "Items that are already temporary keep the time they have left.")
                     .padding(.bottom, screenshots == nil ? 10 : 0)
             }
 
@@ -152,11 +133,194 @@ private struct ScreenshotsSection: View {
         } footer: {
             // The same sentence on and off, so the window doesn't change height.
             SettingsFootnote(text: """
-                Screenshots and screen recordings go on the shelf as temporary items, not \
-                to \(catcher.usualLocationName), and to the Trash when they expire or are removed.
+                Screenshots and screen recordings go on the shelf instead of \
+                \(catcher.usualLocationName), and to the Trash when you remove them.
                 """)
                 .padding(.bottom, 10)
         }
+    }
+}
+
+/// The Settings window's Nearby Sharing tab.
+struct NearbySettingsView: View {
+    @ObservedObject var nearby: NearbyService
+
+    var body: some View {
+        Form {
+            NearbySection(nearby: nearby)
+            RememberedMacsSection(nearby: nearby)
+        }
+        .formStyle(.grouped)
+        .scrollBounceBehavior(.basedOnSize)
+        .frame(width: SettingsView.width)
+    }
+}
+
+/// Nearby Sharing (NS-1 to NS-3): the switch, the name others see, who can send, and
+/// the Macs around. The list is one line, so the window keeps its height as Macs come
+/// and go; the Macs it names are looked for only while this tab is showing.
+private struct NearbySection: View {
+    @ObservedObject var nearby: NearbyService
+    @AppStorage(ShelfSettings.nearbySharingKey) private var isOn = false
+    @AppStorage(ShelfSettings.nearbyNameKey) private var storedName = ""
+    @AppStorage(ShelfSettings.nearbyReceiveFromKey) private var receiveFrom = NearbyReceiveFrom.everyone
+
+    private var displayName: String {
+        ShelfSettings.nearbyName(typed: storedName, macName: NearbyService.macName)
+    }
+
+    var body: some View {
+        Section {
+            Toggle("Share with Macs Nearby", isOn: $isOn)
+            NearbyNameField()
+            Picker("Receive From", selection: $receiveFrom) {
+                ForEach(NearbyReceiveFrom.allCases, id: \.self) { choice in
+                    Text(choice.title).tag(choice)
+                }
+            }
+            LabeledContent("Nearby Macs") {
+                Text(nearbyMacs)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .help(nearby.peers.map(\.name).joined(separator: "\n"))
+            }
+        } header: {
+            Text("Nearby Sharing")
+        } footer: {
+            SettingsFootnote(text: footnote)
+                .padding(.bottom, 10)
+        }
+    }
+
+    private var nearbyMacs: String {
+        guard isOn else { return "Off" }
+        switch nearby.status {
+        case .off, .starting: return "Starting…"
+        case .noLocalNetwork: return "No Local Network access"
+        case .failed: return "Not working"
+        case .on: return nearby.peers.isEmpty ? "None found yet" : nearby.peers.map(\.name).joined(separator: ", ")
+        }
+    }
+
+    /// About two lines in every case, so the window keeps its height.
+    private var footnote: String {
+        let wifi = "Wi-Fi has to be on, but the Macs don't need the same network."
+        guard isOn else {
+            return "Send items to Macs nearby that have Polka, and get items from them, without AirDrop. \(wifi)"
+        }
+        switch nearby.status {
+        case .noLocalNetwork:
+            return "Polka needs Local Network access to find Macs nearby. Turn it on in System Settings > Privacy & Security > Local Network."
+        case let .failed(reason):
+            return reason
+        default:
+            switch receiveFrom {
+            case .everyone: return "Anyone nearby with Polka can see you as \u{201C}\(displayName)\u{201D}. \(wifi)"
+            case .remembered: return "Only Macs you've remembered can see you and send to you. Others nearby don't get your name. \(wifi)"
+            }
+        }
+    }
+}
+
+/// The Macs remembered here (NS-13), each with Forget, and the button that opens the
+/// Remember sheet (NS-11). Forget asks first: remembering a Mac again takes both people,
+/// in person.
+private struct RememberedMacsSection: View {
+    @ObservedObject var nearby: NearbyService
+    @AppStorage(ShelfSettings.nearbySharingKey) private var isOn = false
+    @State private var isRemembering = false
+    @State private var macToForget: NearbyRememberedMac?
+
+    private var macs: [NearbyRememberedMac] {
+        nearby.rememberedMacs.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    var body: some View {
+        Section {
+            if macs.isEmpty {
+                Text("No remembered Macs yet")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(macs) { mac in
+                HStack(spacing: 10) {
+                    Image(systemName: "laptopcomputer")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(mac.name)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Text("Remembered \(mac.rememberedAt.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("Forget") { macToForget = mac }
+                }
+            }
+            HStack {
+                Spacer()
+                Button("Remember a Nearby Mac\u{2026}") { isRemembering = true }
+                    .disabled(!isOn || nearby.status != .on)
+            }
+        } header: {
+            Text("Remembered Macs")
+        } footer: {
+            SettingsFootnote(text: "Tiles from a remembered Mac arrive without asking. To remember one, you both choose Remember a Nearby Mac\u{2026} and check that your screens show the same code.")
+                .padding(.bottom, 10)
+        }
+        .sheet(isPresented: $isRemembering) {
+            RememberMacSheet(nearby: nearby)
+        }
+        .alert("Forget \u{201C}\(macToForget?.name ?? "")\u{201D}?",
+               isPresented: Binding(get: { macToForget != nil }, set: { if !$0 { macToForget = nil } }),
+               presenting: macToForget) { mac in
+            Button("Cancel", role: .cancel) {}
+            Button("Forget", role: .destructive) { nearby.forget(mac.publicKey) }
+        } message: { _ in
+            Text("Its tiles will ask first again. To remember it again, you\u{2019}ll both need to compare codes.")
+        }
+    }
+}
+
+/// The name others see. It shows the Mac's name until another is typed; Return or a
+/// click elsewhere applies it, and an emptied field goes back to the Mac's name.
+private struct NearbyNameField: View {
+    @AppStorage(ShelfSettings.nearbyNameKey) private var storedName = ""
+    @State private var text = ""
+    @FocusState private var isEditing: Bool
+
+    private var displayName: String {
+        ShelfSettings.nearbyName(typed: storedName, macName: NearbyService.macName)
+    }
+
+    var body: some View {
+        LabeledContent("Name") {
+            TextField("Name", text: $text, prompt: Text(NearbyService.macName))
+                .labelsHidden()
+                // A grouped form draws its fields without a border, which read as a label.
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 200)
+                .focused($isEditing)
+                .onSubmit(apply)
+        }
+        .onAppear { text = displayName }
+        .onChange(of: storedName) {
+            guard !isEditing else { return }
+            text = displayName
+        }
+        .onChange(of: isEditing) { _, editing in
+            if !editing { apply() }
+        }
+    }
+
+    private func apply() {
+        let name = NearbyName.clean(text)
+        // The Mac's own name is stored as nothing, so it follows a renamed Mac.
+        storedName = (name == nil || name == NearbyName.clean(NearbyService.macName)) ? "" : name!
+        text = displayName
     }
 }
 

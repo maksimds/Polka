@@ -14,7 +14,7 @@ struct ShelfSortTests {
             ? .link(URL(string: "https://example.com/\(title)")!)
             : .file(path: "/tmp/\(title)", bookmark: nil)
         return ShelfItem(id: UUID(), kind: kind, title: title, source: source, storageMode: .reference,
-                         createdAt: start.addingTimeInterval(minutes * 60), expiresAt: nil, sortOrder: 0)
+                         createdAt: start.addingTimeInterval(minutes * 60), sortOrder: 0)
     }
 
     private func titles(_ items: [ShelfItem]) -> [String] {

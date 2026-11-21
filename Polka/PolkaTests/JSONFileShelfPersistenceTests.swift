@@ -21,11 +21,10 @@ struct JSONFileShelfPersistenceTests {
         return [
             ShelfItem(id: UUID(), kind: .file, title: "a.txt",
                       source: .file(path: "/tmp/a.txt", bookmark: Data([1, 2, 3])),
-                      storageMode: .reference, createdAt: date, expiresAt: nil, sortOrder: 0),
+                      storageMode: .reference, createdAt: date, sortOrder: 0),
             ShelfItem(id: UUID(), kind: .link, title: "example.com/a",
                       source: .link(URL(string: "https://example.com/a?b=1")!),
-                      storageMode: .reference, createdAt: date,
-                      expiresAt: date.addingTimeInterval(86_400), sortOrder: 1),
+                      storageMode: .reference, createdAt: date, sortOrder: 1),
         ]
     }
 

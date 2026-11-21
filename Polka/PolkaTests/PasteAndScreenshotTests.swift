@@ -68,7 +68,6 @@ struct TextItemTests {
         #expect(store.items[0].kind == .text)
         #expect(store.items[0].source == .text(text))
         #expect(store.items[0].typeLabel == "Text")
-        #expect(!store.items[0].isTemporary)
     }
 
     @Test func theSameTextTwiceIsADuplicate() {
@@ -104,7 +103,6 @@ struct TextItemTests {
         defer { try? FileManager.default.removeItem(at: file) }
         var screenshot = ShelfItem.Draft(fileURL: URL(fileURLWithPath: "/tmp/Screenshot.png"), storageMode: .copy)
         screenshot.origin = .screenshot
-        screenshot.lifetime = 3600
 
         let store = ShelfStore(persistence: JSONFileShelfPersistence(fileURL: file))
         store.add([ShelfItem.Draft(text: "Привет, мир\nsecond line"), screenshot])
@@ -113,7 +111,6 @@ struct TextItemTests {
         #expect(reloaded.items == store.items)
         #expect(reloaded.items[0].source == .text("Привет, мир\nsecond line"))
         #expect(reloaded.items[1].origin == .screenshot)
-        #expect(reloaded.items[1].isTemporary)
     }
 
     @Test func draggingTextOutGivesTheText() {
@@ -263,6 +260,29 @@ struct PasteReaderTests {
         })
 
         #expect(image?.type == .png)
+    }
+
+    /// The + menu and the shelf's free space menu share this item.
+    @Test func thePasteItemSaysWhatItPastesAndShowsCommandV() {
+        var pasted: [Pasteable] = []
+        let item = NSMenuItem.paste(.text("Notes")) { pasted.append($0) }
+
+        #expect(item.title == "Paste Text")
+        #expect(item.isEnabled)
+        #expect(item.keyEquivalent == "v")
+        #expect(item.keyEquivalentModifierMask == .command)
+        if let target = item.target, let action = item.action {
+            _ = (target as AnyObject).perform(action)
+        }
+        #expect(pasted == [.text("Notes")])
+    }
+
+    @Test func thePasteItemIsGreyedOutWithNothingToPaste() {
+        let item = NSMenuItem.paste(nil) { _ in Issue.record("Nothing should be pasted") }
+
+        #expect(item.title == "Paste")
+        #expect(!item.isEnabled)
+        #expect(item.keyEquivalent == "v")
     }
 }
 
@@ -509,7 +529,6 @@ struct ScreenshotTests {
                                         inbox: root.appendingPathComponent("Polka Screenshots", isDirectory: true),
                                         system: system,
                                         defaults: defaults,
-                                        lifetime: { 3600 },
                                         settleTime: settleTime)
         try await body(Setup(catcher: catcher, store: store, copies: copies, system: system, defaults: defaults))
         // Stops watching the folder, if a test left it on.
@@ -600,7 +619,6 @@ struct ScreenshotTests {
             #expect(item.origin == .screenshot)
             #expect(item.storageMode == .copy)
             #expect(item.original == nil)
-            #expect(item.expiresAt == item.createdAt.addingTimeInterval(3600))
             #expect(setup.copies.folderName(containing: item.url.path) != nil)
             #expect(fileManager.fileExists(atPath: item.url.path))
             #expect(try fileManager.contentsOfDirectory(atPath: setup.catcher.inbox.path).isEmpty)

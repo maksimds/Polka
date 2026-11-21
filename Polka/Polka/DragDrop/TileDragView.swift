@@ -19,22 +19,36 @@ final class TileDragView: NSView {
         var isEnabled = true
         /// Puts a divider above this entry, to start a new group.
         var startsGroup = false
+        /// Shown at the item's right with Command, like "⌘C". Pressed while the menu is
+        /// open, it chooses the item.
+        var keyEquivalent = ""
         /// Handed this layer and the tile as drawn in it (`drawnArea`), for whatever
         /// shows next to the tile, like Share's popover. Most entries don't need them.
         let run: @MainActor (_ tile: NSView, _ drawnArea: NSRect) -> Void
+        /// Asked as the menu opens; false leaves the entry out. For an entry that
+        /// depends on something the tile doesn't watch, like a Settings switch.
+        var isShown: (@MainActor () -> Bool)?
+        /// Makes the entry a submenu, asked for its entries each time it opens, so
+        /// what it lists is current even if it changed while the menu was open.
+        var submenu: (@MainActor () -> [MenuEntry])?
+        /// A submenu's section header, like "Remembered" in Send To: small grey text
+        /// over the entries under it, never chosen.
+        var isHeader = false
 
         init(title: String, isChecked: Bool = false, isEnabled: Bool = true, startsGroup: Bool = false,
-             action: @escaping @MainActor () -> Void) {
+             keyEquivalent: String = "", action: @escaping @MainActor () -> Void) {
             self.init(title: title, isChecked: isChecked, isEnabled: isEnabled, startsGroup: startsGroup,
-                      pointingAtTile: { _, _ in action() })
+                      keyEquivalent: keyEquivalent, pointingAtTile: { _, _ in action() })
         }
 
         init(title: String, isChecked: Bool = false, isEnabled: Bool = true, startsGroup: Bool = false,
+             keyEquivalent: String = "",
              pointingAtTile action: @escaping @MainActor (_ tile: NSView, _ drawnArea: NSRect) -> Void) {
             self.title = title
             self.isChecked = isChecked
             self.isEnabled = isEnabled
             self.startsGroup = startsGroup
+            self.keyEquivalent = keyEquivalent
             run = action
         }
     }
@@ -64,6 +78,9 @@ final class TileDragView: NSView {
     var isHoverShown = false
     /// The entries of the menu that is open, so a choice runs the action it showed.
     private var shownEntries: [MenuEntry] = []
+    /// The open menu's submenus, kept alive while it's up: a menu holds its delegate
+    /// weakly.
+    private var submenuSources: [SubmenuSource] = []
 
     /// Where the press started. Nil once a drag has begun or the press has ended.
     private var pressPoint: NSPoint?
@@ -224,8 +241,20 @@ final class TileDragView: NSView {
     /// AppKit asks for this on a right-click and shows the menu itself. A menu
     /// doesn't need the panel to become key, so focus stays with the app in front.
     override func menu(for event: NSEvent) -> NSMenu? {
-        guard !menuEntries.isEmpty else { return nil }
-        shownEntries = menuEntries
+        // An entry left out hands its divider to the next one shown, so the groups stay.
+        shownEntries = []
+        var dividerWaiting = false
+        for var entry in menuEntries {
+            guard entry.isShown?() ?? true else {
+                dividerWaiting = dividerWaiting || entry.startsGroup
+                continue
+            }
+            entry.startsGroup = entry.startsGroup || dividerWaiting
+            dividerWaiting = false
+            shownEntries.append(entry)
+        }
+        guard !shownEntries.isEmpty else { return nil }
+        submenuSources = []
         let menu = NSMenu()
         // Each entry says for itself whether it can be chosen.
         menu.autoenablesItems = false
@@ -233,11 +262,24 @@ final class TileDragView: NSView {
             if entry.startsGroup, index > 0 {
                 menu.addItem(.separator())
             }
-            let menuItem = NSMenuItem(title: entry.title, action: #selector(menuEntryChosen(_:)), keyEquivalent: "")
+            let menuItem = NSMenuItem(title: entry.title, action: #selector(menuEntryChosen(_:)),
+                                      keyEquivalent: entry.keyEquivalent)
             menuItem.target = self
             menuItem.tag = index
             menuItem.state = entry.isChecked ? .on : .off
             menuItem.isEnabled = entry.isEnabled
+            if let entries = entry.submenu {
+                let source = SubmenuSource(entries: entries) { [weak self] chosen in
+                    guard let self else { return }
+                    chosen.run(self, self.drawnArea)
+                }
+                let submenu = NSMenu(title: entry.title)
+                submenu.autoenablesItems = false
+                submenu.delegate = source
+                menuItem.submenu = submenu
+                menuItem.action = nil
+                submenuSources.append(source)
+            }
             menu.addItem(menuItem)
         }
         return menu
@@ -298,5 +340,44 @@ struct ShelfItemDragHandle: NSViewRepresentable {
         view.onClick = onClick
         view.onDoubleClick = onDoubleClick
         view.dragContents = dragContents
+    }
+}
+
+/// Fills a submenu of the tile's right-click menu each time it opens.
+private final class SubmenuSource: NSObject, NSMenuDelegate {
+    private let entries: @MainActor () -> [TileDragView.MenuEntry]
+    private let choose: @MainActor (TileDragView.MenuEntry) -> Void
+    private var shown: [TileDragView.MenuEntry] = []
+
+    init(entries: @escaping @MainActor () -> [TileDragView.MenuEntry],
+         choose: @escaping @MainActor (TileDragView.MenuEntry) -> Void) {
+        self.entries = entries
+        self.choose = choose
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        MainActor.assumeIsolated {
+            shown = entries()
+            menu.removeAllItems()
+            for (index, entry) in shown.enumerated() {
+                if entry.startsGroup, index > 0 { menu.addItem(.separator()) }
+                if entry.isHeader {
+                    menu.addItem(.sectionHeader(title: entry.title))
+                    continue
+                }
+                let item = NSMenuItem(title: entry.title, action: #selector(chosen(_:)), keyEquivalent: "")
+                item.target = self
+                item.tag = index
+                item.isEnabled = entry.isEnabled
+                menu.addItem(item)
+            }
+        }
+    }
+
+    @objc private func chosen(_ sender: NSMenuItem) {
+        MainActor.assumeIsolated {
+            guard shown.indices.contains(sender.tag) else { return }
+            choose(shown[sender.tag])
+        }
     }
 }

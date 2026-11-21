@@ -10,17 +10,64 @@ struct ShelfItemCommands {
     let quickLook: @MainActor (ShelfItem.ID) -> Void
     /// Right-click > Get Info.
     let showInfo: @MainActor (ShelfItem.ID) -> Void
-    /// A text item's right-click > Copy.
+    /// Right-click > Copy: the tile, or the whole selection if it's in it.
     let copy: @MainActor (ShelfItem.ID) -> Void
     /// Right-click > Share, with the view and area the popover points at. The shelf
     /// stays open under the popover, as it does under a menu.
     let share: @MainActor (ShelfItem.ID, NSView, NSRect) -> Void
+    /// What Right-click > Send To on a tile lists, read as it opens, or nil while
+    /// Nearby Sharing is off, which leaves Send To out of the menu.
+    var sendTargets: @MainActor (ShelfItem.ID) -> [NearbySendTarget]? = { _ in nil }
+    /// Right-click > Send To > a Mac: the tile, or what can be sent of the selection if
+    /// the tile is in it, offered to that Mac (its Bonjour name).
+    var send: @MainActor (ShelfItem.ID, String) -> Void = { _, _ in }
+    /// Right-click > Stop Sending, on a tile that's being sent.
+    var stopSending: @MainActor (ShelfItem.ID) -> Void = { _ in }
+    /// Where Right-click > Move To can send a tile, read as the menu opens.
+    var moveDestinations: @MainActor (ShelfItem.ID) -> [NotchViewModel.MoveDestination] = { _ in [] }
+    /// Right-click > Move To > a place: the tile, or the whole selection if the tile is
+    /// in it, into that shelf folder, or onto the shelf with nil.
+    var move: @MainActor (ShelfItem.ID, ShelfItem.ID?) -> Void = { _, _ in }
 }
 
-/// Right-click > Rename: the tile's name turns into a field, and the edit ends by
-/// keeping what's typed or, with Esc, the old name.
+/// One line in the Send To submenu: a Mac nearby, or a note that can't be chosen,
+/// like "Looking for Macs…", or a section's header.
+struct NearbySendTarget: Equatable {
+    /// The Mac's Bonjour name, or nil for a note or a header.
+    let peerID: String?
+    let title: String
+    var isHeader = false
+    /// Puts a divider above this line.
+    var startsGroup = false
+    var isEnabled: Bool { peerID != nil }
+
+    /// The Macs nearby as Send To lists them (NS-4): remembered ones first under
+    /// "Remembered", then the rest under "Other Macs", headed only when there are
+    /// both. A Mac on an older Polka is listed but can't be chosen when it can't take
+    /// what's being sent: anything at all on N1's, files on N2's.
+    static func list(_ peers: [NearbyService.Peer], hasFiles: Bool) -> [NearbySendTarget] {
+        func target(_ peer: NearbyService.Peer) -> NearbySendTarget {
+            let takesThese = peer.takesOffers && (!hasFiles || peer.version >= NearbyProtocol.fileVersion)
+            return takesThese
+                ? NearbySendTarget(peerID: peer.id, title: peer.name)
+                : NearbySendTarget(peerID: nil, title: "\(peer.name) (Needs a Newer Polka)")
+        }
+        let remembered = peers.filter(\.isRemembered)
+        let others = peers.filter { !$0.isRemembered }
+        guard !remembered.isEmpty else { return others.map(target) }
+        var list = [NearbySendTarget(peerID: nil, title: "Remembered", isHeader: true)] + remembered.map(target)
+        if !others.isEmpty {
+            list.append(NearbySendTarget(peerID: nil, title: "Other Macs", isHeader: true, startsGroup: true))
+            list += others.map(target)
+        }
+        return list
+    }
+}
+
+/// Right-click > Rename: the tile's label, file name or address turns into a field,
+/// and the edit ends by keeping what's typed or, with Esc, what was there.
 struct ShelfRenameActions {
-    let begin: @MainActor (ShelfItem.ID) -> Void
+    let begin: @MainActor (ShelfItem.ID, RenameKind) -> Void
     let finish: @MainActor (ShelfItem.ID, String) -> Void
     let cancel: @MainActor (ShelfItem.ID) -> Void
 }
@@ -40,6 +87,22 @@ struct ShelfGridView: View {
     let missingItemIDs: Set<ShelfItem.ID>
     let copyingItemIDs: Set<ShelfItem.ID>
     let convertingItemIDs: Set<ShelfItem.ID>
+    /// How a Send To is going, for the sending tiles' detail lines.
+    var sendingLabels: [ShelfItem.ID: String] = [:]
+    /// Tiles in a Send To that hasn't finished, which offer Stop Sending instead.
+    var sendingItemIDs: Set<ShelfItem.ID> = []
+    /// How many selected tiles Send To would offer, for "Send 3 Items To".
+    var sendableSelectionCount = 0
+    /// How many tiles each shelf folder holds, for its type line.
+    var folderItemCounts: [ShelfItem.ID: Int] = [:]
+    /// How many selected tiles Move To would move, for "Move 3 Items To".
+    var movableSelectionCount = 0
+    /// The shelf folder dragged tiles would go into, lit up.
+    var dropTargetFolderID: ShelfItem.ID?
+    /// Shelf folders whose zips are being made.
+    var compressingItemIDs: Set<ShelfItem.ID> = []
+    /// A shelf folder's "Compress". Nil when Polka has nowhere to make zips.
+    var onCompress: (@MainActor (ShelfItem.ID) -> Void)?
     let selection: Set<ShelfItem.ID>
     /// Tiles shown as empty gaps: being moved, or just dropped and still landing.
     let hiddenItemIDs: Set<ShelfItem.ID>
@@ -68,16 +131,21 @@ struct ShelfGridView: View {
     let dust: DustField
     /// A removed tile has handed its picture to the dust, and can leave the shelf.
     let onDissolved: @MainActor (ShelfItem.ID) -> Void
-    let onToggleTemporary: @MainActor (ShelfItem.ID) -> Void
     let onTogglePinned: @MainActor (ShelfItem.ID) -> Void
     let onToggleKeepCopy: (@MainActor (ShelfItem.ID) -> Void)?
     /// How many selected documents "Convert to PDF" would convert.
     let convertibleSelectionCount: Int
+    /// How many selected tiles "Copy" would copy.
+    let copyableSelectionCount: Int
+    /// Each copied tile's count of copies; its picture pulses once per copy.
+    let copyPulses: [ShelfItem.ID: Int]
     /// Nil when Polka has nowhere to make PDFs.
     let onConvertToPDF: (@MainActor (ShelfItem.ID) -> Void)?
     let commands: ShelfItemCommands
     /// The tile whose name is being edited, if any.
     let renamingItemID: ShelfItem.ID?
+    /// What that tile's field edits.
+    let renameKind: RenameKind
     let rename: ShelfRenameActions
     /// A selection rectangle starts, with the keys held: Shift adds, Command flips.
     let onMarqueeBegan: @MainActor (SelectionClick) -> Void
@@ -145,38 +213,7 @@ struct ShelfGridView: View {
                                 .layoutValue(key: ShelfGridEntryKey.self, value: .header(title))
                         }
                         ForEach(items) { item in
-                            ShelfItemTile(item: item,
-                                          isAvailable: !missingItemIDs.contains(item.id),
-                                          isCopying: copyingItemIDs.contains(item.id),
-                                          isConverting: convertingItemIDs.contains(item.id),
-                                          isSelected: selection.contains(item.id),
-                                          isLifted: hiddenItemIDs.contains(item.id),
-                                          isActive: isActive,
-                                          images: images,
-                                          dragSource: dragSource,
-                                          onClick: { onClick(item.id, $0) },
-                                          dragContents: { dragContents(item.id) },
-                                          onDelete: { onDelete(item.id) },
-                                          onRemoveFromMenu: { onRemoveFromMenu(item.id) },
-                                          isDissolving: dissolvingItemIDs.contains(item.id),
-                                          onDissolve: { dissolve(item.id, picture: $0, scale: $1) },
-                                          selectionCount: selection.count,
-                                          onToggleTemporary: { onToggleTemporary(item.id) },
-                                          onTogglePinned: { onTogglePinned(item.id) },
-                                          onToggleKeepCopy: onToggleKeepCopy.map { toggle in { toggle(item.id) } },
-                                          convertibleSelectionCount: convertibleSelectionCount,
-                                          onConvertToPDF: onConvertToPDF.map { convert in { convert(item.id) } },
-                                          onOpen: { commands.open(item.id) },
-                                          onQuickLook: { commands.quickLook(item.id) },
-                                          onShowInfo: { commands.showInfo(item.id) },
-                                          onCopy: { commands.copy(item.id) },
-                                          onShare: { commands.share(item.id, $0, $1) },
-                                          isRenaming: renamingItemID == item.id,
-                                          onRename: { rename.begin(item.id) },
-                                          onRenameFinished: { rename.finish(item.id, $0) },
-                                          onRenameCancelled: { rename.cancel(item.id) },
-                                          onPressAreaMoved: { pressAreas.frames[item.id] = $0 },
-                                          onPictureInSlotMeasured: { geometry.pictureInSlot = $0 })
+                            tile(for: item)
                                 .transition(tileTransition)
                                 .layoutValue(key: ShelfGridEntryKey.self, value: .tile(item.id))
                         }
@@ -229,6 +266,12 @@ struct ShelfGridView: View {
                         scrollOnOpening(with: scroller)
                     }
                 }
+                // A grid made while the shelf is open, back from a shelf folder, shows
+                // the folder you were in.
+                .onAppear {
+                    guard let id = showItemID, isActive else { return }
+                    DispatchQueue.main.async { scroller.scrollTo(id) }
+                }
                 // A tile that arrives while the shelf is open, like a converted PDF,
                 // is scrolled to only as far as it takes to show it whole.
                 .onChange(of: showItemID) { _, id in
@@ -242,6 +285,67 @@ struct ShelfGridView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Tiles
+
+    /// One tile, with everything it shows and can ask for. A function of its own, with
+    /// its type spelled out, so the compiler doesn't have to work it out inside the grid.
+    private func tile(for item: ShelfItem) -> ShelfItemTile {
+        ShelfItemTile(item: item,
+                      isAvailable: !missingItemIDs.contains(item.id),
+                      isCopying: copyingItemIDs.contains(item.id),
+                      isConverting: convertingItemIDs.contains(item.id),
+                      isSelected: selection.contains(item.id),
+                      isLifted: hiddenItemIDs.contains(item.id),
+                      folderItemCount: folderItemCounts[item.id] ?? 0,
+                      isCompressing: compressingItemIDs.contains(item.id),
+                      onCompress: action(onCompress, for: item.id),
+                      isDropTarget: dropTargetFolderID == item.id,
+                      isActive: isActive,
+                      images: images,
+                      dragSource: dragSource,
+                      onClick: { onClick(item.id, $0) },
+                      dragContents: { dragContents(item.id) },
+                      onDelete: { onDelete(item.id) },
+                      onRemoveFromMenu: { onRemoveFromMenu(item.id) },
+                      moveDestinations: { commands.moveDestinations(item.id) },
+                      movableSelectionCount: movableSelectionCount,
+                      onMove: { commands.move(item.id, $0) },
+                      isDissolving: dissolvingItemIDs.contains(item.id),
+                      onDissolve: { dissolve(item.id, picture: $0, scale: $1) },
+                      selectionCount: selection.count,
+                      onTogglePinned: { onTogglePinned(item.id) },
+                      onToggleKeepCopy: action(onToggleKeepCopy, for: item.id),
+                      convertibleSelectionCount: convertibleSelectionCount,
+                      onConvertToPDF: action(onConvertToPDF, for: item.id),
+                      onOpen: { commands.open(item.id) },
+                      onQuickLook: { commands.quickLook(item.id) },
+                      onShowInfo: { commands.showInfo(item.id) },
+                      copyableSelectionCount: copyableSelectionCount,
+                      copyPulses: copyPulses[item.id] ?? 0,
+                      onCopy: { commands.copy(item.id) },
+                      onShare: { commands.share(item.id, $0, $1) },
+                      sendingLabel: sendingLabels[item.id],
+                      sendableSelectionCount: sendableSelectionCount,
+                      sendTargets: { commands.sendTargets(item.id) },
+                      onSend: { commands.send(item.id, $0) },
+                      isSending: sendingItemIDs.contains(item.id),
+                      onStopSending: { commands.stopSending(item.id) },
+                      isRenaming: renamingItemID == item.id,
+                      renameKind: renameKind,
+                      onRename: { rename.begin(item.id, $0) },
+                      onRenameFinished: { rename.finish(item.id, $0) },
+                      onRenameCancelled: { rename.cancel(item.id) },
+                      onPressAreaMoved: { pressAreas.frames[item.id] = $0 },
+                      onPictureInSlotMeasured: { geometry.pictureInSlot = $0 })
+    }
+
+    /// An optional action for one item, as a tile takes it.
+    private func action(_ action: (@MainActor (ShelfItem.ID) -> Void)?,
+                        for id: ShelfItem.ID) -> (@MainActor () -> Void)? {
+        guard let action else { return nil }
+        return { action(id) }
     }
 
     // MARK: - Turning to dust

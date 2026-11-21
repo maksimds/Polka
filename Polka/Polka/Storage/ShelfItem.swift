@@ -8,6 +8,11 @@ struct ShelfItem: Identifiable, Codable, Equatable {
         case link
         /// A piece of plain text, pasted or dropped onto the shelf (FR-19).
         case text
+        /// A folder made on the shelf to sort tiles into (FR-26). It lives only in
+        /// shelf.json: nothing is made in Finder, and the tiles in it keep pointing at
+        /// their own files, links and text. Not to be confused with `folder`, a folder
+        /// on disk.
+        case shelfFolder
     }
 
     /// Where an item came from, when that changes how Polka treats it.
@@ -41,6 +46,9 @@ struct ShelfItem: Identifiable, Codable, Equatable {
         case link(URL)
         /// The text itself, kept in shelf.json.
         case text(String)
+        /// A shelf folder, which points at nothing: its tiles say they're in it
+        /// (`ShelfItem.folderID`).
+        case shelfFolder
     }
 
     /// What a link's preview fetch found (FR-6): the name the site gives itself and its icon.
@@ -68,9 +76,10 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     var title: String
     var source: Source
     var storageMode: StorageMode
+    /// When the item was added. Items stay until they're removed: shelves saved while
+    /// items could expire have an `expiresAt` too, which is no longer read, so those
+    /// items simply stay.
     let createdAt: Date
-    /// Nil for permanent items, otherwise the time the item is removed.
-    var expiresAt: Date?
     /// Position in the grid. Zero is the first tile.
     var sortOrder: Int
     /// For links: what the preview fetch found. Nil until it has run, which also
@@ -89,6 +98,19 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     /// True for an item pinned to the shelf's first row ("Pin", FR-21). Nil when it
     /// isn't, which also means shelves saved before pinning existed still load.
     var pinned: Bool? = nil
+    /// For an item sent from another Mac with Nearby Sharing: the name that Mac gave,
+    /// not verified. Kept but not shown yet. Nil for everything else, which also means
+    /// shelves saved before Nearby Sharing still load, and Polka 1.0 skips it.
+    var receivedFrom: String? = nil
+    /// The shelf folder this item is in (FR-26), or nil for one on the shelf itself.
+    /// A shelf folder is never in another. Nil also means shelves saved before folders
+    /// existed still load.
+    var folderID: UUID? = nil
+    /// For a shelf folder: its own "Sort By" choice, `ShelfSort`'s raw value, apart
+    /// from the shelf's, which is a setting. Nil for None, which also means shelves
+    /// saved before folders existed still load, and one this version doesn't know
+    /// reads as None.
+    var sortBy: String? = nil
 }
 
 extension ShelfItem {
@@ -99,14 +121,19 @@ extension ShelfItem {
         customName ?? title
     }
 
-    /// The file or web address the item points at. Text points at nothing and gives
-    /// `about:blank`, which Polka never opens (see `ItemOpener.open`).
+    /// The file or web address the item points at. Text and shelf folders point at
+    /// nothing and give `about:blank`, which Polka never opens (see `ItemOpener.open`).
     var url: URL {
         switch source {
         case .file(let path, _): return URL(fileURLWithPath: path)
         case .link(let url): return url
-        case .text: return URL(string: "about:blank")!
+        case .text, .shelfFolder: return URL(string: "about:blank")!
         }
+    }
+
+    /// A folder made on the shelf (FR-26), not a folder on disk.
+    var isShelfFolder: Bool {
+        kind == .shelfFolder
     }
 
     /// What opening the item opens, and what Quick Look and Get Info show: a kept
@@ -119,17 +146,13 @@ extension ShelfItem {
         return url
     }
 
-    var isTemporary: Bool {
-        expiresAt != nil
+    /// A shelf folder's own order (see `sortBy`).
+    var folderSort: ShelfSort {
+        sortBy.flatMap(ShelfSort.init(rawValue:)) ?? .none
     }
 
     var isPinned: Bool {
         pinned == true
-    }
-
-    func isExpired(at date: Date) -> Bool {
-        guard let expiresAt else { return false }
-        return expiresAt <= date
     }
 
     /// The part of a new item that comes from what was dropped.
@@ -140,9 +163,8 @@ extension ShelfItem {
         let source: Source
         let storageMode: StorageMode
         var origin: Origin? = nil
-        /// Set for an item that starts out temporary, such as a screenshot: how long
-        /// it lasts from the moment it's added. Nil for a permanent one.
-        var lifetime: TimeInterval? = nil
+        /// See `ShelfItem.receivedFrom`.
+        var receivedFrom: String? = nil
 
         /// `storageMode` is `.copy` for a file that already sits in Polka's Copies
         /// folder, such as one an app wrote there to keep a promise.
@@ -191,7 +213,9 @@ extension ShelfItem {
 
     /// Everything this item stands for when checking a drop for duplicates. A kept
     /// copy still stands for its original, so dropping the original again adds nothing.
+    /// A shelf folder stands for nothing, so two can have the same name.
     var dedupeKeys: [String] {
+        guard !isShelfFolder else { return [] }
         var keys = [source.dedupeKey]
         if let original {
             keys.append(Source.file(path: original.path, bookmark: nil).dedupeKey)
@@ -208,6 +232,8 @@ extension ShelfItem.Source {
         case .link(let url): return "link:\(url.absoluteString)"
         // The same text pasted twice is the same item, like the same link.
         case .text(let text): return "text:\(text)"
+        // Never compared: a shelf folder has no keys (`ShelfItem.dedupeKeys`).
+        case .shelfFolder: return "shelfFolder"
         }
     }
 }
