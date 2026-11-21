@@ -252,6 +252,8 @@ enum NearbyOutgoingItem: Equatable {
             guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
                   values.isRegularFile == true, let size = values.fileSize else { return nil }
             return .file(url: url, name: url.lastPathComponent, size: Int64(size))
+        case .shelfFolder:
+            return nil
         }
     }
 

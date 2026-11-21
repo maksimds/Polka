@@ -23,6 +23,11 @@ struct ShelfItemCommands {
     var send: @MainActor (ShelfItem.ID, String) -> Void = { _, _ in }
     /// Right-click > Stop Sending, on a tile that's being sent.
     var stopSending: @MainActor (ShelfItem.ID) -> Void = { _ in }
+    /// Where Right-click > Move To can send a tile, read as the menu opens.
+    var moveDestinations: @MainActor (ShelfItem.ID) -> [NotchViewModel.MoveDestination] = { _ in [] }
+    /// Right-click > Move To > a place: the tile, or the whole selection if the tile is
+    /// in it, into that shelf folder, or onto the shelf with nil.
+    var move: @MainActor (ShelfItem.ID, ShelfItem.ID?) -> Void = { _, _ in }
 }
 
 /// One line in the Send To submenu: a Mac nearby, or a note that can't be chosen,
@@ -88,6 +93,16 @@ struct ShelfGridView: View {
     var sendingItemIDs: Set<ShelfItem.ID> = []
     /// How many selected tiles Send To would offer, for "Send 3 Items To".
     var sendableSelectionCount = 0
+    /// How many tiles each shelf folder holds, for its type line.
+    var folderItemCounts: [ShelfItem.ID: Int] = [:]
+    /// How many selected tiles Move To would move, for "Move 3 Items To".
+    var movableSelectionCount = 0
+    /// The shelf folder dragged tiles would go into, lit up.
+    var dropTargetFolderID: ShelfItem.ID?
+    /// Shelf folders whose zips are being made.
+    var compressingItemIDs: Set<ShelfItem.ID> = []
+    /// A shelf folder's "Compress". Nil when Polka has nowhere to make zips.
+    var onCompress: (@MainActor (ShelfItem.ID) -> Void)?
     let selection: Set<ShelfItem.ID>
     /// Tiles shown as empty gaps: being moved, or just dropped and still landing.
     let hiddenItemIDs: Set<ShelfItem.ID>
@@ -199,47 +214,7 @@ struct ShelfGridView: View {
                                 .layoutValue(key: ShelfGridEntryKey.self, value: .header(title))
                         }
                         ForEach(items) { item in
-                            ShelfItemTile(item: item,
-                                          isAvailable: !missingItemIDs.contains(item.id),
-                                          isCopying: copyingItemIDs.contains(item.id),
-                                          isConverting: convertingItemIDs.contains(item.id),
-                                          isSelected: selection.contains(item.id),
-                                          isLifted: hiddenItemIDs.contains(item.id),
-                                          isActive: isActive,
-                                          images: images,
-                                          dragSource: dragSource,
-                                          onClick: { onClick(item.id, $0) },
-                                          dragContents: { dragContents(item.id) },
-                                          onDelete: { onDelete(item.id) },
-                                          onRemoveFromMenu: { onRemoveFromMenu(item.id) },
-                                          isDissolving: dissolvingItemIDs.contains(item.id),
-                                          onDissolve: { dissolve(item.id, picture: $0, scale: $1) },
-                                          selectionCount: selection.count,
-                                          onToggleTemporary: { onToggleTemporary(item.id) },
-                                          onTogglePinned: { onTogglePinned(item.id) },
-                                          onToggleKeepCopy: onToggleKeepCopy.map { toggle in { toggle(item.id) } },
-                                          convertibleSelectionCount: convertibleSelectionCount,
-                                          onConvertToPDF: onConvertToPDF.map { convert in { convert(item.id) } },
-                                          onOpen: { commands.open(item.id) },
-                                          onQuickLook: { commands.quickLook(item.id) },
-                                          onShowInfo: { commands.showInfo(item.id) },
-                                          copyableSelectionCount: copyableSelectionCount,
-                                          copyPulses: copyPulses[item.id] ?? 0,
-                                          onCopy: { commands.copy(item.id) },
-                                          onShare: { commands.share(item.id, $0, $1) },
-                                          sendingLabel: sendingLabels[item.id],
-                                          sendableSelectionCount: sendableSelectionCount,
-                                          sendTargets: { commands.sendTargets(item.id) },
-                                          onSend: { commands.send(item.id, $0) },
-                                          isSending: sendingItemIDs.contains(item.id),
-                                          onStopSending: { commands.stopSending(item.id) },
-                                          isRenaming: renamingItemID == item.id,
-                                          renameKind: renameKind,
-                                          onRename: { rename.begin(item.id, $0) },
-                                          onRenameFinished: { rename.finish(item.id, $0) },
-                                          onRenameCancelled: { rename.cancel(item.id) },
-                                          onPressAreaMoved: { pressAreas.frames[item.id] = $0 },
-                                          onPictureInSlotMeasured: { geometry.pictureInSlot = $0 })
+                            tile(for: item)
                                 .transition(tileTransition)
                                 .layoutValue(key: ShelfGridEntryKey.self, value: .tile(item.id))
                         }
@@ -292,6 +267,12 @@ struct ShelfGridView: View {
                         scrollOnOpening(with: scroller)
                     }
                 }
+                // A grid made while the shelf is open, back from a shelf folder, shows
+                // the folder you were in.
+                .onAppear {
+                    guard let id = showItemID, isActive else { return }
+                    DispatchQueue.main.async { scroller.scrollTo(id) }
+                }
                 // A tile that arrives while the shelf is open, like a converted PDF,
                 // is scrolled to only as far as it takes to show it whole.
                 .onChange(of: showItemID) { _, id in
@@ -305,6 +286,68 @@ struct ShelfGridView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Tiles
+
+    /// One tile, with everything it shows and can ask for. A function of its own, with
+    /// its type spelled out, so the compiler doesn't have to work it out inside the grid.
+    private func tile(for item: ShelfItem) -> ShelfItemTile {
+        ShelfItemTile(item: item,
+                      isAvailable: !missingItemIDs.contains(item.id),
+                      isCopying: copyingItemIDs.contains(item.id),
+                      isConverting: convertingItemIDs.contains(item.id),
+                      isSelected: selection.contains(item.id),
+                      isLifted: hiddenItemIDs.contains(item.id),
+                      folderItemCount: folderItemCounts[item.id] ?? 0,
+                      isCompressing: compressingItemIDs.contains(item.id),
+                      onCompress: action(onCompress, for: item.id),
+                      isDropTarget: dropTargetFolderID == item.id,
+                      isActive: isActive,
+                      images: images,
+                      dragSource: dragSource,
+                      onClick: { onClick(item.id, $0) },
+                      dragContents: { dragContents(item.id) },
+                      onDelete: { onDelete(item.id) },
+                      onRemoveFromMenu: { onRemoveFromMenu(item.id) },
+                      moveDestinations: { commands.moveDestinations(item.id) },
+                      movableSelectionCount: movableSelectionCount,
+                      onMove: { commands.move(item.id, $0) },
+                      isDissolving: dissolvingItemIDs.contains(item.id),
+                      onDissolve: { dissolve(item.id, picture: $0, scale: $1) },
+                      selectionCount: selection.count,
+                      onToggleTemporary: { onToggleTemporary(item.id) },
+                      onTogglePinned: { onTogglePinned(item.id) },
+                      onToggleKeepCopy: action(onToggleKeepCopy, for: item.id),
+                      convertibleSelectionCount: convertibleSelectionCount,
+                      onConvertToPDF: action(onConvertToPDF, for: item.id),
+                      onOpen: { commands.open(item.id) },
+                      onQuickLook: { commands.quickLook(item.id) },
+                      onShowInfo: { commands.showInfo(item.id) },
+                      copyableSelectionCount: copyableSelectionCount,
+                      copyPulses: copyPulses[item.id] ?? 0,
+                      onCopy: { commands.copy(item.id) },
+                      onShare: { commands.share(item.id, $0, $1) },
+                      sendingLabel: sendingLabels[item.id],
+                      sendableSelectionCount: sendableSelectionCount,
+                      sendTargets: { commands.sendTargets(item.id) },
+                      onSend: { commands.send(item.id, $0) },
+                      isSending: sendingItemIDs.contains(item.id),
+                      onStopSending: { commands.stopSending(item.id) },
+                      isRenaming: renamingItemID == item.id,
+                      renameKind: renameKind,
+                      onRename: { rename.begin(item.id, $0) },
+                      onRenameFinished: { rename.finish(item.id, $0) },
+                      onRenameCancelled: { rename.cancel(item.id) },
+                      onPressAreaMoved: { pressAreas.frames[item.id] = $0 },
+                      onPictureInSlotMeasured: { geometry.pictureInSlot = $0 })
+    }
+
+    /// An optional action for one item, as a tile takes it.
+    private func action(_ action: (@MainActor (ShelfItem.ID) -> Void)?,
+                        for id: ShelfItem.ID) -> (@MainActor () -> Void)? {
+        guard let action else { return nil }
+        return { action(id) }
     }
 
     // MARK: - Turning to dust

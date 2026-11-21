@@ -12,6 +12,7 @@ private func shelfItem(_ source: ShelfItem.Source) -> ShelfItem {
     let kind: ShelfItem.Kind
     switch source {
     case .file: kind = .file
+    case .shelfFolder: kind = .shelfFolder
     case .link: kind = .link
     case .text: kind = .text
     }

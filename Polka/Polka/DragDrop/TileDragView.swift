@@ -241,7 +241,18 @@ final class TileDragView: NSView {
     /// AppKit asks for this on a right-click and shows the menu itself. A menu
     /// doesn't need the panel to become key, so focus stays with the app in front.
     override func menu(for event: NSEvent) -> NSMenu? {
-        shownEntries = menuEntries.filter { $0.isShown?() ?? true }
+        // An entry left out hands its divider to the next one shown, so the groups stay.
+        shownEntries = []
+        var dividerWaiting = false
+        for var entry in menuEntries {
+            guard entry.isShown?() ?? true else {
+                dividerWaiting = dividerWaiting || entry.startsGroup
+                continue
+            }
+            entry.startsGroup = entry.startsGroup || dividerWaiting
+            dividerWaiting = false
+            shownEntries.append(entry)
+        }
         guard !shownEntries.isEmpty else { return nil }
         submenuSources = []
         let menu = NSMenu()

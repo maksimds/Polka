@@ -54,6 +54,9 @@ final class NotchViewModel: ObservableObject {
             if state != .expanded, renamingItemID != nil {
                 renamingItemID = nil
             }
+            if state != .dropReady, dropZoneFolderID != nil {
+                dropZoneFolderID = nil
+            }
             // Dust only rises over the open shelf.
             if state != .expanded {
                 finishDissolving(dissolvingItemIDs)
@@ -63,6 +66,10 @@ final class NotchViewModel: ObservableObject {
                 clearSelection()
                 itemToReveal = nil
                 itemToShow = nil
+                // Closing the panel goes back to the shelf, as closing a folder on
+                // iPhone does. Something added to a folder while the panel is closed
+                // opens it again (`add`).
+                openFolderID = nil
             } else if state == .addingLink {
                 clearSelection()
             }
@@ -94,6 +101,9 @@ final class NotchViewModel: ObservableObject {
     /// A message shown in the panel. It stays until the user closes it,
     /// even if the panel collapses and reopens in between.
     @Published private(set) var notice: String?
+    /// The shelf folder the panel shows (FR-26), or nil for the shelf itself. The
+    /// header reads "Polka / Work" while it's open.
+    @Published private(set) var openFolderID: ShelfItem.ID?
 
     /// A drag of the shelf's own tiles that's under way.
     struct TileMove: Equatable {
@@ -109,6 +119,9 @@ final class NotchViewModel: ObservableObject {
 
     /// Set from the moment a tile drag starts until it ends.
     @Published private(set) var tileMove: TileMove?
+    /// While tiles are dragged: the shelf folder under the pointer they'd go into, or
+    /// the shelf, with the pointer on "Polka" in the header (FR-26). It lights up.
+    @Published private(set) var tileMoveInto: TileDrop.Into?
     /// Tiles just dropped, hidden while their pictures glide into place.
     @Published private(set) var landingItemIDs: Set<ShelfItem.ID> = []
     /// Removed tiles taking their pictures for the dust, just before they leave the shelf.
@@ -138,6 +151,8 @@ final class NotchViewModel: ObservableObject {
     private let copies: CopyKeeper?
     /// Nil when Polka has no folder of its own to make PDFs in.
     private let converter: PDFConverter?
+    /// Nil when Polka has no folder of its own to make zips in.
+    private let compressor: FolderCompressor?
     private let temporaryLifetime: () -> TimeInterval
     /// Remembers a "Sort By" choice for the next launch.
     private let saveSort: (ShelfSort) -> Void
@@ -153,12 +168,14 @@ final class NotchViewModel: ObservableObject {
     init(store: ShelfStore,
          copies: CopyKeeper? = nil,
          converter: PDFConverter? = nil,
+         compressor: FolderCompressor? = nil,
          temporaryLifetime: @escaping () -> TimeInterval = { ShelfSettings().temporaryLifetime },
          saveSort: @escaping (ShelfSort) -> Void = { ShelfSettings().shelfSort = $0 },
          moveSettleDelay: Duration = .milliseconds(150)) {
         self.store = store
         self.copies = copies
         self.converter = converter
+        self.compressor = compressor
         self.temporaryLifetime = temporaryLifetime
         self.saveSort = saveSort
         self.moveSettleDelay = moveSettleDelay
@@ -170,6 +187,10 @@ final class NotchViewModel: ObservableObject {
 
     var canConvertToPDF: Bool {
         converter != nil
+    }
+
+    var canCompress: Bool {
+        compressor != nil
     }
 
     /// The shelf turned into the link field: as wide as the shelf, and only as tall
@@ -225,7 +246,8 @@ final class NotchViewModel: ObservableObject {
     /// (NS-12), which stays until its ×, like other messages.
     func receiveNearby(_ items: [NearbyReceivedItem], from senderName: String, withoutAsking: Bool = false) {
         let drafts = items.map { $0.draft(from: senderName) }
-        let added = add(drafts)
+        // To the shelf itself, whatever folder is open: it came from someone else.
+        let added = add(drafts, in: nil)
         if withoutAsking, !drafts.isEmpty {
             let name = store.items.first { added.contains($0.id) }?.displayName ?? drafts[0].title
             notice = Self.arrivalMessage(from: senderName, count: drafts.count, added: added.count, firstName: name)
@@ -286,7 +308,7 @@ final class NotchViewModel: ObservableObject {
         switch item.kind {
         case .link, .text: return true
         case .file: return !store.missingItemIDs.contains(item.id)
-        case .folder: return false
+        case .folder, .shelfFolder: return false
         }
     }
 
@@ -328,15 +350,76 @@ final class NotchViewModel: ObservableObject {
 
     /// Promised files aren't in `items` as drafts: they're added by
     /// `receivePromisedFiles` once the app that promised them has written them.
-    func handleDrop(_ items: [DroppedItem]) {
-        add(items.compactMap(ShelfItem.Draft.init))
+    ///
+    /// They go into `folderID` when they were dropped on a folder in the drop zone's
+    /// row (FR-26); the shelf then opens with that folder in view, pulsing, as a folder
+    /// does when tiles are moved into it. Otherwise they go where the panel was showing.
+    func handleDrop(_ items: [DroppedItem], intoFolder folderID: ShelfItem.ID? = nil) {
+        let drafts = items.compactMap(ShelfItem.Draft.init)
+        let folder = store.folder(folderID)?.id
+        if let folder {
+            add(drafts, in: folder)
+        } else {
+            add(drafts)
+        }
         if let message = Self.notAWebLinkMessage(refused: items.filter(\.isRefusedLink).count) {
             notice = message
         }
         if items.compactMap(\.text).contains(where: Self.isTooLong) {
             notice = Self.textTooLongMessage
         }
+        // The drag's end may have opened the shelf already, before the drop arrived.
+        let wasOpen = state == .expanded
         state = .expanded
+        if let folder {
+            showFolderTookDrop(folder, shelfWasOpen: wasOpen)
+        }
+    }
+
+    /// The shelf, opening after a drop on one of the drop zone's folders, scrolls to
+    /// that folder, and the folder pulses once the shelf has grown in, so you see
+    /// where it went. A shelf that's open already scrolls only as far as it takes.
+    private func showFolderTookDrop(_ folderID: ShelfItem.ID, shelfWasOpen: Bool) {
+        if shelfWasOpen {
+            itemToShow = folderID
+        } else {
+            itemToReveal = folderID
+        }
+        Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard let self, self.store.folder(folderID) != nil else { return }
+            self.copyPulses[folderID, default: 0] += 1
+        }
+    }
+
+    // MARK: - The drop zone's folders
+
+    /// The shelf folders the drop zone offers in a row under its box (FR-26), in the
+    /// shelf's order, so a drag from another app can go straight into one. Empty when
+    /// there are none, and then the row isn't there.
+    var dropZoneFolders: [ShelfItem] {
+        store.items(in: nil).filter(\.isShelfFolder)
+    }
+
+    /// The folder in the drop zone's row that a drag from another app is over. It
+    /// lights up, and the box says the drop goes there.
+    @Published private(set) var dropZoneFolderID: ShelfItem.ID?
+    /// Where the row's folders are, kept up to date by the row.
+    let dropZoneGeometry = DropZoneGeometry()
+
+    /// A drag from another app moved over the panel, or left it (nil).
+    func externalDragMoved(to point: CGPoint?) {
+        let folder = point.flatMap(dropZoneFolder(at:))
+        if folder != dropZoneFolderID {
+            dropZoneFolderID = folder
+        }
+    }
+
+    /// The folder in the drop zone's row under `point`, while the drop zone is open.
+    /// Only looks, so it can be asked during a drop.
+    func dropZoneFolder(at point: CGPoint) -> ShelfItem.ID? {
+        guard state == .dropReady, let id = dropZoneGeometry.folder(at: point) else { return nil }
+        return store.folder(id)?.id
     }
 
     // MARK: - Pasting
@@ -368,8 +451,9 @@ final class NotchViewModel: ObservableObject {
             notice = "Couldn't save the picture, since Polka has no folder to keep it in"
             return
         }
+        let folderID = openFolderID
         Task {
-            if let item = await copies.addPastedImage(image) {
+            if let item = await copies.addPastedImage(image, in: folderID) {
                 reveal([item.id])
             } else {
                 notice = "Couldn't save the picture from the clipboard"
@@ -384,8 +468,17 @@ final class NotchViewModel: ObservableObject {
         if state == .expanded {
             itemToShow = first
         } else {
-            itemToReveal = first
+            revealWhenOpened(first)
         }
+    }
+
+    /// The panel opens with this item in view next time. One in a shelf folder opens
+    /// that folder, if the panel is closed; an open panel stays where it is.
+    private func revealWhenOpened(_ id: ShelfItem.ID?) {
+        itemToReveal = id
+        guard state == .collapsed, let id, let folderID = item(id)?.folderID,
+              store.folder(folderID) != nil else { return }
+        openFolderID = folderID
     }
 
     /// Each copied tile's count of copies, so its picture pulses once per copy: the
@@ -412,7 +505,7 @@ final class NotchViewModel: ObservableObject {
 
     /// In shelf order, without files that can't be found, which stay behind as in a drag.
     private func itemsToCopy(_ ids: Set<ShelfItem.ID>) -> [ShelfItem] {
-        store.items.filter { ids.contains($0.id) && !store.missingItemIDs.contains($0.id) }
+        store.items.filter { ids.contains($0.id) && !store.missingItemIDs.contains($0.id) && !$0.isShelfFolder }
     }
 
     /// What lands on the clipboard is what a drag out drops (`pasteboardWriter`): the
@@ -459,40 +552,60 @@ final class NotchViewModel: ObservableObject {
         guard let url = LinkInput.url(from: text) else {
             return "That doesn't look like a web address"
         }
-        let result = store.add([ShelfItem.Draft(linkURL: url)])
+        let result = store.add([ShelfItem.Draft(linkURL: url)], in: openFolderID)
         guard let added = result.added.first else {
-            return "That link is already on the shelf"
+            return "That link is already \(whereItIs(ShelfItem.Source.link(url).dedupeKey))"
         }
         itemToReveal = added.id
         state = .expanded
         return nil
     }
 
-    /// "File": what was picked in the Open dialog, stored like dropped files. The
-    /// panel closed before the dialog opened, so it opens scrolled to them next time,
-    /// and anything already on the shelf gets the usual message there.
-    func addFiles(_ urls: [URL]) {
-        add(urls.map { ShelfItem.Draft(fileURL: $0) })
+    /// "File": what was picked in the Open dialog, stored like dropped files, in the
+    /// folder that was open when "File" was chosen. The panel closed before the dialog
+    /// opened, so it opens scrolled to them next time, in that folder, and anything
+    /// already on the shelf gets the usual message there.
+    func addFiles(_ urls: [URL], in folderID: ShelfItem.ID? = nil) {
+        add(urls.map { ShelfItem.Draft(fileURL: $0) }, in: folderID)
     }
 
-    /// Stores new items, says if any were already on the shelf, and remembers the new
-    /// item nearest the top, so the panel opens with it in view.
+    /// Stores new items in the open folder, or on the shelf itself if none is open.
     @discardableResult
     private func add(_ drafts: [ShelfItem.Draft]) -> Set<ShelfItem.ID> {
-        let result = store.add(drafts)
-        if let message = Self.alreadyOnShelfMessage(for: result.duplicates) {
+        add(drafts, in: openFolderID)
+    }
+
+    /// Stores new items in the shelf folder `folderID`, or on the shelf itself with
+    /// nil, says if any were already on the shelf, and remembers the new item nearest
+    /// the top, so the panel opens with it in view. Added to a folder while the panel
+    /// is closed, they open that folder next time.
+    @discardableResult
+    private func add(_ drafts: [ShelfItem.Draft], in folderID: ShelfItem.ID?) -> Set<ShelfItem.ID> {
+        let result = store.add(drafts, in: folderID)
+        if let message = alreadyOnShelfMessage(for: result.duplicates) {
             notice = message
         }
         let addedIDs = Set(result.added.map(\.id))
-        itemToReveal = store.items.first { addedIDs.contains($0.id) }?.id
+        revealWhenOpened(store.items.first { addedIDs.contains($0.id) }?.id)
         return addedIDs
     }
 
-    /// A choice from the header's "Sort By" menu. The shelf sorts itself now, stays
-    /// sorted from then on, and keeps the choice for the next launch.
+    /// A choice from the header's "Sort By" menu, for the place the panel shows. It
+    /// sorts itself now and stays sorted from then on. The shelf keeps its choice for
+    /// the next launch as a setting; a shelf folder keeps its own in shelf.json, apart
+    /// from the shelf's.
     func chooseSort(_ sort: ShelfSort) {
+        if let folder = shownFolder {
+            store.setSort(sort, in: folder.id)
+            return
+        }
         store.setSort(sort)
         saveSort(sort)
+    }
+
+    /// The order of the place the panel shows, as the header's sort button shows it.
+    var shownSort: ShelfSort {
+        store.sort(in: shownFolder?.id)
     }
 
     func dismissNotice() {
@@ -501,7 +614,7 @@ final class NotchViewModel: ObservableObject {
 
     /// The tile's "Temporary" menu item: a permanent item becomes temporary, and the other way round.
     func toggleTemporary(_ id: ShelfItem.ID) {
-        guard let item = store.items.first(where: { $0.id == id }) else { return }
+        guard let item = store.items.first(where: { $0.id == id }), !item.isShelfFolder else { return }
         if item.isTemporary {
             store.makePermanent(id: id)
         } else {
@@ -516,18 +629,21 @@ final class NotchViewModel: ObservableObject {
         if item.isPinned {
             store.unpin(id: id)
         } else if !store.pin(id: id) {
-            notice = "You can pin up to \(ShelfStore.maxPinned) items. Unpin one to pin this."
+            let place = store.folder(item.folderID).map { " in \($0.displayName)" } ?? ""
+            notice = "You can pin up to \(ShelfStore.maxPinned) items\(place). Unpin one to pin this."
         }
     }
 
     /// Starts receiving the files an app promised in a drop. Called during the drop
-    /// itself, so it changes nothing now; a failure shows a message later.
-    func receivePromisedFiles(_ promises: [NSFilePromiseReceiver]) {
+    /// itself, so it changes nothing now; a failure shows a message later. They go into
+    /// `folderID` when dropped on a folder in the drop zone's row, otherwise where the
+    /// panel was showing.
+    func receivePromisedFiles(_ promises: [NSFilePromiseReceiver], intoFolder folderID: ShelfItem.ID? = nil) {
         guard let copies else {
             Log.drop.error("A promised file was dropped, but Polka has no folder to put it in")
             return
         }
-        copies.receive(promises) { [weak self] fileName in
+        copies.receive(promises, in: store.folder(folderID)?.id ?? openFolderID) { [weak self] fileName in
             self?.notice = "Couldn't get \(fileName ?? "a file") from the app it came from"
         }
     }
@@ -586,7 +702,7 @@ final class NotchViewModel: ObservableObject {
             if state == .expanded {
                 itemToShow = first
             } else {
-                itemToReveal = first
+                revealWhenOpened(first)
             }
         }
     }
@@ -689,6 +805,119 @@ final class NotchViewModel: ObservableObject {
         renamingItemID = nil
     }
 
+    // MARK: - Shelf folders
+
+    /// The tiles of the place the panel shows: the open shelf folder's, or the shelf's.
+    var shownItems: [ShelfItem] {
+        store.items(in: shownFolder?.id)
+    }
+
+    /// The open shelf folder, while it's still there.
+    var shownFolder: ShelfItem? {
+        store.folder(openFolderID)
+    }
+
+    /// Double-click on a shelf folder: the panel shows its tiles, and the header reads
+    /// "Polka / Work". Nothing stays selected, as when Finder opens a folder.
+    func openFolder(_ id: ShelfItem.ID) {
+        guard state == .expanded, tileMove == nil, store.folder(id) != nil, openFolderID != id else { return }
+        renamingItemID = nil
+        clearSelection()
+        itemToShow = nil
+        openFolderID = id
+    }
+
+    /// "Polka" in the header, while a folder is open: back to the shelf, with the
+    /// folder you were in selected and scrolled into view, so you can see where you
+    /// were.
+    func closeFolder() {
+        guard let folderID = openFolderID, tileMove == nil else { return }
+        renamingItemID = nil
+        openFolderID = nil
+        selection = store.folder(folderID) == nil ? [] : [folderID]
+        selectionAnchor = selection.first
+        itemToShow = selection.first
+    }
+
+    /// "New Folder", from the + menu or a right-click on free space: an empty shelf
+    /// folder arrives and its name turns into a field at once, as in Finder. Only on
+    /// the shelf itself, since a folder never goes into another.
+    func createFolder() {
+        guard state == .expanded, openFolderID == nil else { return }
+        let folder = store.createFolder()
+        itemToShow = folder.id
+        beginRenaming(folder.id)
+    }
+
+    /// True where "New Folder" is offered: on the open shelf itself.
+    var canCreateFolder: Bool {
+        state == .expanded && openFolderID == nil
+    }
+
+    /// How many tiles each shelf folder holds, for its type line ("3 Items").
+    var folderItemCounts: [ShelfItem.ID: Int] {
+        store.folderItemCounts
+    }
+
+    /// One place "Move To" can send a tile: a shelf folder, or the shelf itself (nil).
+    struct MoveDestination: Equatable {
+        let folderID: ShelfItem.ID?
+        let title: String
+    }
+
+    /// What a tile's "Move To" lists: "Shelf" while a folder is open, then every shelf
+    /// folder but the open one, A to Z. Empty for a folder, which never goes into
+    /// another, and when there's nowhere to go.
+    func moveDestinations(for id: ShelfItem.ID) -> [MoveDestination] {
+        guard let item = item(id), !item.isShelfFolder else { return [] }
+        let shelf = item.folderID == nil ? [] : [MoveDestination(folderID: nil, title: "Shelf")]
+        let folders = store.items
+            .filter { $0.isShelfFolder && $0.id != item.folderID }
+            .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+            .map { MoveDestination(folderID: $0.id, title: $0.displayName) }
+        return shelf + folders
+    }
+
+    /// A shelf folder's "Compress": its tiles in a zip, which lands on the shelf right
+    /// after it. On the open shelf the grid scrolls to it if it's out of sight;
+    /// otherwise the panel opens scrolled to it next time.
+    func compress(_ id: ShelfItem.ID) {
+        guard let compressor, let folder = store.folder(id) else { return }
+        Task {
+            switch await compressor.compress(id) {
+            case .added(let zipID):
+                if state == .expanded {
+                    itemToShow = zipID
+                } else {
+                    revealWhenOpened(zipID)
+                }
+            case .nothingToCompress:
+                notice = "There's nothing in \(folder.displayName) that can be compressed"
+            case .failed:
+                notice = "Couldn't compress \(folder.displayName)"
+            }
+        }
+    }
+
+    /// How many selected tiles "Move To" would move, for "Move 3 Items To".
+    var movableSelectionCount: Int {
+        store.items.filter { selection.contains($0.id) && !$0.isShelfFolder }.count
+    }
+
+    /// "Move To" > a place: the tile, or the whole selection if it's in it, folders
+    /// left behind, into the shelf folder `folderID` or onto the shelf with nil. A
+    /// folder they go into pulses, as a copied tile does, the one sign of where they
+    /// went.
+    func move(from id: ShelfItem.ID, toFolder folderID: ShelfItem.ID?) {
+        let ids = selection.contains(id) ? selection : [id]
+        let moved = store.move(ids, toFolder: folderID)
+        guard !moved.isEmpty else { return }
+        selection.subtract(moved)
+        if let folderID {
+            copyPulses[folderID, default: 0] += 1
+        }
+    }
+
     // MARK: - Selection
 
     /// Selects tiles the way Finder does in icon view.
@@ -705,7 +934,7 @@ final class NotchViewModel: ObservableObject {
             }
             selectionAnchor = id
         case .range:
-            let ids = store.items.map(\.id)
+            let ids = shownItems.map(\.id)
             guard let anchor = selectionAnchor,
                   let start = ids.firstIndex(of: anchor),
                   let end = ids.firstIndex(of: id) else {
@@ -762,11 +991,13 @@ final class NotchViewModel: ObservableObject {
         if !selection.contains(id) {
             click(id, .only)
         }
-        if store.missingItemIDs.contains(id) {
+        // A shelf folder has nothing to hand to another app either: it only moves
+        // around the shelf, and stays behind when other tiles go.
+        if store.missingItemIDs.contains(id) || store.folder(id) != nil {
             return ShelfDragContents(items: store.items.filter { $0.id == id }, staysOnShelf: true)
         }
         let draggable = store.items.filter {
-            selection.contains($0.id) && !store.missingItemIDs.contains($0.id)
+            selection.contains($0.id) && !store.missingItemIDs.contains($0.id) && !$0.isShelfFolder
         }
         return ShelfDragContents(items: draggable.filter { $0.id == id } + draggable.filter { $0.id != id },
                                  staysOnShelf: false)
@@ -782,7 +1013,7 @@ final class NotchViewModel: ObservableObject {
     /// text, which has nothing to open and shows in Quick Look instead.
     func urlToOpen(_ id: ShelfItem.ID) -> URL? {
         guard !store.missingItemIDs.contains(id),
-              let item = item(id), item.kind != .text else { return nil }
+              let item = item(id), item.kind != .text, !item.isShelfFolder else { return nil }
         return item.urlToOpen()
     }
 
@@ -803,7 +1034,9 @@ final class NotchViewModel: ObservableObject {
     /// links and text too, which the share services take as they come.
     func itemsToShare(from id: ShelfItem.ID) -> [ShelfItem] {
         let ids = selection.contains(id) ? selection : [id]
-        let chosen = store.items.filter { ids.contains($0.id) && !store.missingItemIDs.contains($0.id) }
+        let chosen = store.items.filter {
+            ids.contains($0.id) && !store.missingItemIDs.contains($0.id) && !$0.isShelfFolder
+        }
         return chosen.filter { $0.id == id } + chosen.filter { $0.id != id }
     }
 
@@ -902,14 +1135,15 @@ final class NotchViewModel: ObservableObject {
     /// The tiles in the order to show them: the shelf's own order, or, while tiles are
     /// being moved, the order they'd have if dropped now.
     var displayedItems: [ShelfItem] {
-        guard let tileMove, let target = tileMove.target else { return store.items }
-        return store.items.moving(Set(tileMove.ids), to: target)
+        let shown = shownItems
+        guard let tileMove, let target = tileMove.target else { return shown }
+        return shown.moving(Set(tileMove.ids), to: target)
     }
 
     /// The titled groups the tiles show in, for the orders that group them (Kind,
     /// File Type). Empty for a plain grid.
     var displayedGroups: [ShelfGroup] {
-        store.sort.groups(of: displayedItems)
+        shownSort.groups(of: displayedItems)
     }
 
     /// Tiles drawn as empty gaps: the ones being moved, whose pictures are under the
@@ -937,8 +1171,24 @@ final class NotchViewModel: ObservableObject {
     /// the grid doesn't scroll: the moved tiles can only go back where they were. The
     /// same goes for pinned and unpinned tiles moved together, which have no one
     /// part of the shelf to land in.
+    ///
+    /// Over a shelf folder's picture, or over "Polka" while a folder is open, the tiles
+    /// would go in there instead (`tileMoveInto`), sorted or not: the folder lights up,
+    /// the others stop making room, and the grid doesn't scroll.
     func tileMoved(to point: CGPoint) {
-        guard let tileMove, store.sort == .none,
+        guard let tileMove else { return }
+        let into = destination(at: point, moving: tileMove.ids)
+        if into != tileMoveInto {
+            tileMoveInto = into
+        }
+        if into != nil {
+            cancelSettle()
+            if scrollEdge != nil {
+                scrollEdge = nil
+            }
+            return
+        }
+        guard shownSort == .none,
               let target = target(at: point, moving: tileMove.ids) else { return }
         let edge = gridGeometry.scrollEdge(at: point)
         if edge != scrollEdge {
@@ -963,6 +1213,9 @@ final class NotchViewModel: ObservableObject {
     /// The pointer left the panel, so the tiles go back to their old places.
     func tileMoveLeft() {
         cancelSettle()
+        if tileMoveInto != nil {
+            tileMoveInto = nil
+        }
         if tileMove?.target != nil {
             tileMove?.target = nil
         }
@@ -978,12 +1231,20 @@ final class NotchViewModel: ObservableObject {
     /// like an icon dropped in a sorted Finder window.
     func tileDrop(at point: CGPoint) -> TileDrop? {
         guard let tileMove else { return nil }
-        let target = store.sort == .none ? target(at: point, moving: tileMove.ids) : nil
-        let landedItems = target.map { store.items.moving(Set(tileMove.ids), to: $0) } ?? store.items
+        if let into = destination(at: point, moving: tileMove.ids) {
+            // The pictures shrink into the folder, or into "Polka".
+            let frame = landingFrame(into)
+            return TileDrop(target: nil,
+                            landingFrames: frame.map { Array(repeating: $0, count: tileMove.ids.count) } ?? [],
+                            into: into)
+        }
+        let target = shownSort == .none ? target(at: point, moving: tileMove.ids) : nil
+        let shown = shownItems
+        let landedItems = target.map { shown.moving(Set(tileMove.ids), to: $0) } ?? shown
         let landed = landedItems.map(\.id)
         // Laid out in groups, the pinned row and the order's titled groups.
         let placement = gridGeometry.layout.placement(tileCount: landed.count,
-                                                      groups: store.sort.groups(of: landedItems))
+                                                      groups: shownSort.groups(of: landedItems))
         let frames = tileMove.ids.compactMap { id in
             landed.firstIndex(of: id).flatMap { gridGeometry.pictureFrame(ofTile: $0, in: placement) }
         }
@@ -997,7 +1258,7 @@ final class NotchViewModel: ObservableObject {
         guard let tileMove else { return }
         let ids = Set(tileMove.ids)
         if let target {
-            store.move(ids, to: target)
+            store.move(ids, to: target, in: openFolderID)
         }
         endTileMove()
         guard gliding else { return }
@@ -1009,10 +1270,78 @@ final class NotchViewModel: ObservableObject {
         }
     }
 
+    /// The drop, wherever it was: into a shelf folder, back onto the shelf from "Polka",
+    /// or a spot in the place the panel shows (`finishTileMove(at:gliding:)`). Tiles
+    /// that go into a folder leave the place the panel shows; a folder they go into
+    /// pulses, as with "Move To". Folders among them stay where they were.
+    func finishTileMove(_ drop: TileDrop, gliding: Bool) {
+        guard let into = drop.into else {
+            finishTileMove(at: drop.target, gliding: gliding)
+            return
+        }
+        guard let tileMove else { return }
+        let folderID: ShelfItem.ID?
+        switch into {
+        case .folder(let id): folderID = id
+        case .shelf: folderID = nil
+        }
+        let moved = store.move(Set(tileMove.ids), toFolder: folderID)
+        selection.subtract(moved)
+        if let folderID, !moved.isEmpty {
+            copyPulses[folderID, default: 0] += 1
+        }
+        endTileMove()
+    }
+
+    /// Where tiles held at `point` would go other than a spot: into the shelf folder
+    /// whose picture is under it, or back onto the shelf from "Polka" in the header,
+    /// while a folder is open. Nil elsewhere, and when only folders are moving, since
+    /// a folder never goes into another.
+    private func destination(at point: CGPoint, moving ids: [ShelfItem.ID]) -> TileDrop.Into? {
+        let moving = Set(ids)
+        guard store.items.contains(where: { moving.contains($0.id) && !$0.isShelfFolder }) else { return nil }
+        if shownFolder != nil,
+           gridGeometry.backTitleArea.insetBy(dx: -Glass.headerClickMargin, dy: -Glass.headerClickMargin).contains(point) {
+            return .shelf
+        }
+        // Only a folder you can see, not one scrolled under the header.
+        guard gridGeometry.viewport.contains(point) else { return nil }
+        let items = displayedItems
+        let placement = gridGeometry.layout.placement(tileCount: items.count, groups: displayedGroups)
+        for (index, item) in items.enumerated() where item.isShelfFolder && !moving.contains(item.id) {
+            if gridGeometry.pictureFrame(ofTile: index, in: placement)?.contains(point) == true {
+                return .folder(item.id)
+            }
+        }
+        return nil
+    }
+
+    /// Where the pictures of tiles dropped into a folder or onto "Polka" glide to: a
+    /// small square in the middle of the folder's picture, or of the title.
+    private func landingFrame(_ into: TileDrop.Into) -> CGRect? {
+        let area: CGRect
+        switch into {
+        case .shelf:
+            area = gridGeometry.backTitleArea
+        case .folder(let id):
+            let items = displayedItems
+            let placement = gridGeometry.layout.placement(tileCount: items.count, groups: displayedGroups)
+            guard let index = items.firstIndex(where: { $0.id == id }),
+                  let frame = gridGeometry.pictureFrame(ofTile: index, in: placement) else { return nil }
+            area = frame
+        }
+        guard !area.isNull, !area.isEmpty else { return nil }
+        let side = ShelfItemTile.imageSide * 0.35
+        return CGRect(x: area.midX - side / 2, y: area.midY - side / 2, width: side, height: side)
+    }
+
     /// The drag is over, however it ended. Tiles that didn't land on the shelf show
     /// again in their old places.
     func endTileMove() {
         cancelSettle()
+        if tileMoveInto != nil {
+            tileMoveInto = nil
+        }
         if tileMove != nil {
             tileMove = nil
         }
@@ -1029,7 +1358,7 @@ final class NotchViewModel: ObservableObject {
     /// own, and past the last tile counts as the end. Nil for pinned and unpinned
     /// tiles moved together, which can't land side by side in either part.
     private func target(at point: CGPoint, moving ids: [ShelfItem.ID]) -> Int? {
-        let items = store.items
+        let items = shownItems
         let moving = Set(ids)
         let pinnedCount = items.filter(\.isPinned).count
         let pinnedMoving = items.filter { moving.contains($0.id) && $0.isPinned }.count
@@ -1037,7 +1366,7 @@ final class NotchViewModel: ObservableObject {
         guard pinnedMoving == 0 || pinnedMoving == movingCount else { return nil }
         let staying = items.count - movingCount
         // Tiles only move within their part, so its size stays the same throughout.
-        let placement = gridGeometry.layout.placement(tileCount: items.count, groups: store.sort.groups(of: items))
+        let placement = gridGeometry.layout.placement(tileCount: items.count, groups: shownSort.groups(of: items))
         let spot = gridGeometry.spot(at: point, in: placement)
         // With anything pinned, the pinned row is the first group.
         let isOverPinned = pinnedCount > 0 && spot.group == 0
@@ -1067,12 +1396,21 @@ final class NotchViewModel: ObservableObject {
         }
     }
 
-    private static func alreadyOnShelfMessage(for duplicates: [ShelfItem.Draft]) -> String? {
+    /// "report.pdf is already on the shelf", or "already in Work" when the tile is in
+    /// a shelf folder, so you know where to find it.
+    private func alreadyOnShelfMessage(for duplicates: [ShelfItem.Draft]) -> String? {
         switch duplicates.count {
         case 0: return nil
-        case 1: return "\(duplicates[0].title) is already on the shelf"
+        case 1: return "\(duplicates[0].title) is already \(whereItIs(duplicates[0].source.dedupeKey))"
         default: return "\(duplicates.count) items are already on the shelf"
         }
+    }
+
+    /// Where the tile with this duplicate key is: "on the shelf", or "in Work" for one
+    /// in a shelf folder.
+    private func whereItIs(_ key: String) -> String {
+        let existing = store.items.first { $0.dedupeKeys.contains(key) }
+        return store.folder(existing?.folderID).map { "in \($0.displayName)" } ?? "on the shelf"
     }
 
     /// For dropped addresses that aren't web links, which are never stored.

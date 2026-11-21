@@ -134,6 +134,8 @@ struct GlassHeaderGlyph<Glyph: View>: View {
     var isGlowing = false
     /// 0 to 1, on top of the hover glow.
     var flash: Double = 0
+    /// The symbols' gloss, or the title's, for "Polka" as a button back to the shelf.
+    var gloss = GlassHeaderSymbol.gloss
     @ViewBuilder let glyph: Glyph
 
     /// How far the halo spreads, and how strong it and the brighter body are at full
@@ -144,7 +146,7 @@ struct GlassHeaderGlyph<Glyph: View>: View {
 
     var body: some View {
         let glow = min((isGlowing ? 1 : 0) + flash, 1)
-        GlassGlyph(gloss: GlassHeaderSymbol.gloss, tint: tint) { glyph }
+        GlassGlyph(gloss: gloss, tint: tint) { glyph }
             .background {
                 glyph
                     .foregroundStyle(tint ?? .white)
@@ -292,13 +294,28 @@ struct GlassGlyph<Glyph: View>: View {
 /// lighter letters. Never squeezed by its frame.
 struct GlassTitle: View {
     let text: String
+    /// Cut short with "…" when its frame is too narrow, as a shelf folder's name in
+    /// the header is before it reaches the notch, rather than running on.
+    var truncates = false
+
+    static let font = Font.system(size: 15, weight: .bold)
+    static let gloss = 0.5
 
     var body: some View {
-        GlassGlyph(gloss: 0.5) {
-            Text(text)
-                .font(.system(size: 15, weight: .bold))
+        if truncates {
+            GlassGlyph(gloss: Self.gloss) {
+                Text(text)
+                    .font(Self.font)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        } else {
+            GlassGlyph(gloss: Self.gloss) {
+                Text(text)
+                    .font(Self.font)
+            }
+            .fixedSize()
         }
-        .fixedSize()
     }
 }
 

@@ -88,6 +88,7 @@ final class NotchPanelController {
          images: ShelfItemImages,
          copies: CopyKeeper?,
          converter: PDFConverter?,
+         compressor: FolderCompressor? = nil,
          quickLook: QuickLookController,
          share: ShareController,
          fileChooser: FileChooser,
@@ -101,7 +102,7 @@ final class NotchPanelController {
         self.nearby = nearby
         self.openSettings = openSettings
         dragSource = ShelfDragSource(images: images)
-        model = NotchViewModel(store: store, copies: copies, converter: converter)
+        model = NotchViewModel(store: store, copies: copies, converter: converter, compressor: compressor)
     }
 
     func start() {
@@ -122,6 +123,9 @@ final class NotchPanelController {
                                                             addFiles: { [weak self] in
                                                                 self?.addFilesFromPanel()
                                                             },
+                                                            addFolder: { [weak self] in
+                                                                self?.addFolderFromPanel()
+                                                            },
                                                             pasteable: {
                                                                 PasteReader.contents(of: .general)
                                                             },
@@ -138,11 +142,17 @@ final class NotchPanelController {
         dropView.onTargetChanged = { [weak self] targeted in
             self?.model.isDropTargeted = targeted
         }
-        dropView.onPromisesDropped = { [weak self] promises in
-            self?.model.receivePromisedFiles(promises)
+        dropView.onDragMoved = { [weak self] point in
+            self?.model.externalDragMoved(to: point)
         }
-        dropView.onDrop = { [weak self] items in
-            self?.model.handleDrop(items)
+        dropView.dropFolder = { [weak self] point in
+            self?.model.dropZoneFolder(at: point)
+        }
+        dropView.onPromisesDropped = { [weak self] promises, folderID in
+            self?.model.receivePromisedFiles(promises, intoFolder: folderID)
+        }
+        dropView.onDrop = { [weak self] items, folderID in
+            self?.model.handleDrop(items, intoFolder: folderID)
             self?.dragMonitor.endDrag()
         }
         // The shelf's own tiles, dragged to a new place on it.
@@ -156,7 +166,7 @@ final class NotchPanelController {
             self?.model.tileDrop(at: point)
         }
         dropView.onTileDropped = { [weak self] drop, gliding in
-            self?.model.finishTileMove(at: drop.target, gliding: gliding)
+            self?.model.finishTileMove(drop, gliding: gliding)
         }
         dropView.freeSpaceMenu = { [weak self] point in
             self?.freeSpaceMenu(at: point)
@@ -395,14 +405,25 @@ final class NotchPanelController {
         }
     }
 
-    /// "File": the shelf gets out of the way, then the Open dialog opens.
+    /// "File": the shelf gets out of the way, then the Open dialog opens. What's
+    /// chosen goes into the shelf folder that was open, which closing forgets.
     private func addFilesFromPanel() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            let folderID = self.model.shownFolder?.id
             self.model.state = .collapsed
             self.fileChooser.choose { [weak self] urls in
-                self?.model.addFiles(urls)
+                self?.model.addFiles(urls, in: folderID)
             }
+        }
+    }
+
+    /// "Folder" or "New Folder": a new shelf folder with its name ready to type. A tick
+    /// later, like Rename, since the panel takes the keys for the name and shouldn't
+    /// while the menu that chose it still tracks the pointer.
+    private func addFolderFromPanel() {
+        DispatchQueue.main.async { [weak self] in
+            self?.model.createFolder()
         }
     }
 
@@ -449,15 +470,20 @@ final class NotchPanelController {
     }
 
     /// A right-click on the open shelf's free space, between and around the tiles or
-    /// on an empty shelf, as on the desktop: a menu with the + menu's Paste, named
-    /// after what's on the clipboard, with its ⌘V. Nothing on the header, a message or
-    /// the clear room around the shape. Like a click on free space (and a right-click
-    /// on the desktop), it clears the selection.
+    /// on an empty shelf, as on the desktop: a menu with "New Folder" first, as on the
+    /// desktop, on the shelf itself (a folder never goes into another), then the +
+    /// menu's Paste, named after what's on the clipboard, with its ⌘V. Nothing on the
+    /// header, a message or the clear room around the shape. Like a click on free space
+    /// (and a right-click on the desktop), it clears the selection.
     private func freeSpaceMenu(at point: CGPoint) -> NSMenu? {
         guard model.state == .expanded, model.gridGeometry.shelfArea.contains(point) else { return nil }
         model.clearSelection()
         let menu = NSMenu()
         menu.autoenablesItems = false
+        if model.canCreateFolder {
+            menu.addItem(NSMenuItem(title: "New Folder") { [weak self] in self?.addFolderFromPanel() })
+            menu.addItem(.separator())
+        }
         menu.addItem(.paste(PasteReader.contents(of: .general)) { [weak self] contents in
             self?.pasteFromPanel(contents)
         })
@@ -572,14 +598,22 @@ final class NotchPanelController {
                           share: { [weak self] in self?.shareItems(from: $0, pointingAt: $1, $2) },
                           sendTargets: { [weak self] in self?.sendTargets(for: $0) },
                           send: { [weak self] in self?.send(from: $0, to: $1) },
-                          stopSending: { [weak self] in self?.model.stopSending($0) })
+                          stopSending: { [weak self] in self?.model.stopSending($0) },
+                          moveDestinations: { [weak self] in self?.model.moveDestinations(for: $0) ?? [] },
+                          move: { [weak self] in self?.model.move(from: $0, toFolder: $1) })
     }
 
     /// Double-click. A file that can't be found does nothing, as it can't be dragged.
-    /// Text has nothing to open, so it shows in Quick Look, on its own.
+    /// Text has nothing to open, so it shows in Quick Look, on its own. A shelf folder
+    /// opens in the panel itself, which stays open.
     private func openItem(_ id: ShelfItem.ID) {
         if let item = model.item(id), item.kind == .text {
             show([item])
+            return
+        }
+        if let item = model.item(id), item.isShelfFolder {
+            // A tick later: chosen from the menu, the menu is still closing.
+            DispatchQueue.main.async { [weak self] in self?.model.openFolder(id) }
             return
         }
         guard let url = model.urlToOpen(id) else { return }

@@ -2,13 +2,24 @@ import AppKit
 
 /// Where a drop of the shelf's own tiles puts them.
 struct TileDrop: Equatable {
+    /// Somewhere other than a spot in the place the panel shows (FR-26).
+    enum Into: Equatable {
+        /// Into the shelf folder whose tile they were dropped on.
+        case folder(ShelfItem.ID)
+        /// Back onto the shelf, dropped on "Polka" in the header while a folder is open.
+        case shelf
+    }
+
     /// The spot the first of them lands in, counted among the tiles that stay. Nil
-    /// on a sorted shelf, where they go back to their own spots.
+    /// on a sorted shelf, where they go back to their own spots, and when they go
+    /// somewhere else (`into`).
     let target: Int?
     /// Where each dragged picture ends up, in the drag's order, in SwiftUI's
     /// coordinates (from the panel's top left). Empty if they can't all be placed,
     /// in which case the pictures don't glide.
     let landingFrames: [CGRect]
+    /// Set when they go into a shelf folder or back onto the shelf instead.
+    var into: Into? = nil
 }
 
 /// AppKit drop destination that wraps the SwiftUI content.
@@ -27,11 +38,25 @@ struct TileDrop: Equatable {
 /// window redraw too early, which logs "Reentrant message: kDragIPCCompleted".
 final class DropTargetView: NSView {
     var onTargetChanged: (@MainActor (Bool) -> Void)?
-    var onDrop: (@MainActor ([DroppedItem]) -> Void)?
+    /// A drag from another app moved over the panel, to this point in SwiftUI's
+    /// coordinates, or left it (nil). For the drop zone's folders (FR-26).
+    var onDragMoved: (@MainActor (CGPoint?) -> Void)?
+    /// Asked as a drag from another app moves, so it must only look and change
+    /// nothing: the shelf folder in the drop zone's row under this point, if any.
+    var dropFolder: (@MainActor (CGPoint) -> ShelfItem.ID?)?
+    /// The folder in the drop zone's row under a drag from another app, as of its last
+    /// move, which is where it's dropped. Worked out while the drag moves, when the
+    /// drop zone is sure to be open, and not at the drop: the app a drag comes from
+    /// hands the drop over a moment after the button is let go, and by then Polka may
+    /// have seen the button go up and closed the drop zone, row and all.
+    private var folderUnderDrag: ShelfItem.ID?
+    /// What was dropped, and the shelf folder it was dropped on in the drop zone's row,
+    /// if any.
+    var onDrop: (@MainActor ([DroppedItem], ShelfItem.ID?) -> Void)?
     /// The one exception to waiting a tick: an app's file promise has to be asked for
     /// during the drop itself, while the drag is still going. Whatever it calls must
     /// only start receiving, and leave state changes until the files arrive.
-    var onPromisesDropped: (@MainActor ([NSFilePromiseReceiver]) -> Void)?
+    var onPromisesDropped: (@MainActor ([NSFilePromiseReceiver], ShelfItem.ID?) -> Void)?
 
     /// A tile being moved is over the panel, at this point in SwiftUI's coordinates.
     /// Also called while the pointer holds still, since AppKit keeps asking.
@@ -100,6 +125,7 @@ final class DropTargetView: NSView {
         let canAccept = isAcceptable(sender)
         Log.drop.debug("Drag entered panel, acceptable: \(canAccept)")
         reportTargetChanged(canAccept)
+        externalDragMoved(canAccept ? swiftUIPoint(sender.draggingLocation) : nil)
         return canAccept ? .copy : []
     }
 
@@ -107,7 +133,9 @@ final class DropTargetView: NSView {
         if Self.isTileDrag(sender) {
             return tileMoved(sender)
         }
-        return isAcceptable(sender) ? .copy : []
+        let canAccept = isAcceptable(sender)
+        externalDragMoved(canAccept ? swiftUIPoint(sender.draggingLocation) : nil)
+        return canAccept ? .copy : []
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
@@ -117,6 +145,7 @@ final class DropTargetView: NSView {
         }
         Log.drop.debug("Drag exited panel")
         reportTargetChanged(false)
+        externalDragMoved(nil)
     }
 
     /// For tiles, this is where AppKit is told whether to glide their pictures into
@@ -138,16 +167,20 @@ final class DropTargetView: NSView {
         Log.drop.debug("Drop performed, accepted: \(accepted)")
         guard accepted else { return false }
 
+        let folder = folderUnderDrag
+        folderUnderDrag = nil
+        Log.drop.debug("Dropped on a folder in the drop zone: \(folder != nil)")
         let promises = items.compactMap(\.promise)
         if !promises.isEmpty {
-            onPromisesDropped?(promises)
+            onPromisesDropped?(promises, folder)
         }
-        DispatchQueue.main.async { [weak self] in self?.onDrop?(items) }
+        DispatchQueue.main.async { [weak self] in self?.onDrop?(items, folder) }
         return true
     }
 
     override func concludeDragOperation(_ sender: NSDraggingInfo?) {
         reportTargetChanged(false)
+        externalDragMoved(nil)
     }
 
     // MARK: - Moving tiles
@@ -182,7 +215,10 @@ final class DropTargetView: NSView {
                 item.draggingFrame = frames[index]
             }
         }
-        Log.drop.debug("Tiles dropped at spot \(drop.target.map(String.init) ?? "none (sorted)"), gliding: \(gliding)")
+        Log.drop.debug("""
+            Tiles dropped at spot \(drop.target.map(String.init) ?? "none", privacy: .public), \
+            into a folder or the shelf: \(drop.into != nil), gliding: \(gliding)
+            """)
         DispatchQueue.main.async { [weak self] in self?.onTileDropped?(drop, gliding) }
         return true
     }
@@ -207,5 +243,12 @@ final class DropTargetView: NSView {
 
     private func reportTargetChanged(_ targeted: Bool) {
         DispatchQueue.main.async { [weak self] in self?.onTargetChanged?(targeted) }
+    }
+
+    /// A drag from another app is at `point`, or gone (nil): notes the folder under it
+    /// now, and tells the panel a tick later, so the folder lights up.
+    private func externalDragMoved(_ point: CGPoint?) {
+        folderUnderDrag = point.flatMap { dropFolder?($0) }
+        DispatchQueue.main.async { [weak self] in self?.onDragMoved?(point) }
     }
 }

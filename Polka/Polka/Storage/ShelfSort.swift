@@ -105,10 +105,11 @@ enum ShelfSort: String, CaseIterable {
     private var groupingKey: ((ShelfItem) -> (rank: Int, title: String))? {
         switch self {
         case .kind:
-            // Folders first, as in Finder, then files, then links, then text.
+            // Folders first, as in Finder, then files, then links, then text. Shelf
+            // folders are folders too.
             return { item in
                 switch item.kind {
-                case .folder: return (0, "Folders")
+                case .folder, .shelfFolder: return (0, "Folders")
                 case .file: return (1, "Files")
                 case .link: return (2, "Links")
                 case .text: return (3, "Text")
@@ -119,7 +120,7 @@ enum ShelfSort: String, CaseIterable {
             // no extension, then links, then text. "pdf" and "PDF" are one group.
             return { item in
                 switch item.kind {
-                case .folder:
+                case .folder, .shelfFolder:
                     return (0, "Folders")
                 case .file:
                     let fileExtension = item.url.pathExtension

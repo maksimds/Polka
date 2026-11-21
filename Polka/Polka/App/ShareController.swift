@@ -70,6 +70,8 @@ final class ShareController: NSObject {
                 return LinkInput.isWebAddress(url) ? url : nil
             case .text(let text):
                 return text
+            case .shelfFolder:
+                return nil
             }
         }
     }

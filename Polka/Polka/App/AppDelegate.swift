@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var expirySweeper: ExpirySweeper?
     private var copyKeeper: CopyKeeper?
     private var pdfConverter: PDFConverter?
+    private var folderCompressor: FolderCompressor?
     private var linkPreviewFetcher: LinkPreviewFetcher?
     private var screenshotCatcher: ScreenshotCatcher?
     private var settingsWindow: SettingsWindowController?
@@ -53,6 +54,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             copyKeeper = keeper
             // PDFs are drawn in a copy folder before they move next to their documents.
             pdfConverter = PDFConverter(store: store, copies: ShelfCopies(folder: locations.copiesFolder))
+            // A shelf folder's zip is laid out and made in copy folders too.
+            folderCompressor = FolderCompressor(store: store, copies: ShelfCopies(folder: locations.copiesFolder))
         }
 
         let sweeper = ExpirySweeper(store: store)
@@ -76,6 +79,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                               images: images,
                                               copies: copyKeeper,
                                               converter: pdfConverter,
+                                              compressor: folderCompressor,
                                               quickLook: quickLook,
                                               share: share,
                                               fileChooser: fileChooser,

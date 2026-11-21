@@ -2,7 +2,8 @@ import AppKit
 import SwiftUI
 
 /// The + in the panel's header, left of the sort button. It opens an "Add New" menu
-/// for adding a link or files without dragging them in, or what's on the clipboard.
+/// for adding a link or files without dragging them in, a shelf folder to sort tiles
+/// into, or what's on the clipboard.
 struct AddMenuButton: View {
     /// The header's height, so the symbol is centered on it like the gear.
     let height: CGFloat
@@ -10,6 +11,8 @@ struct AddMenuButton: View {
     let isActive: Bool
     let onAddLink: @MainActor () -> Void
     let onAddFiles: @MainActor () -> Void
+    /// "Folder", or nil to leave it out, as inside a shelf folder.
+    let onAddFolder: (@MainActor () -> Void)?
     /// What "Paste" would add, read as the menu opens. Nil greys the item out.
     let pasteable: @MainActor () -> Pasteable?
     let onPaste: @MainActor (Pasteable) -> Void
@@ -29,6 +32,9 @@ struct AddMenuButton: View {
         menu.addItem(.sectionHeader(title: "Add New"))
         menu.addItem(NSMenuItem(title: "Link", action: onAddLink))
         menu.addItem(NSMenuItem(title: "File", action: onAddFiles))
+        if let onAddFolder {
+            menu.addItem(NSMenuItem(title: "Folder", action: onAddFolder))
+        }
         menu.addItem(.separator())
         menu.addItem(.paste(pasteable(), action: onPaste))
         return menu

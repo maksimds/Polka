@@ -8,6 +8,11 @@ struct ShelfItem: Identifiable, Codable, Equatable {
         case link
         /// A piece of plain text, pasted or dropped onto the shelf (FR-19).
         case text
+        /// A folder made on the shelf to sort tiles into (FR-26). It lives only in
+        /// shelf.json: nothing is made in Finder, and the tiles in it keep pointing at
+        /// their own files, links and text. Not to be confused with `folder`, a folder
+        /// on disk.
+        case shelfFolder
     }
 
     /// Where an item came from, when that changes how Polka treats it.
@@ -41,6 +46,9 @@ struct ShelfItem: Identifiable, Codable, Equatable {
         case link(URL)
         /// The text itself, kept in shelf.json.
         case text(String)
+        /// A shelf folder, which points at nothing: its tiles say they're in it
+        /// (`ShelfItem.folderID`).
+        case shelfFolder
     }
 
     /// What a link's preview fetch found (FR-6): the name the site gives itself and its icon.
@@ -93,6 +101,15 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     /// not verified. Kept but not shown yet. Nil for everything else, which also means
     /// shelves saved before Nearby Sharing still load, and Polka 1.0 skips it.
     var receivedFrom: String? = nil
+    /// The shelf folder this item is in (FR-26), or nil for one on the shelf itself.
+    /// A shelf folder is never in another. Nil also means shelves saved before folders
+    /// existed still load.
+    var folderID: UUID? = nil
+    /// For a shelf folder: its own "Sort By" choice, `ShelfSort`'s raw value, apart
+    /// from the shelf's, which is a setting. Nil for None, which also means shelves
+    /// saved before folders existed still load, and one this version doesn't know
+    /// reads as None.
+    var sortBy: String? = nil
 }
 
 extension ShelfItem {
@@ -103,14 +120,19 @@ extension ShelfItem {
         customName ?? title
     }
 
-    /// The file or web address the item points at. Text points at nothing and gives
-    /// `about:blank`, which Polka never opens (see `ItemOpener.open`).
+    /// The file or web address the item points at. Text and shelf folders point at
+    /// nothing and give `about:blank`, which Polka never opens (see `ItemOpener.open`).
     var url: URL {
         switch source {
         case .file(let path, _): return URL(fileURLWithPath: path)
         case .link(let url): return url
-        case .text: return URL(string: "about:blank")!
+        case .text, .shelfFolder: return URL(string: "about:blank")!
         }
+    }
+
+    /// A folder made on the shelf (FR-26), not a folder on disk.
+    var isShelfFolder: Bool {
+        kind == .shelfFolder
     }
 
     /// What opening the item opens, and what Quick Look and Get Info show: a kept
@@ -121,6 +143,11 @@ extension ShelfItem {
             return URL(fileURLWithPath: original.path)
         }
         return url
+    }
+
+    /// A shelf folder's own order (see `sortBy`).
+    var folderSort: ShelfSort {
+        sortBy.flatMap(ShelfSort.init(rawValue:)) ?? .none
     }
 
     var isTemporary: Bool {
@@ -197,7 +224,9 @@ extension ShelfItem {
 
     /// Everything this item stands for when checking a drop for duplicates. A kept
     /// copy still stands for its original, so dropping the original again adds nothing.
+    /// A shelf folder stands for nothing, so two can have the same name.
     var dedupeKeys: [String] {
+        guard !isShelfFolder else { return [] }
         var keys = [source.dedupeKey]
         if let original {
             keys.append(Source.file(path: original.path, bookmark: nil).dedupeKey)
@@ -214,6 +243,8 @@ extension ShelfItem.Source {
         case .link(let url): return "link:\(url.absoluteString)"
         // The same text pasted twice is the same item, like the same link.
         case .text(let text): return "text:\(text)"
+        // Never compared: a shelf folder has no keys (`ShelfItem.dedupeKeys`).
+        case .shelfFolder: return "shelfFolder"
         }
     }
 }

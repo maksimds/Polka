@@ -242,6 +242,9 @@ final class ShelfGridGeometry {
     var content: CGRect = .zero
     /// Where a tile's picture sits within its spot. The same for every tile.
     var pictureInSlot = CGRect(x: 0, y: 0, width: ShelfItemTile.imageSide, height: ShelfItemTile.imageSide)
+    /// "Polka" in the header while a shelf folder is open: tiles dropped on it go back
+    /// onto the shelf. Null while no folder is open.
+    var backTitleArea: CGRect = .null
 
     /// How close to the top or bottom of the visible part the pointer has to be to
     /// scroll the grid. Above or below it counts too.

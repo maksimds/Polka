@@ -17,6 +17,7 @@ private func shelfItem(_ source: ShelfItem.Source) -> ShelfItem {
     case .link: kind = .link
     case .text: kind = .text
     case .file: kind = .file
+    case .shelfFolder: kind = .shelfFolder
     }
     return ShelfItem(id: UUID(), kind: kind, title: "Item", source: source, storageMode: .reference,
                      createdAt: Date(), expiresAt: nil, sortOrder: 0)

@@ -269,7 +269,7 @@ struct NearbyOffer: Equatable {
         case let .text(text):
             guard !text.isEmpty, text.utf16.count <= ShelfItem.maxTextLength else { return nil }
             return .text(excerpt: excerpt(of: text), length: text.utf16.count)
-        case .file:
+        case .file, .shelfFolder:
             return nil
         }
     }
