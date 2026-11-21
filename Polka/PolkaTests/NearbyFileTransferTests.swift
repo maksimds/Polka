@@ -13,7 +13,7 @@ import Testing
 private func fileItem(_ url: URL, kind: ShelfItem.Kind = .file) -> ShelfItem {
     ShelfItem(id: UUID(), kind: kind, title: url.lastPathComponent,
               source: .file(path: url.path, bookmark: nil), storageMode: .reference,
-              createdAt: Date(), expiresAt: nil, sortOrder: 0)
+              createdAt: Date(), sortOrder: 0)
 }
 
 private func decode(_ json: String) throws -> NearbyMessage {
@@ -650,7 +650,7 @@ struct NearbyFileSendingTests {
 
 private func shelfItemText(_ text: String) -> ShelfItem {
     ShelfItem(id: UUID(), kind: .text, title: text, source: .text(text), storageMode: .reference,
-              createdAt: Date(), expiresAt: nil, sortOrder: 0)
+              createdAt: Date(), sortOrder: 0)
 }
 
 // MARK: - The panel

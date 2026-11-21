@@ -52,7 +52,6 @@ struct ShelfItemTile: View {
     let onDissolve: @MainActor (CGImage?, CGFloat) -> Void
     /// How many items are selected, for the menu's "Remove 3 Items".
     let selectionCount: Int
-    let onToggleTemporary: @MainActor () -> Void
     /// "Pin" or "Unpin": this item alone.
     let onTogglePinned: @MainActor () -> Void
     /// Nil when Polka has nowhere to keep copies.
@@ -152,7 +151,7 @@ struct ShelfItemTile: View {
         if isConverting { return "Converting…" }
         if let sendingLabel { return sendingLabel }
         guard isAvailable else { return "Unavailable" }
-        return [item.typeLabel, item.storageMode == .copy ? "Copy" : nil, item.timeLeftLabel(now: Date())]
+        return [item.typeLabel, item.storageMode == .copy ? "Copy" : nil]
             .compactMap { $0 }
             .joined(separator: " · ")
     }
@@ -162,9 +161,10 @@ struct ShelfItemTile: View {
     /// after Get Info and Copy as in Finder. "Share": macOS's share popover takes files as
     /// Finder does, links as Safari does, and text as Notes does. "Send To" (Nearby
     /// Sharing) right after it, for files, links and text but not folders, closes the
-    /// group; while the tile is being sent, "Stop Sending" is there instead. Then how Polka keeps the item: "Pin", which reads "Unpin"
-    /// on a pinned tile as in Notes and Messages, "Temporary", checked while it has an
-    /// expiry, and for files and folders "Keep a Copy", checked for a copy.
+    /// group; while the tile is being sent, "Stop Sending" is there instead. Then where
+    /// the tile is and how Polka keeps it: "Move To", "Pin", which reads "Unpin" on a
+    /// pinned tile as in Notes and Messages, and for files and folders "Keep a Copy",
+    /// checked for a copy.
     /// Links and text have no file to show or copy, so they skip those. "Remove" comes
     /// last, set apart. Unchecking "Keep a Copy" goes back to the original, so it can't
     /// be unchecked for a promised file, a pasted picture or a screenshot, which have
@@ -224,9 +224,6 @@ struct ShelfItemTile: View {
         // Always enabled: past the limit, choosing it says why nothing was pinned.
         entries.append(TileDragView.MenuEntry(title: item.isPinned ? "Unpin" : "Pin",
                                               action: onTogglePinned))
-        entries.append(TileDragView.MenuEntry(title: "Temporary",
-                                              isChecked: item.isTemporary,
-                                              action: onToggleTemporary))
         if isFile, let onToggleKeepCopy {
             let isCopy = item.storageMode == .copy
             entries.append(TileDragView.MenuEntry(title: "Keep a Copy",
@@ -254,7 +251,7 @@ struct ShelfItemTile: View {
     /// its name, which is all it has, and "Compress \u{201C}Work\u{201D}", as Finder names it,
     /// greyed out while it's empty or already being compressed; "Pin"; and "Remove",
     /// which puts its tiles back on the shelf. It isn't a file, so it has no Quick
-    /// Look, Copy or Share, and it never expires.
+    /// Look, Copy or Share.
     private var folderMenuEntries: [TileDragView.MenuEntry] {
         let onRename = onRename
         let removeCount = isSelected ? max(selectionCount, 1) : 1
@@ -788,17 +785,5 @@ extension ShelfItem {
             let fileExtension = url.pathExtension.uppercased()
             return fileExtension.isEmpty ? "File" : fileExtension
         }
-    }
-
-    /// How long a temporary item has left, rounded up: "45m", "23h" or "3d".
-    /// Nil for permanent items.
-    func timeLeftLabel(now: Date) -> String? {
-        guard let expiresAt else { return nil }
-        let seconds = expiresAt.timeIntervalSince(now)
-        let minutes = Int((seconds / 60).rounded(.up))
-        if minutes < 60 { return "\(max(minutes, 1))m" }
-        let hours = Int((seconds / 3600).rounded(.up))
-        if hours < 48 { return "\(hours)h" }
-        return "\(Int((seconds / 86_400).rounded(.up)))d"
     }
 }

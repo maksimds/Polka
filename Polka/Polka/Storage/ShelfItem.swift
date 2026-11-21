@@ -76,9 +76,10 @@ struct ShelfItem: Identifiable, Codable, Equatable {
     var title: String
     var source: Source
     var storageMode: StorageMode
+    /// When the item was added. Items stay until they're removed: shelves saved while
+    /// items could expire have an `expiresAt` too, which is no longer read, so those
+    /// items simply stay.
     let createdAt: Date
-    /// Nil for permanent items, otherwise the time the item is removed.
-    var expiresAt: Date?
     /// Position in the grid. Zero is the first tile.
     var sortOrder: Int
     /// For links: what the preview fetch found. Nil until it has run, which also
@@ -150,17 +151,8 @@ extension ShelfItem {
         sortBy.flatMap(ShelfSort.init(rawValue:)) ?? .none
     }
 
-    var isTemporary: Bool {
-        expiresAt != nil
-    }
-
     var isPinned: Bool {
         pinned == true
-    }
-
-    func isExpired(at date: Date) -> Bool {
-        guard let expiresAt else { return false }
-        return expiresAt <= date
     }
 
     /// The part of a new item that comes from what was dropped.
@@ -171,9 +163,6 @@ extension ShelfItem {
         let source: Source
         let storageMode: StorageMode
         var origin: Origin? = nil
-        /// Set for an item that starts out temporary, such as a screenshot: how long
-        /// it lasts from the moment it's added. Nil for a permanent one.
-        var lifetime: TimeInterval? = nil
         /// See `ShelfItem.receivedFrom`.
         var receivedFrom: String? = nil
 

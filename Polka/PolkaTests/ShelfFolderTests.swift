@@ -38,7 +38,6 @@ struct ShelfFolderTests {
         #expect(folder.kind == .shelfFolder)
         #expect(folder.source == .shelfFolder)
         #expect(folder.folderID == nil)
-        #expect(!folder.isTemporary)
         #expect(titles(store.items) == "b Untitled Folder a")
     }
 
@@ -63,15 +62,6 @@ struct ShelfFolderTests {
 
         store.rename(id: id, to: "   ")
         #expect(store.folder(id)?.displayName == "Work Stuff")
-    }
-
-    @Test func aFolderNeverExpires() {
-        let store = ShelfStore()
-        let id = store.createFolder().id
-
-        store.makeTemporary(id: id, lifetime: 60)
-
-        #expect(store.folder(id)?.isTemporary == false)
     }
 
     // MARK: - Moving in and out
@@ -207,19 +197,6 @@ struct ShelfFolderTests {
         store.remove(ids: [work, id("a", in: store)])
 
         #expect(titles(store.items) == "b")
-    }
-
-    @Test func expiredTilesInAFolderLeaveAndTheFolderStays() {
-        var now = Date(timeIntervalSince1970: 1_000)
-        let store = ShelfStore(now: { now })
-        let work = folder("Work", in: store)
-        store.add(files("a"), in: work)
-        store.makeTemporary(id: id("a", in: store), lifetime: 60)
-
-        now += 61
-        store.removeExpired()
-
-        #expect(titles(store.items) == "Work")
     }
 
     // MARK: - Order, sort and pins in each place
@@ -618,15 +595,6 @@ struct ShelfFolderTests {
         model.remove([work])
 
         #expect(titles(store.items) == "a")
-    }
-
-    @Test func aFolderNeverTurnsTemporaryFromTheMenu() {
-        let (model, store) = openModel()
-        let work = folder("Work", in: store)
-
-        model.toggleTemporary(work)
-
-        #expect(store.folder(work)?.isTemporary == false)
     }
 
     @Test func theTypeLineCountsWhatAFolderHolds() {

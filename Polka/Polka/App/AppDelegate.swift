@@ -5,7 +5,6 @@ import Quartz
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchController: NotchPanelController?
-    private var expirySweeper: ExpirySweeper?
     private var copyKeeper: CopyKeeper?
     private var pdfConverter: PDFConverter?
     private var folderCompressor: FolderCompressor?
@@ -46,8 +45,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let store = makeStore(locations: locations)
         store.refreshReferences()
 
-        // Before the sweeper, so a copy whose item expires while Polka was closed is
-        // deleted right away.
         if let locations {
             let keeper = CopyKeeper(store: store, copies: ShelfCopies(folder: locations.copiesFolder))
             keeper.start()
@@ -57,10 +54,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // A shelf folder's zip is laid out and made in copy folders too.
             folderCompressor = FolderCompressor(store: store, copies: ShelfCopies(folder: locations.copiesFolder))
         }
-
-        let sweeper = ExpirySweeper(store: store)
-        sweeper.start()
-        expirySweeper = sweeper
 
         if let locations {
             let fetcher = LinkPreviewFetcher(store: store, previewsFolder: locations.previewsFolder)

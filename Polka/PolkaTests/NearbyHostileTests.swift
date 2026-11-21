@@ -348,7 +348,7 @@ struct NearbyHostileTests {
         var items = [ShelfItem.Draft(fileURL: url), ShelfItem.Draft(text: "Hello"),
                      ShelfItem.Draft(linkURL: URL(string: "https://example.com/")!)].map { draft in
             ShelfItem(id: UUID(), kind: draft.kind, title: draft.title, source: draft.source,
-                      storageMode: .reference, createdAt: Date(), expiresAt: nil, sortOrder: 0)
+                      storageMode: .reference, createdAt: Date(), sortOrder: 0)
         }
         for index in items.indices { items[index].customName = label }
         let prepared = try NearbyOutgoingItem.prepare(items).map(\.item)

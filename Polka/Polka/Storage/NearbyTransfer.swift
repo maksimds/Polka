@@ -502,13 +502,13 @@ struct NearbyIncomingOffer: Identifiable, Equatable {
             case let .file(name, _):
                 return ShelfItem(id: UUID(), kind: .file, title: name,
                                  source: .file(path: Self.placeholderFolder + "/" + name, bookmark: nil),
-                                 storageMode: .copy, createdAt: arrivedAt, expiresAt: nil, sortOrder: index)
+                                 storageMode: .copy, createdAt: arrivedAt, sortOrder: index)
             }
             // Names from another Mac lose control and invisible formatting characters
             // (a right-to-left override would make one read as something else).
             let title = NearbyName.clean(draft.title) ?? (item.isText ? "Text" : "Link")
             return ShelfItem(id: UUID(), kind: draft.kind, title: title, source: draft.source,
-                             storageMode: .reference, createdAt: arrivedAt, expiresAt: nil, sortOrder: index)
+                             storageMode: .reference, createdAt: arrivedAt, sortOrder: index)
         }
         var byTile: [ShelfItem.ID: Data] = [:]
         for (index, png) in pictures where previews.indices.contains(index) {

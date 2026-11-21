@@ -8,16 +8,10 @@ struct SettingsView: View {
 
     /// The raw stored value, watched by SwiftUI, so a change made with
     /// `defaults write` while the window is open shows up too.
-    @AppStorage(ShelfSettings.temporaryLifetimeKey) private var storedLifetime: Double = 0
     @AppStorage(ShelfSettings.hoverDelayKey) private var storedHoverDelay = ShelfSettings.defaultHoverDelay
     @AppStorage(ShelfSettings.hoverAreaKey) private var hoverArea = ShelfSettings.defaultHoverArea
     @AppStorage(ShelfSettings.panelTransparencyKey) private var storedTransparency = ShelfSettings.defaultPanelTransparency
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
-    private var lifetime: Binding<TimeInterval> {
-        Binding(get: { ShelfSettings.temporaryLifetime(stored: storedLifetime) },
-                set: { storedLifetime = $0 })
-    }
 
     private var hoverDelay: Int {
         ShelfSettings.hoverDelay(stored: storedHoverDelay)
@@ -105,19 +99,6 @@ struct SettingsView: View {
                 Text("Hover")
             } footer: {
                 SettingsFootnote(text: "A larger area or a shorter wait means more accidental opens.")
-            }
-
-            Section {
-                Picker("Temporary items last", selection: lifetime) {
-                    ForEach(ShelfSettings.temporaryLifetimeChoices(current: lifetime.wrappedValue),
-                            id: \.self) { seconds in
-                        Text(ShelfSettings.label(forLifetime: seconds)).tag(seconds)
-                    }
-                }
-            } header: {
-                Text("Shelf")
-            } footer: {
-                SettingsFootnote(text: "Items that are already temporary keep the time they have left.")
                     .padding(.bottom, screenshots == nil ? 10 : 0)
             }
 
@@ -152,8 +133,8 @@ private struct ScreenshotsSection: View {
         } footer: {
             // The same sentence on and off, so the window doesn't change height.
             SettingsFootnote(text: """
-                Screenshots and screen recordings go on the shelf as temporary items, not \
-                to \(catcher.usualLocationName), and to the Trash when they expire or are removed.
+                Screenshots and screen recordings go on the shelf instead of \
+                \(catcher.usualLocationName), and to the Trash when you remove them.
                 """)
                 .padding(.bottom, 10)
         }

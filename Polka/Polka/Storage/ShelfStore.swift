@@ -100,7 +100,6 @@ final class ShelfStore: ObservableObject {
                                       source: draft.source,
                                       storageMode: draft.storageMode,
                                       createdAt: date,
-                                      expiresAt: draft.lifetime.map { date.addingTimeInterval($0) },
                                       sortOrder: 0,
                                       origin: draft.origin,
                                       receivedFrom: draft.receivedFrom,
@@ -164,7 +163,6 @@ final class ShelfStore: ObservableObject {
                                source: .shelfFolder,
                                storageMode: .reference,
                                createdAt: now(),
-                               expiresAt: nil,
                                sortOrder: 0)
         var newItems = items
         newItems.insert(folder, at: 0)
@@ -296,20 +294,6 @@ final class ShelfStore: ObservableObject {
         commit(Self.replacing(item.folderID, with: place, in: items))
     }
 
-    /// Makes an item temporary: it is removed `lifetime` seconds from now. A shelf
-    /// folder never expires.
-    func makeTemporary(id: ShelfItem.ID, lifetime: TimeInterval) {
-        let expiresAt = now().addingTimeInterval(lifetime)
-        update(id) { item in
-            guard !item.isShelfFolder else { return }
-            item.expiresAt = expiresAt
-        }
-    }
-
-    func makePermanent(id: ShelfItem.ID) {
-        update(id) { $0.expiresAt = nil }
-    }
-
     /// "Rename": gives the tile a name of its own. The file and the link stay as they
     /// are. An empty name, or the automatic one, goes back to the automatic name, which
     /// then follows the file or the site again. Line breaks pasted in become spaces,
@@ -377,16 +361,6 @@ final class ShelfStore: ObservableObject {
             item.linkPreview = nil
         }
         return .changed
-    }
-
-    /// Removes temporary items whose time is up and returns them.
-    @discardableResult
-    func removeExpired() -> [ShelfItem] {
-        let date = now()
-        let expired = items.filter { $0.isExpired(at: date) }
-        guard !expired.isEmpty else { return [] }
-        commit(items.filter { !$0.isExpired(at: date) })
-        return expired
     }
 
     /// Records what a link's preview fetch found. A site name the page declares

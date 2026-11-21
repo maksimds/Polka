@@ -20,7 +20,7 @@ private func shelfItem(_ source: ShelfItem.Source) -> ShelfItem {
     case .shelfFolder: kind = .shelfFolder
     }
     return ShelfItem(id: UUID(), kind: kind, title: "Item", source: source, storageMode: .reference,
-                     createdAt: Date(), expiresAt: nil, sortOrder: 0)
+                     createdAt: Date(), sortOrder: 0)
 }
 
 /// The list of remembered Macs, and its file.

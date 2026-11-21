@@ -17,7 +17,7 @@ private func shelfItem(_ source: ShelfItem.Source) -> ShelfItem {
     case .text: kind = .text
     }
     return ShelfItem(id: UUID(), kind: kind, title: "Renamed by me", source: source,
-                     storageMode: .reference, createdAt: Date(), expiresAt: nil, sortOrder: 0,
+                     storageMode: .reference, createdAt: Date(), sortOrder: 0,
                      customName: "Secret label")
 }
 
@@ -633,8 +633,6 @@ struct NearbyOfferPanelTests {
         #expect(store.items.count == 3)
         #expect(store.items.prefix(2).allSatisfy { $0.receivedFrom == "Alex" })
         #expect(store.items[2].receivedFrom == nil)
-        // Permanent, like every new item.
-        #expect(store.items.allSatisfy { !$0.isTemporary })
     }
 
     @Test func aReceivedDuplicateIsNotAddedTwice() {

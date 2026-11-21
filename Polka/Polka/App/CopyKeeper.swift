@@ -3,8 +3,8 @@ import Combine
 
 /// Keeps Polka's copies in step with the shelf. It makes a copy when an item is set to
 /// keep one, receives the files apps hand over by promise, saves pictures pasted from
-/// the clipboard, and deletes a copy once no item uses it: when the item is removed,
-/// expires, or goes back to its original. A screenshot goes to the Trash instead, so
+/// the clipboard, and deletes a copy once no item uses it: when the item is removed or
+/// goes back to its original. A screenshot goes to the Trash instead, so
 /// one that was still needed can be found again.
 ///
 /// Originals are never deleted. Only copy folders inside Polka's Copies folder are.

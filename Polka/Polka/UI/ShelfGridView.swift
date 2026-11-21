@@ -131,7 +131,6 @@ struct ShelfGridView: View {
     let dust: DustField
     /// A removed tile has handed its picture to the dust, and can leave the shelf.
     let onDissolved: @MainActor (ShelfItem.ID) -> Void
-    let onToggleTemporary: @MainActor (ShelfItem.ID) -> Void
     let onTogglePinned: @MainActor (ShelfItem.ID) -> Void
     let onToggleKeepCopy: (@MainActor (ShelfItem.ID) -> Void)?
     /// How many selected documents "Convert to PDF" would convert.
@@ -316,7 +315,6 @@ struct ShelfGridView: View {
                       isDissolving: dissolvingItemIDs.contains(item.id),
                       onDissolve: { dissolve(item.id, picture: $0, scale: $1) },
                       selectionCount: selection.count,
-                      onToggleTemporary: { onToggleTemporary(item.id) },
                       onTogglePinned: { onTogglePinned(item.id) },
                       onToggleKeepCopy: action(onToggleKeepCopy, for: item.id),
                       convertibleSelectionCount: convertibleSelectionCount,

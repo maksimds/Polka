@@ -16,7 +16,7 @@ struct FolderCompressTests {
     private func item(_ source: ShelfItem.Source, kind: ShelfItem.Kind, title: String,
                       customName: String? = nil) -> ShelfItem {
         ShelfItem(id: UUID(), kind: kind, title: title, source: source, storageMode: .reference,
-                  createdAt: Date(), expiresAt: nil, sortOrder: 0, customName: customName)
+                  createdAt: Date(), sortOrder: 0, customName: customName)
     }
 
     // MARK: - What goes in

@@ -64,7 +64,7 @@ enum DroppedItem: Equatable {
             return nil
         }
         return ShelfItem(id: UUID(), kind: kind, title: title, source: source, storageMode: .reference,
-                         createdAt: Date(), expiresAt: nil, sortOrder: 0)
+                         createdAt: Date(), sortOrder: 0)
     }
 }
 

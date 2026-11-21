@@ -264,11 +264,11 @@ struct LinkPreviewTests {
         defer { try? fileManager.removeItem(at: folder) }
         var current = ShelfItem(id: UUID(), kind: .link, title: "Example/done",
                                 source: .link(url("https://example.com/done")),
-                                storageMode: .reference, createdAt: start, expiresAt: nil, sortOrder: 0)
+                                storageMode: .reference, createdAt: start, sortOrder: 0)
         current.linkPreview = ShelfItem.LinkPreview(fetchedAt: start, siteName: nil, iconFileName: nil)
         var outdated = ShelfItem(id: UUID(), kind: .link, title: "Old Page Title",
                                  source: .link(url("https://github.com/apple/swift")),
-                                 storageMode: .reference, createdAt: start, expiresAt: nil, sortOrder: 1)
+                                 storageMode: .reference, createdAt: start, sortOrder: 1)
         outdated.linkPreview = ShelfItem.LinkPreview(fetchedAt: start, siteName: nil, iconFileName: nil, version: nil)
         let store = ShelfStore(persistence: InMemoryShelfPersistence(items: [current, outdated]))
         var fetched: [URL] = []

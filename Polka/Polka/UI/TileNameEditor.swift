@@ -74,7 +74,7 @@ struct TileNameEditor: NSViewRepresentable {
         CGSize(width: proposal.width ?? 60, height: field.intrinsicContentSize.height)
     }
 
-    /// The tile can go away mid-edit, if the item expires. The edit ends then without
+    /// The tile can go away mid-edit, if the item leaves the shelf meanwhile. The edit ends then without
     /// keeping anything, a tick later, since SwiftUI is still updating its views.
     static func dismantleNSView(_ field: NameField, coordinator: Coordinator) {
         coordinator.fieldWentAway()

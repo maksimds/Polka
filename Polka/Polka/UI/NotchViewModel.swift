@@ -153,7 +153,6 @@ final class NotchViewModel: ObservableObject {
     private let converter: PDFConverter?
     /// Nil when Polka has no folder of its own to make zips in.
     private let compressor: FolderCompressor?
-    private let temporaryLifetime: () -> TimeInterval
     /// Remembers a "Sort By" choice for the next launch.
     private let saveSort: (ShelfSort) -> Void
     /// How long the pointer rests on a spot before the other tiles make room.
@@ -169,14 +168,12 @@ final class NotchViewModel: ObservableObject {
          copies: CopyKeeper? = nil,
          converter: PDFConverter? = nil,
          compressor: FolderCompressor? = nil,
-         temporaryLifetime: @escaping () -> TimeInterval = { ShelfSettings().temporaryLifetime },
          saveSort: @escaping (ShelfSort) -> Void = { ShelfSettings().shelfSort = $0 },
          moveSettleDelay: Duration = .milliseconds(150)) {
         self.store = store
         self.copies = copies
         self.converter = converter
         self.compressor = compressor
-        self.temporaryLifetime = temporaryLifetime
         self.saveSort = saveSort
         self.moveSettleDelay = moveSettleDelay
     }
@@ -610,16 +607,6 @@ final class NotchViewModel: ObservableObject {
 
     func dismissNotice() {
         notice = nil
-    }
-
-    /// The tile's "Temporary" menu item: a permanent item becomes temporary, and the other way round.
-    func toggleTemporary(_ id: ShelfItem.ID) {
-        guard let item = store.items.first(where: { $0.id == id }), !item.isShelfFolder else { return }
-        if item.isTemporary {
-            store.makePermanent(id: id)
-        } else {
-            store.makeTemporary(id: id, lifetime: temporaryLifetime())
-        }
     }
 
     /// The tile's "Pin" or "Unpin" menu item (FR-21). Past the limit, nothing is pinned

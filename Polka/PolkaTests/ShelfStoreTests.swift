@@ -35,7 +35,6 @@ struct ShelfStoreTests {
         #expect(item.source == .file(path: "/tmp/report.pdf", bookmark: nil))
         #expect(item.storageMode == .reference)
         #expect(item.createdAt == date)
-        #expect(item.expiresAt == nil)
     }
 
     @Test func aRealFolderIsAFolderAndAPackageIsAFile() throws {
@@ -208,15 +207,33 @@ struct ShelfStoreTests {
         #expect(store.items.count == 1)
     }
 
+    @Test func anItemSavedWithAnExpiryStillLoadsAndStays() throws {
+        let json = """
+        {"version":1,"items":[{"id":"6A1C2F3E-0000-4000-8000-000000000002","kind":"text",
+        "title":"note","source":{"text":{"_0":"note"}},"storageMode":"reference",
+        "createdAt":0,"expiresAt":1,"sortOrder":0}]}
+        """
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("shelf-expiry-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data(json.utf8).write(to: file)
+
+        let store = ShelfStore(persistence: JSONFileShelfPersistence(fileURL: file))
+        store.refreshReferences()
+
+        #expect(!store.loadFailed)
+        #expect(store.items.map(\.title) == ["note"])
+    }
+
     @Test func itemsSurviveAJSONRoundTrip() throws {
         let date = Date(timeIntervalSince1970: 1_000)
         let items = [
             ShelfItem(id: UUID(), kind: .file, title: "a.txt",
                       source: .file(path: "/tmp/a.txt", bookmark: Data([1, 2, 3])),
-                      storageMode: .copy, createdAt: date, expiresAt: date, sortOrder: 0),
+                      storageMode: .copy, createdAt: date, sortOrder: 0),
             ShelfItem(id: UUID(), kind: .link, title: "example.com",
                       source: .link(URL(string: "https://example.com")!),
-                      storageMode: .reference, createdAt: date, expiresAt: nil, sortOrder: 1),
+                      storageMode: .reference, createdAt: date, sortOrder: 1),
         ]
 
         let data = try JSONEncoder().encode(items)

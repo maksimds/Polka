@@ -326,12 +326,10 @@ final class NotchPanelController {
         Log.window.debug("State: \(String(describing: state), privacy: .public)")
     }
 
-    /// Expired items never show, even if the expiry timer ran late, and files that
-    /// moved or went missing since the last look are caught before they're seen.
-    /// Run while the hover delay counts down or a drag is on its way, rather than as
-    /// the panel opens, so the opening animation never waits on the disk.
+    /// Files that moved or went missing since the last look are caught before they're
+    /// seen. Run while the hover delay counts down or a drag is on its way, rather than
+    /// as the panel opens, so the opening animation never waits on the disk.
     private func prepareToOpen() {
-        store.removeExpired()
         store.refreshReferences()
     }
 

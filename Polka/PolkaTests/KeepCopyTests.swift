@@ -280,28 +280,6 @@ struct KeepCopyTests {
         }
     }
 
-    @Test func anExpiredCopyIsDeleted() async throws {
-        try await withFolders { originals, copies in
-            var clock = start
-            let store = ShelfStore(now: { clock })
-            store.add([ShelfItem.Draft(fileURL: try makeFile("a.txt", in: originals)),
-                       ShelfItem.Draft(fileURL: try makeFile("b.txt", in: originals))])
-            let keeper = CopyKeeper(store: store, copies: copies)
-            keeper.start()
-            for item in store.items {
-                #expect(await keeper.keepCopy(of: item.id))
-            }
-            store.makeTemporary(id: store.items[0].id, lifetime: 60)
-
-            clock = start.addingTimeInterval(60)
-            store.removeExpired()
-
-            #expect(store.items.map(\.title) == ["b.txt"])
-            let remaining = try #require(path(of: store.items[0]))
-            #expect(copies.folderNames() == [copies.folderName(containing: remaining)].compactMap { $0 })
-        }
-    }
-
     @Test func leftoverFoldersAreClearedAtLaunchAndUsedOnesKept() async throws {
         try await withFolders { originals, copies in
             let used = try makeFile("\(UUID().uuidString)/report.txt", in: copies.folder)
@@ -309,7 +287,7 @@ struct KeepCopyTests {
             let notOurs = try makeFile("notes.txt", in: copies.folder)
             let saved = ShelfItem(id: UUID(), kind: .file, title: "report.txt",
                                   source: .file(path: used.path, bookmark: nil),
-                                  storageMode: .copy, createdAt: start, expiresAt: nil, sortOrder: 0,
+                                  storageMode: .copy, createdAt: start, sortOrder: 0,
                                   original: ShelfItem.Original(path: originals.appendingPathComponent("report.txt").path))
             let store = ShelfStore(persistence: InMemoryShelfPersistence(items: [saved]))
 
