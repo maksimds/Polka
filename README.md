@@ -2,6 +2,8 @@
 
 Polka turns the notch at the top of your MacBook screen into a little shelf. Put files, folders, links, pictures and text on it, sort them into folders, then grab them again whenever you need them. You can even send them to a Mac nearby. Just move your pointer to the notch and the shelf opens.
 
+https://github.com/user-attachments/assets/358d77d9-b721-4286-b20f-651b5e555607
+
 ## What you need
 
 - A Mac with macOS 14 Sonoma or newer.
